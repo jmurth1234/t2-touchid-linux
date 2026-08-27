@@ -100,6 +100,26 @@ or an alternative sleep mode has been validated on the specific Mac model.
 8. Only after those controls pass, install the relevant files from `pam/` into
    `/etc/pam.d/`. Preserve backups and keep password authentication as fallback.
 
+### Unlocking keybags from password authentication
+
+If the macOS and Linux login passwords are identical, PAM can pass the password
+already entered by the user to the keybag unlock helper. The password is kept
+only in process memory and is not placed in argv, the environment, logs, or
+persistent storage. The helper reads the boot-specific handle recorded under
+`/run` by `t2-keybag-load.service` and always exits successfully so a T2 failure
+cannot block password authentication.
+
+After making a root-owned backup, add this at the end of the `auth` section in
+`/etc/pam.d/system-auth`, after the successful `pam_faillock.so authsucc` line:
+
+```text
+auth optional pam_exec.so quiet expose_authtok seteuid /usr/local/sbin/t2-pam-unlock
+```
+
+This unlocks the bags on the first successful password authentication after
+boot. It cannot unlock them before a password has been entered. The helper
+restricts itself to `T2_TOUCHID_USER` from `/etc/t2-touchid.conf`.
+
 Exact keybag extraction and hardware bring-up remain machine-sensitive. Read
 `src/README.md` before loading the module.
 

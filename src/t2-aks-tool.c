@@ -210,7 +210,7 @@ static int set_system_keybag(int fd, const char *session_text,
 }
 
 static int unlock_keybag(int fd, const char *session_text,
-			 const char *handle_text)
+			 const char *handle_text, int password_stdin)
 {
 	unsigned char *request = NULL;
 	unsigned char response[64] = { 0 };
@@ -239,25 +239,31 @@ static int unlock_keybag(int fd, const char *session_text,
 		fprintf(stderr, "invalid session or handle\n");
 		return 2;
 	}
-	tty = open("/dev/tty", O_RDWR | O_CLOEXEC);
-	if (tty < 0 || tcgetattr(tty, &old_term)) {
-		perror("open controlling terminal");
-		goto out;
-	}
-	noecho_term = old_term;
-	noecho_term.c_lflag &= ~(ECHO);
-	if (tcsetattr(tty, TCSAFLUSH, &noecho_term)) {
-		perror("disable terminal echo");
-		goto out;
-	}
-	if (write(tty, "macOS login password: ", 22) != 22) {
-		perror("write prompt");
-		tcsetattr(tty, TCSAFLUSH, &old_term);
-		goto out;
+	if (password_stdin) {
+		tty = STDIN_FILENO;
+	} else {
+		tty = open("/dev/tty", O_RDWR | O_CLOEXEC);
+		if (tty < 0 || tcgetattr(tty, &old_term)) {
+			perror("open controlling terminal");
+			goto out;
+		}
+		noecho_term = old_term;
+		noecho_term.c_lflag &= ~(ECHO);
+		if (tcsetattr(tty, TCSAFLUSH, &noecho_term)) {
+			perror("disable terminal echo");
+			goto out;
+		}
+		if (write(tty, "macOS login password: ", 22) != 22) {
+			perror("write prompt");
+			tcsetattr(tty, TCSAFLUSH, &old_term);
+			goto out;
+		}
 	}
 	got = read(tty, secret, sizeof(secret) - 1);
-	tcsetattr(tty, TCSAFLUSH, &old_term);
-	(void)write(tty, "\n", 1);
+	if (!password_stdin) {
+		tcsetattr(tty, TCSAFLUSH, &old_term);
+		(void)write(tty, "\n", 1);
+	}
 	if (got <= 0) {
 		fprintf(stderr, "failed to read password\n");
 		goto out;
@@ -299,7 +305,7 @@ out:
 		free(request);
 	}
 	memset(secret, 0, sizeof(secret));
-	if (tty >= 0)
+	if (tty >= 0 && !password_stdin)
 		close(tty);
 	return ret;
 }
@@ -380,15 +386,17 @@ int main(int argc, char **argv)
 	if (!((argc == 2 && !strcmp(argv[1], "capabilities")) ||
 	      ((argc == 3 || argc == 4) && !strcmp(argv[1], "load-keybag")) ||
 	      (argc == 5 && !strcmp(argv[1], "set-system-keybag")) ||
-	      (argc == 4 && !strcmp(argv[1], "unlock-keybag")) ||
+	      (argc == 4 && (!strcmp(argv[1], "unlock-keybag") ||
+	                     !strcmp(argv[1], "unlock-keybag-stdin"))) ||
 	      (argc == 5 && !strcmp(argv[1], "get-device-state")))) {
 		fprintf(stderr,
 			"Usage: %s capabilities\n"
 			"       %s load-keybag INPUT [SESSION]\n"
 			"       %s set-system-keybag SESSION HANDLE SPECIAL\n"
 			"       %s unlock-keybag SESSION HANDLE\n"
+			"       %s unlock-keybag-stdin SESSION HANDLE\n"
 			"       %s get-device-state HANDLE SELECTOR OUTPUT\n",
-			argv[0], argv[0], argv[0], argv[0], argv[0]);
+			argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
 		return 2;
 	}
 	fd = open("/dev/t2-aks", O_RDWR | O_CLOEXEC);
@@ -403,7 +411,9 @@ int main(int argc, char **argv)
 	else if (!strcmp(argv[1], "set-system-keybag"))
 		ret = set_system_keybag(fd, argv[2], argv[3], argv[4]);
 	else if (!strcmp(argv[1], "unlock-keybag"))
-		ret = unlock_keybag(fd, argv[2], argv[3]);
+		ret = unlock_keybag(fd, argv[2], argv[3], 0);
+	else if (!strcmp(argv[1], "unlock-keybag-stdin"))
+		ret = unlock_keybag(fd, argv[2], argv[3], 1);
 	else
 		ret = get_device_state(fd, argv[2], argv[3], argv[4]);
 	close(fd);

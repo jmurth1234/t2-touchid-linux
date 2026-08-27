@@ -6,6 +6,8 @@ TOOL=/usr/local/sbin/t2-aks-tool
 BAG=/var/lib/t2-touchid/user.kb
 SESSION=1
 SPECIAL_BAG=-501
+STATE_DIR=/run/t2-touchid
+STATE_FILE=$STATE_DIR/keybag.env
 
 output="$($TOOL load-keybag "$BAG" "$SESSION")"
 case "$output" in
@@ -18,5 +20,9 @@ esac
 handle=${output#*handle=}
 handle=${handle%% *}
 $TOOL set-system-keybag "$SESSION" "$handle" "$SPECIAL_BAG"
+install -d -o root -g root -m 0700 "$STATE_DIR"
+umask 077
+printf 'T2_KEYBAG_SESSION=%s\nT2_KEYBAG_HANDLE=%s\nT2_KEYBAG_SPECIAL=%s\n' \
+	"$SESSION" "$handle" "$SPECIAL_BAG" >"$STATE_FILE"
 printf 'loaded keybag handle=%s session=%s special=%s\n' \
 	"$handle" "$SESSION" "$SPECIAL_BAG"
