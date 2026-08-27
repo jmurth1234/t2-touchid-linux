@@ -116,9 +116,16 @@ After making a root-owned backup, add this at the end of the `auth` section in
 auth optional pam_exec.so quiet expose_authtok seteuid /usr/local/sbin/t2-pam-unlock
 ```
 
-This unlocks the bags on the first successful password authentication after
-boot. It cannot unlock them before a password has been entered. The helper
-restricts itself to `T2_TOUCHID_USER` from `/etc/t2-touchid.conf`.
+Omarchy uses SDDM autologin followed by a separate lock-screen PAM service, so
+the initial desktop password does not traverse `system-auth`. On Omarchy, also
+install `pam/omarchy-lock-password` as `/etc/pam.d/omarchy-lock-password`
+after backing up the existing file. That template contains the same optional
+hook after its successful `pam_faillock.so authsucc` line.
+
+This unlocks the bags on the first successful password authentication through
+an instrumented PAM service after boot. It cannot unlock them before a password
+has been entered. The helper restricts itself to `T2_TOUCHID_USER` from
+`/etc/t2-touchid.conf`.
 
 Exact keybag extraction and hardware bring-up remain machine-sensitive. Read
 `src/README.md` before loading the module.
