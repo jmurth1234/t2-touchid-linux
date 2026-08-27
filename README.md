@@ -34,8 +34,34 @@ negative unenrolled-finger control were both verified at the raw bridge,
   unloaded; reboot before replacing it.
 - The macOS-derived keybag must remain private and must be unlocked with the
   macOS login password after every reboot. The password is never stored.
+- Suspend/resume is not currently reliable on the proven configuration. After
+  a deep-S3 suspend, the T2 CDC-NCM interface may remain present while
+  BridgeXPC is unreachable. Touch ID then fails closed until the machine is
+  rebooted and the keybags are unlocked again.
 - Never publish `*.kb`, `*.cat`, exported archives, captures, Apple binaries,
   device identifiers, or match-result payloads.
+
+### Suspend/resume failure
+
+This was reproduced with the `t2bce` stack on the proven configuration. The
+kernel reported repeated `NETDEV WATCHDOG` transmit timeouts for the T2's
+`cdc_ncm` interface after resuming from `deep` sleep. The systemd transport,
+keybag, and fprintd services could still appear active because their existing
+process state did not reflect loss of communication with bridgeOS.
+
+Rebinding the `cdc_ncm` interface and deauthorizing/reauthorizing its virtual
+USB device both recreated the interface but did not restore RemoteXPC. Do not
+unload `t2_sep_transport` as a recovery attempt: its SEP-registered DMA memory
+is deliberately pinned until reboot. The known recovery is:
+
+1. Reboot Linux.
+2. Unlock the normal and special user keybags again as described below.
+3. Restart `fprintd.service` if it is not already running.
+4. Repeat both the enrolled- and unenrolled-finger controls before relying on
+   PAM authentication.
+
+Treat suspend as unsupported until the underlying T2 BCE resume path is fixed
+or an alternative sleep mode has been validated on the specific Mac model.
 
 ## Layout
 
