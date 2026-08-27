@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.ko
+*.o
+*.mod
+*.mod.c
+*.cmd
+Module.symvers
+modules.order
+.venv/
+*.tar.gz
+*.cat
+*.kb
+*.bin
+*.json.private
+

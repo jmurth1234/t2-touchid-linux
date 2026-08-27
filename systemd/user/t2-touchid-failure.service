@@ -1,0 +1,7 @@
+[Unit]
+Description=Touch ID failure feedback
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/notify-send -a "Touch ID" -u normal -i dialog-error "Touch ID" "Fingerprint not recognized"
+ExecStart=/usr/bin/canberra-gtk-play --id=dialog-error "--description=Touch ID failed"

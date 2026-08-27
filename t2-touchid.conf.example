@@ -1,0 +1,6 @@
+# Copy to /etc/t2-touchid.conf and keep it root-owned (0644 or stricter).
+T2_TOUCHID_USER=your-linux-user
+T2_TOUCHID_HOST=fe80::replace-with-the-t2-link-local-address
+T2_TOUCHID_INTERFACE=replace-with-the-t2-usb-network-interface
+T2_TOUCHID_PROJECT_DIR=/opt/t2-touchid
+

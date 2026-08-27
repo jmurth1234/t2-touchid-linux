@@ -1,0 +1,31 @@
+[Unit]
+Description=Apple T2 Touch ID authentication daemon
+Documentation=file:/opt/t2-touchid/README.md
+Requires=t2-keybag-load.service
+After=dbus.service network.target t2-keybag-load.service
+
+[Service]
+Type=dbus
+BusName=net.reactivated.Fprint
+EnvironmentFile=/etc/t2-touchid.conf
+ExecStart=/opt/t2-touchid/.venv/bin/python /opt/t2-touchid/src/t2-fprintd.py
+Restart=on-failure
+RestartSec=2
+UMask=0077
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectKernelModules=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_LOCAL AF_NETLINK AF_INET6
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

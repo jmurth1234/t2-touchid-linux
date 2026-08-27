@@ -1,0 +1,2 @@
+dbus-next==0.2.3
+git+https://github.com/doronz88/pymobiledevice3.git@4fcfdd82ffcf30b6a11460b505fadb5579e7b2bb

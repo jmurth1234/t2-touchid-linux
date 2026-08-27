@@ -1,0 +1,6 @@
+[Unit]
+Description=Touch ID finger-request sound
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/canberra-gtk-play --id=message-new-instant "--description=Touch ID finger requested"

@@ -1,0 +1,7 @@
+[Unit]
+Description=Touch ID success feedback
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/notify-send -a "Touch ID" -i dialog-password "Touch ID" "Fingerprint accepted"
+ExecStart=/usr/bin/canberra-gtk-play --id=complete --volume=-18.0 "--description=Touch ID accepted"
