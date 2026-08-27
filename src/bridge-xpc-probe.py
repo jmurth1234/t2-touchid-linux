@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Read-only BridgeXPC transport probe for the Intel T2 biometric service.
 
 The default action performs only the protocol HELO exchange.  It never sends

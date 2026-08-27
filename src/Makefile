@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 obj-m += t2_sep_transport.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build

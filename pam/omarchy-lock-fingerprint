@@ -1,3 +1,4 @@
 #%PAM-1.0
+# SPDX-License-Identifier: GPL-2.0-only
 auth       required                    pam_fprintd.so
 account    include                     system-local-login

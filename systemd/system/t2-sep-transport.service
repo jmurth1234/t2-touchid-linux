@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 [Unit]
 Description=Apple T2 SEP transport for Touch ID research
 After=local-fs.target

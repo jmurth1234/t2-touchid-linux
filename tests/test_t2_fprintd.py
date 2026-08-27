@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Hardware-free lifecycle tests for the T2 fprintd facade."""
 
 import asyncio

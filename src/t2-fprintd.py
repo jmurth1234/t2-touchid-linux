@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Minimal fprintd-compatible D-Bus facade for the T2 matcher.
 
 This service deliberately supports verification only. Enrollment and deletion

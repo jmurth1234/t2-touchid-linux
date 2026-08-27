@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 set -eu
 
 TOOL=/usr/local/sbin/t2-aks-tool
@@ -19,4 +20,3 @@ handle=${handle%% *}
 $TOOL set-system-keybag "$SESSION" "$handle" "$SPECIAL_BAG"
 printf 'loaded keybag handle=%s session=%s special=%s\n' \
 	"$handle" "$SESSION" "$SPECIAL_BAG"
-

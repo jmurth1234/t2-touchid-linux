@@ -86,5 +86,6 @@ python -m py_compile src/*.py
 
 ## License
 
-No license has been selected yet. Choose one before accepting contributions or
-redistribution.
+This project is licensed under the GNU General Public License version 2 only
+(`GPL-2.0-only`). See [`LICENSE`](LICENSE). The userspace-facing transport
+header retains the standard Linux syscall-note exception.

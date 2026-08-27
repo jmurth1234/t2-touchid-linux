@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Discover the T2 BiometricKit BridgeXPC port through RemoteXPC.
 
 Run this with the repository virtual environment, which installs
