@@ -40,6 +40,7 @@ install -o root -g root -m 0644 "$source_dir/src/t2_sep_transport.ko" /usr/local
 install -o root -g root -m 0755 "$source_dir/src/t2-keybag-load.sh" /usr/local/sbin/t2-keybag-load
 install -o root -g root -m 0700 "$source_dir/src/t2-pam-unlock.sh" /usr/local/sbin/t2-pam-unlock
 install -o root -g root -m 0700 "$source_dir/src/t2-credential-unlock.sh" /usr/local/sbin/t2-credential-unlock
+install -o root -g root -m 0700 "$source_dir/src/t2-biometric-ready.sh" /usr/local/sbin/t2-biometric-ready
 install -o root -g root -m 0644 "$source_dir/systemd/system/"*.service /etc/systemd/system/
 
 install -d -o "$target_user" -g "$target_user" -m 0755 "$target_home/.config/systemd/user"
@@ -59,7 +60,7 @@ EOF
 chmod 0644 /etc/dbus-1/system.d/99-t2-touchid-fprint.conf
 
 systemctl daemon-reload
-systemctl enable t2-sep-transport.service t2-keybag-load.service t2-credential-unlock.service fprintd.service
+systemctl enable t2-sep-transport.service t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service fprintd.service
 systemctl reload dbus.service
 sudo -u "$target_user" systemctl --user daemon-reload || true
 

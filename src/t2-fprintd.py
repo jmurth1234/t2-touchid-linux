@@ -60,6 +60,17 @@ class T2Backend:
         self.match_seconds = match_seconds
         self.process: asyncio.subprocess.Process | None = None
         self.port: int | None = None
+        port_file = Path(
+            os.environ.get(
+                "T2_TOUCHID_PORT_FILE", "/var/lib/t2-touchid/biometric-port"
+            )
+        )
+        try:
+            cached_port = int(port_file.read_text().strip())
+            if 49152 <= cached_port <= 65535:
+                self.port = cached_port
+        except (OSError, ValueError):
+            pass
 
     async def discover(self) -> int:
         if self.port is not None:
@@ -78,8 +89,8 @@ class T2Backend:
         return self.port
 
     async def verify(self) -> tuple[str, dict]:
-        await self.notify_finger_requested()
         port = await self.discover()
+        await self.notify_finger_requested()
         command = [
             sys.executable,
             str(self.project_dir / "src/bridge-xpc-probe.py"),

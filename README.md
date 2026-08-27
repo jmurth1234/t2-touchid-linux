@@ -143,6 +143,14 @@ persistent plaintext file. At boot, systemd decrypts it into a protected,
 service-scoped runtime credential, the one-shot helper unlocks both keybags,
 and fprintd starts only after that attempt.
 
+With an unattended credential present, `t2-biometric-ready.service` also waits
+for the T2 network path, discovers the dynamic RemoteXPC port, and performs a
+non-matching initialization/calibration/identity-list warm-up before fprintd
+starts. This avoids exposing the first Omarchy lock-screen scan to the cold
+BiometricKit startup race observed on the proven configuration. Its verified
+dynamic port is cached root-only under `/var/lib/t2-touchid`; fprintd consumes
+that cache and does not request a finger until discovery has completed.
+
 This machine has no usable TPM, so the credential is encrypted with systemd's
 host key. It protects against casual/offline disclosure without the decrypted
 Linux filesystem, but root can decrypt it. Since the credential is also the
