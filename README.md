@@ -8,6 +8,8 @@ This is research software, not an upstream `libfprint` driver. Enrollment and
 deletion remain in macOS. The Linux side only verifies an identity already
 enrolled for macOS user ID 501.
 
+See the redacted conversation that produced this here: https://gist.github.com/jmurth1234/4a138019fd832dfabbed26475613db3a
+
 ## Proven configuration
 
 Developed and verified on an Intel `MacBookPro16,2`, bridgeOS build `23P1072`,
