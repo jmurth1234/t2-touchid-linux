@@ -127,6 +127,28 @@ an instrumented PAM service after boot. It cannot unlock them before a password
 has been entered. The helper restricts itself to `T2_TOUCHID_USER` from
 `/etc/t2-touchid.conf`.
 
+### Unattended boot unlock
+
+For fingerprint authentication on the first Omarchy lock screen after SDDM
+autologin, provision an encrypted systemd credential:
+
+```sh
+sudo tools/provision-credential.sh
+sudo systemctl enable t2-credential-unlock.service
+```
+
+The provisioning prompt is local and hidden. The plaintext password is piped
+directly into `systemd-creds`; it is not placed in argv, the environment, or a
+persistent plaintext file. At boot, systemd decrypts it into a protected,
+service-scoped runtime credential, the one-shot helper unlocks both keybags,
+and fprintd starts only after that attempt.
+
+This machine has no usable TPM, so the credential is encrypted with systemd's
+host key. It protects against casual/offline disclosure without the decrypted
+Linux filesystem, but root can decrypt it. Since the credential is also the
+Linux and macOS login password on the proven configuration, understand this
+tradeoff before provisioning it.
+
 Exact keybag extraction and hardware bring-up remain machine-sensitive. Read
 `src/README.md` before loading the module.
 
