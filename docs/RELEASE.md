@@ -8,6 +8,7 @@
 - [ ] Privacy scan finds no private artifacts or stable identifiers.
 - [ ] Fresh installation and repeated installation both complete.
 - [ ] Uninstall preserves private data; explicit purge removes it.
+- [ ] DKMS builds only the kernel module for a second installed kernel.
 
 ## Proven-machine gates
 
