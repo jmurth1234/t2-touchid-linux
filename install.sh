@@ -74,7 +74,7 @@ chmod 0644 /etc/dbus-1/system.d/99-t2-touchid-fprint.conf
 systemctl daemon-reload
 systemctl enable t2-sep-transport.service t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service fprintd.service
 systemctl reload dbus.service
-sudo -u "$target_user" systemctl --user daemon-reload || true
+systemctl --machine="$target_user@.host" --user daemon-reload || true
 
 if command -v dkms >/dev/null 2>&1; then
   dkms_source=/usr/src/t2-sep-transport-0.1.0

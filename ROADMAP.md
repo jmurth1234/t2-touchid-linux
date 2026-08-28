@@ -43,6 +43,7 @@ evidence, not intent.
 - [x] Add an uninstall command that preserves private user data by default.
 - [x] Add PAM backup and rollback helpers.
 - [x] Add an optional DKMS kernel-upgrade rebuild workflow.
+- [x] Build, sign, and install the DKMS module for the proven running kernel.
 
 ## 7. Suspend/resume
 
