@@ -44,7 +44,17 @@ install -o root -g root -m 0644 "$source_dir/README.md" "$target_dir/README.md"
 install -o root -g root -m 0644 "$source_dir/ROADMAP.md" "$target_dir/ROADMAP.md"
 
 python -m venv "$target_dir/.venv"
-"$target_dir/.venv/bin/pip" install --requirement "$source_dir/requirements.txt"
+requirements_stamp=$target_dir/.requirements.sha256
+requirements_hash=$(sha256sum "$source_dir/requirements.txt" | cut -d' ' -f1)
+installed_hash=$(sed -n '1p' "$requirements_stamp" 2>/dev/null || true)
+if [[ $installed_hash != "$requirements_hash" ]] || \
+    ! "$target_dir/.venv/bin/python" -c 'import dbus_next, pymobiledevice3' 2>/dev/null; then
+  "$target_dir/.venv/bin/pip" install --requirement "$source_dir/requirements.txt"
+  printf '%s\n' "$requirements_hash" >"$requirements_stamp"
+  chmod 0644 "$requirements_stamp"
+else
+  echo "Python dependencies are already installed."
+fi
 
 make -C "$source_dir/src"
 install -o root -g root -m 0755 "$source_dir/src/t2-aks-tool" /usr/local/sbin/t2-aks-tool
