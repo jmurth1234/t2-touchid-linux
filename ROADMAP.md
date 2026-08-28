@@ -64,7 +64,6 @@ evidence, not intent.
 These require an interactive user or a reboot and cannot be inferred from unit
 tests:
 
-- Explicit Omarchy lock-screen wrong-finger and password-fallback controls.
 - Cold boot after any service-order or credential changes.
 - Suspend/resume testing.
 - Kernel upgrade/rebuild testing.

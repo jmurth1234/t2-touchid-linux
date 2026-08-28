@@ -164,7 +164,8 @@ dynamic port is cached root-only under `/var/lib/t2-touchid`; fprintd consumes
 that cache and does not request a finger until discovery has completed. Cold
 boot authentication has been verified with sudo. Touch ID unlock through an
 explicit `omarchy system lock` has also been verified on the proven
-configuration; other shell/login configurations may use a different PAM path.
+configuration, including wrong-finger rejection and password fallback; other
+shell/login configurations may use a different PAM path.
 
 ## Diagnostics
 
