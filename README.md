@@ -9,6 +9,9 @@ deletion remain in macOS. The Linux side only verifies an identity already
 enrolled for the configured macOS user ID.
 
 See [`ROADMAP.md`](ROADMAP.md) for the evidence-based reliability checklist.
+The separate [enrollment research](enrollment_research/README.md) publishes the
+current protocol findings and deferred evidence-collection helpers. It does not
+enable enrollment or deletion in the shipped service.
 
 See the redacted conversation that produced this here: https://gist.github.com/jmurth1234/4a138019fd832dfabbed26475613db3a
 
@@ -76,6 +79,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
 - `systemd/`: system and audible-feedback units.
 - `pam/`: clamshell-safe Omarchy PAM templates.
 - `tools/macos/`: private export helpers; outputs must never be committed.
+- `enrollment_research/`: sanitized enrollment, multi-user, Catacomb, and
+  rollback findings plus non-mutating/deferred collection helpers.
 - `tests/`: hardware-free fail-closed lifecycle tests.
 
 ## Installation outline

@@ -13,4 +13,6 @@ modules.order
 *.kb
 *.bin
 *.json.private
-
+enrollment_research/evidence/
+enrollment_research/private/
+enrollment_research/captures/
