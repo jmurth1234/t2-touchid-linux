@@ -82,9 +82,18 @@ if command -v dkms >/dev/null 2>&1; then
   install -o root -g root -m 0644 "$source_dir/dkms.conf" "$dkms_source/dkms.conf"
   install -o root -g root -m 0644 "$source_dir/src/t2_sep_transport.c" \
     "$source_dir/src/t2_sep_transport_uapi.h" "$source_dir/src/Makefile" "$dkms_source/src/"
-  dkms add --force -m t2-sep-transport -v 0.1.0
-  dkms build -m t2-sep-transport -v 0.1.0
-  dkms install --force -m t2-sep-transport -v 0.1.0
+  running_kernel=$(uname -r)
+  dkms_state=$(dkms status -m t2-sep-transport -v 0.1.0 2>/dev/null || true)
+  if grep -Fq "t2-sep-transport/0.1.0, $running_kernel" <<<"$dkms_state" && \
+      grep -Fq ': installed' <<<"$dkms_state"; then
+    echo "DKMS module is already installed for $running_kernel."
+  else
+    if [[ -z $dkms_state ]]; then
+      dkms add -m t2-sep-transport -v 0.1.0
+    fi
+    dkms build --force -m t2-sep-transport -v 0.1.0 -k "$running_kernel"
+    dkms install --force -m t2-sep-transport -v 0.1.0 -k "$running_kernel"
+  fi
 else
   echo "Warning: dkms is unavailable; rerun this installer after kernel upgrades." >&2
 fi
