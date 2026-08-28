@@ -49,6 +49,17 @@ class DoctorTests(unittest.TestCase):
         self.assertIn('"status": "pass"', encoded)
         self.assertNotIn("fe80", encoded)
 
+    def test_dkms_check_requires_running_kernel_installed(self):
+        completed = mock.Mock(
+            returncode=0,
+            stdout="t2-sep-transport/0.1.0, test-kernel, x86_64: installed\n",
+        )
+        with (
+            mock.patch.object(doctor, "run", return_value=completed),
+            mock.patch.object(doctor.platform, "release", return_value="test-kernel"),
+        ):
+            self.assertEqual(doctor.dkms_check().status, "pass")
+
 
 if __name__ == "__main__":
     unittest.main()

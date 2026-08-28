@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import re
 import socket
 import stat
@@ -103,6 +104,32 @@ def network_check(config: dict[str, str], port: int) -> Check:
     return Check("pass", "bridge-network", "cached BridgeXPC endpoint reachable")
 
 
+def dkms_check() -> Check:
+    try:
+        result = run(
+            "dkms",
+            "status",
+            "-m",
+            "t2-sep-transport",
+            "-v",
+            "0.1.0",
+        )
+    except FileNotFoundError:
+        return Check("warn", "dkms-module", "DKMS is not installed")
+    current = platform.release()
+    installed = any(
+        current in line and line.rstrip().endswith(": installed")
+        for line in result.stdout.splitlines()
+    )
+    return Check(
+        "pass" if installed else "warn",
+        "dkms-module",
+        "installed for running kernel"
+        if installed
+        else "not installed for running kernel",
+    )
+
+
 def collect() -> list[Check]:
     checks: list[Check] = []
 
@@ -121,6 +148,7 @@ def collect() -> list[Check]:
         )
     )
     checks.extend(service_check(service) for service in SERVICES)
+    checks.append(dkms_check())
 
     config: dict[str, str] = {}
     try:
