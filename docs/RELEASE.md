@@ -18,7 +18,7 @@
 - [ ] Enrolled and unenrolled fingers pass sudo/PAM controls.
 - [x] `omarchy system lock` accepts the enrolled fingerprint.
 - [x] `omarchy system lock` rejects a wrong finger and retains password fallback.
-- [ ] Cold boot with encrypted credential passes.
+- [x] Cold boot with encrypted credential passes on the proven machine.
 - [ ] Kernel upgrade rebuild/install passes.
 - [ ] Suspend status is stated accurately; no unsupported claim is made.
 
