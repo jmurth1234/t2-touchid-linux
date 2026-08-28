@@ -130,6 +130,26 @@ def dkms_check() -> Check:
     )
 
 
+def watchdog_check() -> Check:
+    kernel_log = run(
+        "journalctl",
+        "-q",
+        "-b",
+        "-k",
+        "--no-pager",
+        "--grep=NETDEV WATCHDOG",
+        timeout=10,
+    )
+    seen = any("NETDEV WATCHDOG" in line for line in kernel_log.stdout.splitlines())
+    return Check(
+        "warn" if seen else "pass",
+        "suspend-health",
+        "T2 network watchdog timeout seen this boot"
+        if seen
+        else "no network watchdog timeout this boot",
+    )
+
+
 def collect() -> list[Check]:
     checks: list[Check] = []
 
@@ -220,18 +240,7 @@ def collect() -> list[Check]:
         checks.append(network_check(config, cached_port))
 
     if os.geteuid() == 0:
-        kernel_log = run(
-            "journalctl", "-b", "-k", "--no-pager", "--grep=NETDEV WATCHDOG", timeout=10
-        )
-        checks.append(
-            Check(
-                "warn" if kernel_log.stdout.strip() else "pass",
-                "suspend-health",
-                "T2 network watchdog timeout seen this boot"
-                if kernel_log.stdout.strip()
-                else "no network watchdog timeout this boot",
-            )
-        )
+        checks.append(watchdog_check())
     else:
         checks.append(Check("warn", "privileged-checks", "run with sudo for full report"))
 

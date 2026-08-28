@@ -60,6 +60,12 @@ class DoctorTests(unittest.TestCase):
         ):
             self.assertEqual(doctor.dkms_check().status, "pass")
 
+    def test_journal_no_entries_banner_is_suppressed(self):
+        completed = mock.Mock(returncode=0, stdout="-- No entries --\n")
+        with mock.patch.object(doctor, "run", return_value=completed):
+            check = doctor.watchdog_check()
+        self.assertEqual(check.status, "pass")
+
 
 if __name__ == "__main__":
     unittest.main()
