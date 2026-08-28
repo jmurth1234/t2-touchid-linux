@@ -8,8 +8,8 @@ evidence, not intent.
 
 - [x] Document cold-boot sudo authentication as verified.
 - [x] Stop claiming a first Omarchy lock screen exists on every installation.
-- [ ] Test an explicit `omarchy system lock` flow before claiming lock-screen
-      support.
+- [x] Test an explicit `omarchy system lock` Touch ID flow before claiming
+      lock-screen support.
 
 ## 2. Diagnostics
 
@@ -64,7 +64,7 @@ evidence, not intent.
 These require an interactive user or a reboot and cannot be inferred from unit
 tests:
 
-- Explicit Omarchy lock/unlock positive and negative controls.
+- Explicit Omarchy lock-screen wrong-finger and password-fallback controls.
 - Cold boot after any service-order or credential changes.
 - Suspend/resume testing.
 - Kernel upgrade/rebuild testing.

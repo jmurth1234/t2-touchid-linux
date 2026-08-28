@@ -16,7 +16,8 @@
 - [ ] Enrolled and unenrolled fingers pass raw BridgeXPC controls.
 - [ ] Enrolled and unenrolled fingers pass `fprintd-verify` controls.
 - [ ] Enrolled and unenrolled fingers pass sudo/PAM controls.
-- [ ] `omarchy system lock` password and fingerprint fallbacks pass.
+- [x] `omarchy system lock` accepts the enrolled fingerprint.
+- [ ] `omarchy system lock` rejects a wrong finger and retains password fallback.
 - [ ] Cold boot with encrypted credential passes.
 - [ ] Kernel upgrade rebuild/install passes.
 - [ ] Suspend status is stated accurately; no unsupported claim is made.

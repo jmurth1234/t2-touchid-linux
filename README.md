@@ -162,9 +162,9 @@ starts. This avoids exposing the first Omarchy lock-screen scan to the cold
 BiometricKit startup race observed on the proven configuration. Its verified
 dynamic port is cached root-only under `/var/lib/t2-touchid`; fprintd consumes
 that cache and does not request a finger until discovery has completed. Cold
-boot authentication has been verified with sudo. Omarchy lock-screen behavior
-depends on the active shell/login configuration and should be tested explicitly
-with `omarchy system lock` before being described as supported.
+boot authentication has been verified with sudo. Touch ID unlock through an
+explicit `omarchy system lock` has also been verified on the proven
+configuration; other shell/login configurations may use a different PAM path.
 
 ## Diagnostics
 
