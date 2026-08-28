@@ -129,13 +129,14 @@ class T2Backend:
             str(self.match_seconds),
             "--stop-on-match-result",
         ]
-        self.process = await asyncio.create_subprocess_exec(
+        process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        self.process = process
         try:
-            stdout, stderr = await self.process.communicate()
+            stdout, stderr = await process.communicate()
         finally:
             self.process = None
         if not stdout or process.returncode != 0:
