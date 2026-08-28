@@ -5,7 +5,7 @@
 This service deliberately supports verification only. Enrollment and deletion
 stay with macOS because the SEP owns the biometric templates. Authentication
 remains fail-closed and accepts only the UUID of an identity selected from the
-scoped user-501 identity list.
+scoped macOS user identity list.
 """
 
 import argparse
@@ -26,9 +26,27 @@ MANAGER_PATH = "/net/reactivated/Fprint/Manager"
 DEVICE_PATH = "/net/reactivated/Fprint/Device/0"
 FPRINT_ERROR = "net.reactivated.Fprint.Error"
 LINUX_USER = os.environ.get("T2_TOUCHID_USER", "")
-ENROLLED_FINGER = "right-index-finger"
+MACOS_USER_ID = int(os.environ.get("T2_TOUCHID_MACOS_USER_ID", "501"))
+ENROLLED_FINGER = os.environ.get(
+    "T2_TOUCHID_ENROLLED_FINGER", "right-index-finger"
+)
 ALLOWED_PAM_USERS = (LINUX_USER, "root")
 STALE_CLAIM_SECONDS = 5.0
+
+if not 0 <= MACOS_USER_ID <= 0xFFFFFFFF:
+    raise RuntimeError("T2_TOUCHID_MACOS_USER_ID is outside uint32 range")
+if ENROLLED_FINGER not in {
+    f"{hand}-{finger}"
+    for hand in ("left", "right")
+    for finger in (
+        "thumb",
+        "index-finger",
+        "middle-finger",
+        "ring-finger",
+        "little-finger",
+    )
+}:
+    raise RuntimeError("T2_TOUCHID_ENROLLED_FINGER is invalid")
 
 
 def verdict_from_result(result: object) -> str:
@@ -60,6 +78,7 @@ class T2Backend:
         self.match_seconds = match_seconds
         self.process: asyncio.subprocess.Process | None = None
         self.port: int | None = None
+        self.port_from_cache = False
         port_file = Path(
             os.environ.get(
                 "T2_TOUCHID_PORT_FILE", "/var/lib/t2-touchid/biometric-port"
@@ -69,6 +88,7 @@ class T2Backend:
             cached_port = int(port_file.read_text().strip())
             if 49152 <= cached_port <= 65535:
                 self.port = cached_port
+                self.port_from_cache = True
         except (OSError, ValueError):
             pass
 
@@ -86,11 +106,13 @@ class T2Backend:
         if process.returncode != 0:
             raise RuntimeError(stderr.decode(errors="replace").strip())
         self.port = int(stdout.decode().strip())
+        if not 49152 <= self.port <= 65535:
+            self.port = None
+            raise RuntimeError("discovery returned an invalid port")
+        self.port_from_cache = False
         return self.port
 
-    async def verify(self) -> tuple[str, dict]:
-        port = await self.discover()
-        await self.notify_finger_requested()
+    async def _run_probe(self, port: int) -> dict:
         command = [
             sys.executable,
             str(self.project_dir / "src/bridge-xpc-probe.py"),
@@ -101,6 +123,8 @@ class T2Backend:
             "--cancel-operation",
             "--load-calibration",
             "--identity-list",
+            "--macos-user-id",
+            str(MACOS_USER_ID),
             "--match-seconds",
             str(self.match_seconds),
             "--stop-on-match-result",
@@ -114,9 +138,31 @@ class T2Backend:
             stdout, stderr = await self.process.communicate()
         finally:
             self.process = None
-        if not stdout:
-            raise RuntimeError(stderr.decode(errors="replace").strip())
-        result = json.loads(stdout)
+        if not stdout or process.returncode != 0:
+            detail = stderr.decode(errors="replace").strip()
+            raise RuntimeError(detail or "BridgeXPC probe failed")
+        try:
+            result = json.loads(stdout)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RuntimeError("BridgeXPC probe returned malformed JSON") from error
+        if not isinstance(result, dict):
+            raise RuntimeError("BridgeXPC probe returned malformed JSON")
+        return result
+
+    async def verify(self) -> tuple[str, dict]:
+        port = await self.discover()
+        await self.notify_finger_requested()
+        try:
+            result = await self._run_probe(port)
+        except RuntimeError:
+            if not self.port_from_cache:
+                raise
+            # A cached service endpoint may disappear after bridgeOS restarts.
+            # Rediscover once; never turn a valid negative match into a retry.
+            self.port = None
+            self.port_from_cache = False
+            port = await self.discover()
+            result = await self._run_probe(port)
         verdict = verdict_from_result(result)
         await self.notify_feedback(verdict)
         return verdict, result

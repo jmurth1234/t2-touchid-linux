@@ -27,9 +27,21 @@ if [[ ! -f /etc/t2-touchid.conf ]]; then
   exit 2
 fi
 
+# Migrate older configurations without overwriting administrator choices.
+ensure_config_default() {
+  local key=$1 value=$2
+  grep -q "^${key}=" /etc/t2-touchid.conf || printf '%s=%s\n' "$key" "$value" >>/etc/t2-touchid.conf
+}
+ensure_config_default T2_TOUCHID_MACOS_USER_ID 501
+ensure_config_default T2_TOUCHID_SPECIAL_BAG -501
+ensure_config_default T2_TOUCHID_ENROLLED_FINGER right-index-finger
+chmod 0600 /etc/t2-touchid.conf
+
 install -d -o root -g root -m 0755 "$target_dir" "$target_dir/src" /usr/local/lib/t2-touchid
 install -o root -g root -m 0755 "$source_dir/src/"*.py "$target_dir/src/"
+install -o root -g root -m 0755 "$source_dir/src/t2-touchid-doctor.py" /usr/local/sbin/t2-touchid-doctor
 install -o root -g root -m 0644 "$source_dir/README.md" "$target_dir/README.md"
+install -o root -g root -m 0644 "$source_dir/ROADMAP.md" "$target_dir/ROADMAP.md"
 
 python -m venv "$target_dir/.venv"
 "$target_dir/.venv/bin/pip" install --requirement "$source_dir/requirements.txt"
@@ -63,6 +75,19 @@ systemctl daemon-reload
 systemctl enable t2-sep-transport.service t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service fprintd.service
 systemctl reload dbus.service
 sudo -u "$target_user" systemctl --user daemon-reload || true
+
+if command -v dkms >/dev/null 2>&1; then
+  dkms_source=/usr/src/t2-sep-transport-0.1.0
+  install -d -o root -g root -m 0755 "$dkms_source/src"
+  install -o root -g root -m 0644 "$source_dir/dkms.conf" "$dkms_source/dkms.conf"
+  install -o root -g root -m 0644 "$source_dir/src/t2_sep_transport.c" \
+    "$source_dir/src/t2_sep_transport_uapi.h" "$source_dir/src/Makefile" "$dkms_source/src/"
+  dkms add --force -m t2-sep-transport -v 0.1.0
+  dkms build -m t2-sep-transport -v 0.1.0
+  dkms install --force -m t2-sep-transport -v 0.1.0
+else
+  echo "Warning: dkms is unavailable; rerun this installer after kernel upgrades." >&2
+fi
 
 echo "Core files installed. Follow README.md to provision the private keybag,"
 echo "start the transport and keybag services, unlock the bags, and run controls."

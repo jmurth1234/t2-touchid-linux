@@ -216,9 +216,12 @@ def summarize_command_reply(reply: object) -> dict:
     return summary
 
 
-def read_catacomb_payloads(archive_path: str) -> list[tuple[str, int, bytes]]:
+def read_catacomb_payloads(
+    archive_path: str, macos_user_id: int = 501
+) -> list[tuple[str, int, bytes]]:
     """Validate a macOS v3 catacomb archive and return opaque load payloads."""
-    expected = {"master.cat": -1, "user_000001f5.cat": 501}
+    user_name = f"user_{macos_user_id:08x}.cat"
+    expected = {"master.cat": -1, user_name: macos_user_id}
     found = {}
     with tarfile.open(archive_path, "r:gz") as archive:
         for member in archive.getmembers():
@@ -239,7 +242,7 @@ def read_catacomb_payloads(archive_path: str) -> list[tuple[str, int, bytes]]:
         raise ValueError(f"catacomb archive is missing: {', '.join(missing)}")
 
     payloads = []
-    for name in ("master.cat", "user_000001f5.cat"):
+    for name in ("master.cat", user_name):
         root = found[name]
         if not isinstance(root, dict):
             raise ValueError(f"{name} is not a keyed archive")
@@ -297,6 +300,12 @@ def read_biolockout_payload(archive_path: str) -> bytes:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default=os.environ.get("T2_TOUCHID_HOST"))
+    parser.add_argument(
+        "--macos-user-id",
+        type=int,
+        default=int(os.environ.get("T2_TOUCHID_MACOS_USER_ID", "501")),
+        help="numeric macOS user identity to scope biometric operations",
+    )
     parser.add_argument(
         "--interface", default=os.environ.get("T2_TOUCHID_INTERFACE")
     )
@@ -391,7 +400,7 @@ def main() -> None:
     parser.add_argument(
         "--identity-list",
         action="store_true",
-        help="query the SEP identity-record count for macOS user 501",
+        help="query the SEP identity-record count for the configured macOS user",
     )
     parser.add_argument(
         "--catacomb-state",
@@ -401,7 +410,7 @@ def main() -> None:
     parser.add_argument(
         "--sks-lock-state",
         action="store_true",
-        help="query the four-byte secure-key-store lock state for user 501",
+        help="query the secure-key-store lock state for the configured macOS user",
     )
     parser.add_argument(
         "--load-catacomb-archive",
@@ -425,6 +434,8 @@ def main() -> None:
         help="strip the validated 32-byte LTFC file wrapper before command 0x40",
     )
     args = parser.parse_args()
+    if not 0 <= args.macos_user_id <= 0xFFFFFFFF:
+        parser.error("--macos-user-id must fit an unsigned 32-bit integer")
     if not args.host or not args.interface:
         parser.error(
             "set --host/--interface or T2_TOUCHID_HOST/T2_TOUCHID_INTERFACE"
@@ -591,7 +602,7 @@ def main() -> None:
             operations.append("load FDR calibration")
         if args.identity_list:
             identities_reply, identities_events = biometric_command(
-                sock, 0x42, data=struct.pack("<I", 501), output_capacity=20 * 10
+                sock, 0x42, data=struct.pack("<I", args.macos_user_id), output_capacity=20 * 10
             )
             result["identity_list_reply"] = summarize_command_reply(
                 identities_reply
@@ -613,12 +624,12 @@ def main() -> None:
                     result["identity_user_field"] = (
                         "prefix"
                         if all(
-                            struct.unpack_from("<I", record)[0] == 501
+                            struct.unpack_from("<I", record)[0] == args.macos_user_id
                             for record in enrolled_identity_records
                         )
                         else "suffix"
                         if all(
-                            struct.unpack_from("<I", record, 16)[0] == 501
+                            struct.unpack_from("<I", record, 16)[0] == args.macos_user_id
                             for record in enrolled_identity_records
                         )
                         else "unknown"
@@ -652,7 +663,7 @@ def main() -> None:
             operations.append("get catacomb state")
         if args.sks_lock_state:
             sks_reply, sks_events = biometric_command(
-                sock, 0x27, data=struct.pack("<I", 501), output_capacity=4
+                sock, 0x27, data=struct.pack("<I", args.macos_user_id), output_capacity=4
             )
             result["sks_lock_state_reply"] = summarize_command_reply(sks_reply)
             if (
@@ -670,12 +681,14 @@ def main() -> None:
             if not args.initialize:
                 raise ValueError("--load-catacomb-archive requires --initialize")
             entries = []
-            payloads = read_catacomb_payloads(args.load_catacomb_archive)
+            payloads = read_catacomb_payloads(
+                args.load_catacomb_archive, args.macos_user_id
+            )
             if args.catacomb_component != "all":
                 selected_name = (
                     "master.cat"
                     if args.catacomb_component == "master"
-                    else "user_000001f5.cat"
+                    else f"user_{args.macos_user_id:08x}.cat"
                 )
                 payloads = [
                     payload for payload in payloads if payload[0] == selected_name
@@ -747,7 +760,7 @@ def main() -> None:
                     "<I", len(enrolled_identity_records)
                 ) + selected_identities
             match_data = struct.pack(
-                "<II60x", args.match_processed_flags, 501
+                "<II60x", args.match_processed_flags, args.macos_user_id
             ) + selected_identities
             if args.audible_match_alert:
                 subprocess.run(

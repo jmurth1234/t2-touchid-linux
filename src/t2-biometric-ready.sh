@@ -16,7 +16,13 @@ user=$(read_config T2_TOUCHID_USER)
 host=$(read_config T2_TOUCHID_HOST)
 interface=$(read_config T2_TOUCHID_INTERFACE)
 project=$(read_config T2_TOUCHID_PROJECT_DIR)
+macos_user_id=$(read_config T2_TOUCHID_MACOS_USER_ID)
+special_bag=$(read_config T2_TOUCHID_SPECIAL_BAG)
+enrolled_finger=$(read_config T2_TOUCHID_ENROLLED_FINGER)
 [[ -n $user && -n $host && -n $interface && -n $project ]] || exit 1
+[[ $macos_user_id =~ ^[0-9]+$ && $macos_user_id -le 4294967295 ]] || exit 1
+[[ $special_bag =~ ^-[0-9]+$ ]] || exit 1
+[[ $enrolled_finger =~ ^(left|right)-(thumb|index-finger|middle-finger|ring-finger|little-finger)$ ]] || exit 1
 
 if [[ -x $project/.venv/bin/python && -f $project/src/discover-biometric-port.py ]]; then
   python=$project/.venv/bin/python
@@ -34,6 +40,9 @@ export T2_TOUCHID_USER=$user
 export T2_TOUCHID_HOST=$host
 export T2_TOUCHID_INTERFACE=$interface
 export T2_TOUCHID_PROJECT_DIR=$project
+export T2_TOUCHID_MACOS_USER_ID=$macos_user_id
+export T2_TOUCHID_SPECIAL_BAG=$special_bag
+export T2_TOUCHID_ENROLLED_FINGER=$enrolled_finger
 
 port_file=/var/lib/t2-touchid/biometric-port
 umask 077
@@ -69,6 +78,9 @@ done
 [[ $port =~ ^[0-9]+$ ]] || exit 1
 
 [[ $warmed == 1 ]] || warm_up "$port"
-printf '%s\n' "$port" >"$port_file"
+temporary_port_file=$(mktemp "${port_file}.XXXXXX")
+printf '%s\n' "$port" >"$temporary_port_file"
+chmod 0600 "$temporary_port_file"
+mv -f "$temporary_port_file" "$port_file"
 logger --priority authpriv.info --tag t2-biometric-ready \
   'T2 BiometricKit cold-start readiness check passed'

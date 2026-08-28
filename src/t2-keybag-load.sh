@@ -5,7 +5,12 @@ set -eu
 TOOL=/usr/local/sbin/t2-aks-tool
 BAG=/var/lib/t2-touchid/user.kb
 SESSION=1
-SPECIAL_BAG=-501
+CONFIG_FILE=/etc/t2-touchid.conf
+SPECIAL_BAG=$(sed -n 's/^T2_TOUCHID_SPECIAL_BAG=//p' "$CONFIG_FILE" | tail -n 1)
+printf '%s\n' "$SPECIAL_BAG" | grep -Eq '^-[0-9]+$' || {
+	echo "invalid T2_TOUCHID_SPECIAL_BAG" >&2
+	exit 1
+}
 STATE_DIR=/run/t2-touchid
 STATE_FILE=$STATE_DIR/keybag.env
 

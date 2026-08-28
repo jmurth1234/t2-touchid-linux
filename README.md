@@ -6,7 +6,9 @@ T2 chip. It talks to bridgeOS BiometricKit over BridgeXPC and exposes a minimal
 
 This is research software, not an upstream `libfprint` driver. Enrollment and
 deletion remain in macOS. The Linux side only verifies an identity already
-enrolled for macOS user ID 501.
+enrolled for the configured macOS user ID.
+
+See [`ROADMAP.md`](ROADMAP.md) for the evidence-based reliability checklist.
 
 See the redacted conversation that produced this here: https://gist.github.com/jmurth1234/4a138019fd832dfabbed26475613db3a
 
@@ -19,7 +21,8 @@ negative unenrolled-finger control were both verified at the raw bridge,
 
 ## Security properties
 
-- Matching is scoped to user 501 and the identity records returned by SEP.
+- Matching is scoped to the configured macOS user ID and the identity records
+  returned by SEP.
 - Success requires the enrolled 16-byte identity UUID to occur in SEP's
   protocol-v2 match-result event.
 - Missing, malformed, rejected, or timeout results fail closed.
@@ -80,7 +83,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
 1. Keep macOS available and enroll exactly the finger you intend to use.
 2. Run the export helpers from macOS and transfer outputs privately.
 3. On Linux, identify the T2 USB-network interface and link-local IPv6 address,
-   then run `sudo ./install.sh`. Edit `/etc/t2-touchid.conf` when prompted.
+   then run `sudo ./install.sh`. Edit `/etc/t2-touchid.conf` when prompted,
+   including the numeric macOS user ID and its corresponding special bag.
 4. Start `t2-sep-transport.service`. The installer builds the module for the
    running kernel and installs it with `register_ool=1`. Do not unload it;
    reboot before rebuilding or replacing it. Re-run the installer after a
@@ -91,14 +95,22 @@ or an alternative sleep mode has been validated on the specific Mac model.
 
    ```sh
    sudo /usr/local/sbin/t2-aks-tool unlock-keybag 1 HANDLE
-   sudo /usr/local/sbin/t2-aks-tool unlock-keybag 1 -501
+   sudo /usr/local/sbin/t2-aks-tool unlock-keybag 1 SPECIAL_BAG
    ```
 
 7. Start `fprintd.service`. Run `fprintd-verify` once with the enrolled finger
    and once with an unenrolled finger. Require `verify-match` and
    `verify-no-match`, respectively.
 8. Only after those controls pass, install the relevant files from `pam/` into
-   `/etc/pam.d/`. Preserve backups and keep password authentication as fallback.
+   `/etc/pam.d/` with `sudo tools/install-pam.sh`. Keep password authentication
+   as fallback; `sudo tools/rollback-pam.sh` restores the originals.
+
+The installer is safe to rerun and replaces only project-managed files. When
+DKMS is available it registers the transport for kernel upgrades; otherwise it
+warns that the installer must be rerun after an upgrade. `sudo ./uninstall.sh`
+removes code and services but preserves configuration, credentials, keybags,
+and PAM backups. Add `--purge-private-data` only when those secrets should be
+permanently removed; PAM restoration remains an explicit operation.
 
 ### Unlocking keybags from password authentication
 
@@ -129,8 +141,8 @@ has been entered. The helper restricts itself to `T2_TOUCHID_USER` from
 
 ### Unattended boot unlock
 
-For fingerprint authentication on the first Omarchy lock screen after SDDM
-autologin, provision an encrypted systemd credential:
+For unattended keybag availability after SDDM autologin, provision an encrypted
+systemd credential:
 
 ```sh
 sudo tools/provision-credential.sh
@@ -149,7 +161,23 @@ non-matching initialization/calibration/identity-list warm-up before fprintd
 starts. This avoids exposing the first Omarchy lock-screen scan to the cold
 BiometricKit startup race observed on the proven configuration. Its verified
 dynamic port is cached root-only under `/var/lib/t2-touchid`; fprintd consumes
-that cache and does not request a finger until discovery has completed.
+that cache and does not request a finger until discovery has completed. Cold
+boot authentication has been verified with sudo. Omarchy lock-screen behavior
+depends on the active shell/login configuration and should be tested explicitly
+with `omarchy system lock` before being described as supported.
+
+## Diagnostics
+
+Run the privacy-safe health report as root so it can inspect root-only runtime
+state and the encrypted credential metadata:
+
+```sh
+sudo t2-touchid-doctor
+sudo t2-touchid-doctor --json
+```
+
+The report never prints configured addresses, usernames, ports, keybag handles,
+credential contents, identity UUIDs, or biometric payloads.
 
 This machine has no usable TPM, so the credential is encrypted with systemd's
 host key. It protects against casual/offline disclosure without the decrypted
@@ -165,8 +193,9 @@ Exact keybag extraction and hardware bring-up remain machine-sensitive. Read
 ```sh
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m unittest tests/test_t2_fprintd.py
+.venv/bin/python -m unittest discover -s tests -v
 python -m py_compile src/*.py
+tools/privacy-check.sh
 ```
 
 ## License
