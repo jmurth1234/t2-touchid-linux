@@ -15,13 +15,13 @@ evidence, not intent.
 
 - [x] Add a privacy-safe `t2-touchid-doctor` human report.
 - [x] Add machine-readable JSON output.
-- [ ] Run the installed doctor as root on the proven machine.
+- [x] Run the installed doctor as root on the proven machine.
 
 ## 3. fprintd lifecycle
 
 - [x] Bound stale claims and recover abandoned/completed transactions.
 - [x] Add contention, cancellation, stale-claim, and timeout tests.
-- [ ] Remove noisy `AlreadyInUse` tracebacks for expected contention.
+- [x] Reduce completed-claim retention after observed repeat-scan contention.
 
 ## 4. Configurable identity
 
@@ -64,7 +64,6 @@ evidence, not intent.
 These require an interactive user or a reboot and cannot be inferred from unit
 tests:
 
-- Root doctor report on the installed stack.
 - Explicit Omarchy lock/unlock positive and negative controls.
 - Cold boot after any service-order or credential changes.
 - Suspend/resume testing.

@@ -31,7 +31,8 @@ ENROLLED_FINGER = os.environ.get(
     "T2_TOUCHID_ENROLLED_FINGER", "right-index-finger"
 )
 ALLOWED_PAM_USERS = (LINUX_USER, "root")
-STALE_CLAIM_SECONDS = 5.0
+UNSTARTED_CLAIM_SECONDS = 5.0
+COMPLETED_CLAIM_SECONDS = 0.5
 
 if not 0 <= MACOS_USER_ID <= 0xFFFFFFFF:
     raise RuntimeError("T2_TOUCHID_MACOS_USER_ID is outside uint32 range")
@@ -322,14 +323,14 @@ class FprintDevice(ServiceInterface):
         )
 
     async def _expire_stale_claim(self, completed_task: asyncio.Task) -> None:
-        await asyncio.sleep(STALE_CLAIM_SECONDS)
+        await asyncio.sleep(COMPLETED_CLAIM_SECONDS)
         if self.verify_task is completed_task:
             self.verify_task = None
             self.claimed_user = None
         self.claim_expiry_task = None
 
     async def _expire_unstarted_claim(self) -> None:
-        await asyncio.sleep(STALE_CLAIM_SECONDS)
+        await asyncio.sleep(UNSTARTED_CLAIM_SECONDS)
         if self.verify_task is None:
             self.claimed_user = None
         self.claim_expiry_task = None

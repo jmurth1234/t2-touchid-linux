@@ -58,15 +58,15 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await MODULE.FprintDevice.Release.__wrapped__(device)
 
     async def test_unstarted_claim_expires(self):
-        old_timeout = MODULE.STALE_CLAIM_SECONDS
-        MODULE.STALE_CLAIM_SECONDS = 0.001
+        old_timeout = MODULE.UNSTARTED_CLAIM_SECONDS
+        MODULE.UNSTARTED_CLAIM_SECONDS = 0.001
         try:
             device = MODULE.FprintDevice(FakeBackend())
             device.Claim(MODULE.LINUX_USER)
             await asyncio.sleep(0.01)
             self.assertIsNone(device.claimed_user)
         finally:
-            MODULE.STALE_CLAIM_SECONDS = old_timeout
+            MODULE.UNSTARTED_CLAIM_SECONDS = old_timeout
 
     async def test_verify_stop_cancels_inflight_backend(self):
         started = asyncio.Event()
