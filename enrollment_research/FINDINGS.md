@@ -4364,6 +4364,32 @@ running-kext implementation skips `ACMSecContextCreateWithExternalForm` when
 that descriptor is absent; success would isolate the failure to ACM-context
 attachment, while another `-1` would keep it in keybag/password/header handling.
 
+The exact branch contract makes this diagnostic stronger than a generic retry.
+After successful keybag lookup, `_unlock_keybag_with_opts` receives the same
+raw password and `0x200` options whether or not an ACM blob exists. It returns
+function success while placing ordinary policy/unwrap outcomes in an output
+status; a wrong plaintext secret becomes `-5`. Only after a zero function and
+zero output status does `ipc_verify_secret_v1` inspect the ACM pointer/length.
+When either is absent it skips `ACMSecContextCreateWithExternalForm`, all ACM
+credential construction/property calls, and context credential attachment.
+Thus password-only success identifies the ACM half as the blocker; `-5`
+identifies ordinary password rejection; and another `-1` remains in keybag
+lookup, raw-secret initialization, or another pre-ACM function-level failure.
+
+The legacy operation-`0x04` control is closer still than initially documented.
+Its wrapper clears the device-options argument before calling
+`_change_lock_state_with_opts`; the already-unlocked alias then calls the same
+`_unlock_keybag_with_opts` helper with a null destination. Operation `0x21`
+passes `0x200`, but exact 25B77 disassembly shows that the helper observes only
+option bits `0x20`, `0x80`, and `0x100`. Bit `0x200` passes
+`_valid_device_options` but does not alter raw-secret initialization, policy
+operation, derivation, or unwrap inside this helper. Therefore the successful
+operation-`0x04` alias verification is an almost identical password-only
+control. If the staged zero-context operation-`0x21` probe still returns `-1`,
+the next work should instrument operation-specific framing and dispatch rather
+than repeat password, KDF, or ACM guesses; that result would falsify part of
+the current host-side model.
+
 A fresh manifest-verified capture from that same running 25B77 installation now
 bounds the caller-platform matrix without relying on another macOS release. The
 five candidate CodeDirectory hashes are `coreauthd`

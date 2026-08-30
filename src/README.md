@@ -53,6 +53,14 @@ stage-isolation diagnostic: success would prove password/keybag verification
 before ACM attachment, while failure remains inside that earlier stage. It
 does not enroll, delete, or evaluate an ACM policy.
 
+The installed wrapper selects the known positive runtime keybag and requires a
+narrow acknowledgement for this non-ACM path:
+
+```sh
+sudo t2-acm-authorize-test --diagnostic-password-only \
+  --acknowledge-password-verification
+```
+
 The v2 platform field formerly labelled `uid` is the caller's macOS audit
 session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent
 64-bit field is the macOS process-unique ID, not a PID. Both are research-only,

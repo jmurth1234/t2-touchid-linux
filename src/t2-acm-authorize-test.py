@@ -113,12 +113,25 @@ def verify_password_only_command(session: int, positive_handle: int) -> list[str
     ]
 
 
+def acknowledgement_valid(
+    password_only: bool, binding_and_policy: bool, password_verification: bool
+) -> bool:
+    if password_only:
+        return password_verification
+    return binding_and_policy
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--acknowledge-password-binding-and-policy-mutation",
         action="store_true",
-        required=True,
+        help="acknowledge the ACM context binding and policy evaluation path",
+    )
+    parser.add_argument(
+        "--acknowledge-password-verification",
+        action="store_true",
+        help="acknowledge the password-only keybag verification diagnostic",
     )
     handle_group = parser.add_mutually_exclusive_group()
     handle_group.add_argument(
@@ -148,8 +161,14 @@ def main() -> int:
         help="use ACM context-create command 0x01 instead of tracking command 0x24",
     )
     args = parser.parse_args()
-    if not args.acknowledge_password_binding_and_policy_mutation:
-        return 2
+    if not acknowledgement_valid(
+        args.diagnostic_password_only,
+        args.acknowledge_password_binding_and_policy_mutation,
+        args.acknowledge_password_verification,
+    ):
+        parser.error(
+            "select the acknowledgement matching the requested diagnostic path"
+        )
     if os.geteuid() != 0:
         print("t2-acm-authorize-test must run as root", file=sys.stderr)
         return 2

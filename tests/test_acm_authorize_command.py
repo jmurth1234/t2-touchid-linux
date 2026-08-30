@@ -73,6 +73,14 @@ class ACMAuthorizeCommandTests(unittest.TestCase):
         ):
             MODULE.verify_password_only_command(1, -501)
 
+    def test_password_only_requires_its_narrow_acknowledgement(self) -> None:
+        self.assertFalse(MODULE.acknowledgement_valid(True, True, False))
+        self.assertTrue(MODULE.acknowledgement_valid(True, False, True))
+
+    def test_acm_path_requires_policy_mutation_acknowledgement(self) -> None:
+        self.assertFalse(MODULE.acknowledgement_valid(False, False, True))
+        self.assertTrue(MODULE.acknowledgement_valid(False, True, False))
+
     def test_runtime_state_rejects_nonpositive_loaded_handle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory) / "keybag.env"

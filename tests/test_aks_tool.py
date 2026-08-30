@@ -29,6 +29,24 @@ class AKSToolTests(unittest.TestCase):
             )
             subprocess.run([str(executable)], check=True)
 
+    def test_verify_secret_kernel_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "t2-aks-protocol-unit"
+            subprocess.run(
+                [
+                    "cc",
+                    "-O2",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    str(ROOT / "tests/t2_aks_protocol_unit.c"),
+                    "-o",
+                    str(executable),
+                ],
+                check=True,
+            )
+            subprocess.run([str(executable)], check=True)
+
 
 if __name__ == "__main__":
     unittest.main()

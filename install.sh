@@ -132,6 +132,7 @@ if command -v dkms >/dev/null 2>&1; then
   dkms_stamp=$dkms_source/.source.sha256
   module_source_hash=$(
     sha256sum "$source_dir/dkms.conf" "$source_dir/src/t2_sep_transport.c" \
+      "$source_dir/src/t2_aks_protocol.h" \
       "$source_dir/src/t2_sep_transport_uapi.h" "$source_dir/src/Makefile" |
       awk '{print $1}' | sha256sum | awk '{print $1}'
   )
@@ -139,6 +140,7 @@ if command -v dkms >/dev/null 2>&1; then
   install -d -o root -g root -m 0755 "$dkms_source/src"
   install -o root -g root -m 0644 "$source_dir/dkms.conf" "$dkms_source/dkms.conf"
   install -o root -g root -m 0644 "$source_dir/src/t2_sep_transport.c" \
+    "$source_dir/src/t2_aks_protocol.h" \
     "$source_dir/src/t2_sep_transport_uapi.h" "$source_dir/src/Makefile" "$dkms_source/src/"
   running_kernel=$(uname -r)
   dkms_state=$(dkms status -m t2-sep-transport -v 0.1.0 2>/dev/null || true)

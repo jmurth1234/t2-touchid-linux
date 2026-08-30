@@ -25,6 +25,7 @@
 #include <linux/unaligned.h>
 #include <linux/uaccess.h>
 
+#include "t2_aks_protocol.h"
 #include "t2_sep_transport_uapi.h"
 
 static_assert(sizeof(struct t2_acm_ioc_exchange) == 48);
@@ -332,40 +333,6 @@ static bool t2_aks_operation_allowed(u8 operation)
 	}
 }
 
-static bool t2_aks_verify_acm_request_allowed(const u8 *request, size_t length)
-{
-	u32 password_length, padded_length, context_length;
-	s32 handle;
-	u64 options, session;
-
-	if (length < 36 || get_unaligned_le32(request) != 1)
-		return false;
-	/* verify_secret_v1 carries the owning AKS session, then the bag handle. */
-	session = get_unaligned_le64(request + 4);
-	handle = (s32)get_unaligned_le32(request + 12);
-	if (session != 1 || !handle)
-		return false;
-	password_length = get_unaligned_le32(request + 16);
-	if (!password_length || password_length > 128)
-		return false;
-	padded_length = ALIGN(password_length, 4);
-	if (length < 32 + padded_length)
-		return false;
-	if (memchr_inv(request + 20 + password_length, 0,
-		       padded_length - password_length))
-		return false;
-	context_length = get_unaligned_le32(request + 20 + padded_length);
-	/* A zero-length context isolates password/keybag verification. */
-	if (context_length != 0 && context_length != 16)
-		return false;
-	if (length != 32 + padded_length + context_length)
-		return false;
-	/* The v1 request ends with the selector-42 plaintext-secret option. */
-	options = get_unaligned_le64(request + 24 + padded_length +
-				   context_length);
-	return options == 0x200;
-}
-
 static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 				  const void *request_body,
 				  size_t request_body_length,
@@ -387,8 +354,8 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 	if (!t2_aks_operation_allowed(operation))
 		return -EACCES;
 	if (operation == 0x21 &&
-	    !t2_aks_verify_acm_request_allowed(request_body,
-					       request_body_length))
+	    !t2_aks_verify_secret_v1_request_allowed(request_body,
+						      request_body_length))
 		return -EACCES;
 	if (request_body_length > T2_SEP_AKS_MAX_BODY_SIZE)
 		return -EMSGSIZE;
