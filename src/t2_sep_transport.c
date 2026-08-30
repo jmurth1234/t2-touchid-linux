@@ -335,9 +335,9 @@ static bool t2_aks_verify_acm_request_allowed(const u8 *request, size_t length)
 {
 	u32 password_length, padded_length, context_length;
 	s32 handle;
-	u64 session;
+	u64 options, session;
 
-	if (length < 44 || get_unaligned_le32(request) != 1)
+	if (length < 52 || get_unaligned_le32(request) != 1)
 		return false;
 	/* verify_secret_v1 carries the owning AKS session, then the bag handle. */
 	session = get_unaligned_le64(request + 4);
@@ -348,7 +348,7 @@ static bool t2_aks_verify_acm_request_allowed(const u8 *request, size_t length)
 	if (!password_length || password_length > 128)
 		return false;
 	padded_length = ALIGN(password_length, 4);
-	if (length != 40 + padded_length)
+	if (length != 48 + padded_length)
 		return false;
 	if (memchr_inv(request + 20 + password_length, 0,
 		       padded_length - password_length))
@@ -356,8 +356,9 @@ static bool t2_aks_verify_acm_request_allowed(const u8 *request, size_t length)
 	context_length = get_unaligned_le32(request + 20 + padded_length);
 	if (context_length != 16)
 		return false;
-	/* Codec v1 ends after the 16-byte ACM external-context blob. */
-	return true;
+	/* The v1 request ends with the selector-42 plaintext-secret option. */
+	options = get_unaligned_le64(request + 40 + padded_length);
+	return options == 0x200;
 }
 
 static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,

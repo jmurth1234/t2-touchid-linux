@@ -37,11 +37,11 @@ a private keybag UUID, is created mode `0600`, and must never be committed or
 published. Decode only a private copy, redact identifiers in notes, and remove
 the raw output when the observation is complete.
 
-Operation `0x21` codec v1 ends immediately after the password and 16-byte ACM
-external-context blobs. The host selector accepts option Booleans, but the
-matching generated `_code_ipc_verify_secret` encoder does not serialize their
-local option qword in a v1 request. The kernel therefore rejects trailing
-option bytes as malformed rather than exposing them as a diagnostic surface.
+Operation `0x21` codec v1 contains the password and 16-byte ACM
+external-context blobs followed by one 64-bit device-options value. Exact
+selector `42` supplies plaintext-secret option `0x200`; the kernel accepts only
+that canonical value. Memento and structured-credential variants are not
+exposed by this research interface.
 
 After either buffer is successfully registered, the module pins itself in
 memory. SEP retains the DMA address and Apple exposes no matching unregister

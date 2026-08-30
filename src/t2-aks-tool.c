@@ -324,7 +324,7 @@ static int build_verify_password_acm_request(uint64_t session, int32_t handle,
 	    !request_out || !request_length_out || !handle)
 		return -1;
 	padded_length = (secret_length + 3) & ~(size_t)3;
-	request = calloc(1, 40 + padded_length);
+	request = calloc(1, 48 + padded_length);
 	if (!request)
 		return -1;
 	put_le32(request, 1); /* verify-secret codec version */
@@ -334,8 +334,10 @@ static int build_verify_password_acm_request(uint64_t session, int32_t handle,
 	memcpy(request + 20, secret, secret_length);
 	put_le32(request + 20 + padded_length, 16);
 	memcpy(request + 24 + padded_length, context, 16);
+	/* Selector 42 always supplies plaintext-secret device option 0x200. */
+	put_le64(request + 40 + padded_length, 0x200);
 	*request_out = request;
-	*request_length_out = 40 + (uint32_t)padded_length;
+	*request_length_out = 48 + (uint32_t)padded_length;
 	return 0;
 }
 
