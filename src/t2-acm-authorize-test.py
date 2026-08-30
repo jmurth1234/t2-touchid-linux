@@ -76,9 +76,6 @@ def keybag_runtime(expected_special: int) -> tuple[int, int]:
 def verify_password_command(
     session: int,
     keybag_handle: int,
-    *,
-    diagnostic_skip_acm: bool,
-    diagnostic_zero_options: bool = False,
 ) -> list[str]:
     if session != 1 or keybag_handle == 0:
         raise ACMDeviceError("unsafe password-verification target")
@@ -87,11 +84,6 @@ def verify_password_command(
         "verify-password-acm",
         str(session),
         str(keybag_handle),
-        *(
-            ["0"]
-            if diagnostic_zero_options
-            else (["640"] if diagnostic_skip_acm else [])
-        ),
     ]
 
 
@@ -128,21 +120,10 @@ def main() -> int:
         action="store_true",
         help="use the positive handle returned when this boot loaded the private keybag",
     )
-    diagnostic_group = parser.add_mutually_exclusive_group()
-    diagnostic_group.add_argument(
-        "--diagnostic-skip-acm",
-        action="store_true",
-        help="use selector-42 memento flags 0x280 instead of 0x200",
-    )
-    diagnostic_group.add_argument(
+    parser.add_argument(
         "--diagnostic-matrix",
         action="store_true",
-        help="test -3, special, and positive handles with selector-42 flags 0x200 and 0x280 using one password prompt",
-    )
-    diagnostic_group.add_argument(
-        "--diagnostic-zero-options",
-        action="store_true",
-        help="compare operation 0x21 with zero device-option flags",
+        help="test -3, special, and positive handles with the canonical codec-v1 request, stopping at the first success",
     )
     parser.add_argument(
         "--legacy-context-create",
@@ -172,8 +153,6 @@ def main() -> int:
                 else verify_password_command(
                     session,
                     keybag_handle,
-                    diagnostic_skip_acm=args.diagnostic_skip_acm,
-                    diagnostic_zero_options=args.diagnostic_zero_options,
                 )
             )
             completed = subprocess.run(
@@ -183,11 +162,7 @@ def main() -> int:
             )
             if completed.returncode:
                 raise ACMDeviceError("AKS password binding failed")
-            if (
-                args.diagnostic_matrix
-                or args.diagnostic_skip_acm
-                or args.diagnostic_zero_options
-            ):
+            if args.diagnostic_matrix:
                 raise ACMDeviceError(
                     "diagnostic completed without ACM credential binding"
                 )

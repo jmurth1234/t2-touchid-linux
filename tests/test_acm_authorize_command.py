@@ -22,26 +22,12 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ACMAuthorizeCommandTests(unittest.TestCase):
-    def test_selector42_and_memento_options_are_distinct(self) -> None:
-        plain = MODULE.verify_password_command(
-            1, -501, diagnostic_skip_acm=False
-        )
-        diagnostic = MODULE.verify_password_command(
-            1, -501, diagnostic_skip_acm=True
-        )
-        zero_options = MODULE.verify_password_command(
-            1,
-            -501,
-            diagnostic_skip_acm=False,
-            diagnostic_zero_options=True,
-        )
+    def test_verify_password_uses_canonical_v1_command(self) -> None:
+        plain = MODULE.verify_password_command(1, -501)
         self.assertEqual(
             plain,
             [str(MODULE.AKS_TOOL), "verify-password-acm", "1", "-501"],
         )
-        self.assertEqual(diagnostic[-3:], ["1", "-501", "640"])
-        self.assertEqual(zero_options[-3:], ["1", "-501", "0"])
-        self.assertNotIn("640", plain)
 
     def test_runtime_state_returns_positive_loaded_handle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

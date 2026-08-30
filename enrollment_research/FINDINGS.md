@@ -4294,39 +4294,38 @@ manifest-verified Boot Kernel Collection has SHA-256
 
 Its exact C++ symbol is
 `AppleKeyStore::verify_password(unsigned long long, int, OSData *, OSData *,
-bool, bool, bool)`. The generated operation-`0x21` wrapper serializes the first
-argument as the owning 64-bit AKS session and the second as the signed 32-bit
-keybag handle, followed by the password blob, ACM external-context blob, and
-an option qword. The server passes those first two values directly to
+bool, bool, bool)`. The generated operation-`0x21` wrapper places the first
+argument in the owning-session field and the second in the signed-handle field,
+followed by password and ACM external-context blob descriptors. The exact
+codec-v1 encoder serializes the version word, 64-bit session, 32-bit handle,
+password blob, and ACM-context blob, then stops. It does **not** serialize the
+local option qword. The server passes the first two values directly to
 `keybag_for_handle(session, handle)`, which compares the handle against each
 stored bag record and then accepts only a matching, wildcard, or zero owning
 session. For the proven runtime this is session `1` and special handle `-501`;
 reversing them makes lookup fail before the password or ACM context is used.
 
-The same exact server resolves the option-bit ambiguity. The three Boolean
-arguments map to bits `0x80`, `0x100`, and `0x200`. Exact
+The three host-side Boolean arguments do map to local option bits `0x80`,
+`0x100`, and `0x200`. Exact
 `_fv_init_cred_from_secret` disassembly proves that bit `0x100` selects a
 serialized ACM credential decoder; when it is clear, the supplied bytes are
 copied as a plain secret. A subsequent x86-64 ABI audit corrected the Boolean
 call-site ordering: selector `0x2a` unconditionally supplies the third Boolean,
-therefore setting **`0x200`**, while its memento form adds the first Boolean for
-**`0x280`**. Its second Boolean is zero, so selector 42 does not set `0x100`.
-The separate `identity_verify` caller sets the second Boolean and therefore
-uses structured input with `0x100`. A Linux reproduction of selector 42 must
-use `0x200` (with `0x280` only as the memento comparison) and preserve the
-endpoint-10 context lifetime.
+therefore setting local bit `0x200`, while its memento form also sets `0x80`.
+The decisive encoder audit changes the lower-level conclusion: those fields
+remain in the generated in-memory call structure but are omitted from the v1
+wire request. Both the running 25B77 kext and the independent 24G830 kext have
+the same encoder control flow. A Linux reproduction must therefore send no
+trailing options and must preserve the endpoint-10 context lifetime.
 
-Live tests on 2026-08-30 now cover the exact selector modes as well as the
-earlier negative controls. Plaintext `0x200` returns SEP status `-1` for `-3`,
-the `-501` system alias, and the positive runtime handle, using either the
-tracked command-`0x24` ACM context or the legacy command-`1` context. Memento
-`0x280` returns `-12` for the alias and positive handle and `-1` for `-3`.
-Changing the synthetic outer UID/process identity does not change those
-results. Native AKS headers also carry a 20-byte caller CodeDirectory hash;
-testing all five evidence-derived hashes from the current macOS caller chain
-left the `0x200` result at `-1`. Caller identity is therefore ruled out for
-this failure. The `0x280` result is explained by the selector's memento branch
-rather than by password failure.
+Live tests on 2026-08-30 had appended option qwords `0x200`, `0x280`, and zero
+to codec-v1 bodies. Those requests were eight bytes too long. SEP statuses
+`-1` and `-12` therefore describe malformed decoder inputs, not selector,
+memento, password, keybag, or caller-identity outcomes. Synthetic UID/process
+and five evidence-derived CodeDirectory-hash comparisons were also performed
+only with that malformed body and cannot establish identity indifference for
+the canonical request. The temporary zero-option kernel gate was disabled and
+removed after this correction.
 
 The running kext's `ipc_verify_secret_v1` implementation narrows `-1` further.
 It is returned before normal secret unwrap when `keybag_for_handle` cannot
@@ -4345,15 +4344,16 @@ state files were removed after decoding. This proves that the positive handle
 and `-501` both pass keybag lookup and keystore verification, and that neither
 policy backoff nor a locked bag explains operation `0x21`'s `-1`.
 
-The remaining boundary is now the operation-`0x21` unlock helper itself:
-secret derivation/unwrap or bridgeOS-specific handling of option `0x200`. In
-the current host kext, `0x200` survives validation but does not change the
-subsequent unlock route compared with option zero. A zero-option comparison is
-therefore the next bounded discriminator. The first attempt was rejected
-locally with `EACCES` by the Linux kernel allowlist and never reached SEP. A
-root-only, default-off `aks_allow_zero_verify_options` module parameter gates
-only that exact diagnostic request shape; enabling it requires a reboot into
-the rebuilt, pinned transport module.
+The successful boot sequence supplies an additional control. It unlocks the
+positive handle and then its `-501` alias with operation `0x04`. Because both
+refer to the same now-unlocked bag, the second call enters
+`_unlock_keybag_with_opts` in verify-only mode: null destination, raw password,
+and no device options. That succeeds. Consequently the shared keybag lookup,
+raw-secret initialization, policy/backoff, KDF, unwrap, already-unlocked state,
+and verify-only path are all known-good for the same password. The next bounded
+test is the correctly sized operation-`0x21` codec-v1 body. It requires one
+reboot into the rebuilt pinned module because the currently loaded kernel
+allowlist still requires the superseded eight-byte tail.
 
 One framework helper recovers a generic passphrase credential envelope, but
 the matching ModuleACM dispatch now proves that it is **not** the enrollment
@@ -4685,7 +4685,7 @@ production, but does not prove it is the exact producer of the object stored in
 |---|---|---|
 | Serialized per-user cache, timeout, invalidation, explicit wiping | Reproducible and desirable | Local secret hygiene only |
 | Numeric UID carried separately with enrollment | Already protocol-visible | Selects target; does not itself authorize it |
-| Password input and keybag unlock | Existing endpoint-7 tooling covers unlock; a root-only verify-secret validation tool exists, but the complete ACM-binding contract remains under live validation | Selector 42 uses raw password bytes with `0x200` (`0x280` for memento); the separate `0x100` path expects an already-serialized ACM credential |
+| Password input and keybag unlock | Existing endpoint-7 tooling covers unlock; a root-only canonical codec-v1 verify-secret path exists, but its corrected body remains pending live validation after reboot | The endpoint request is session, handle, raw password blob, and ACM-context blob; host selector option Booleans are not serialized by the v1 encoder |
 | `LAContext` policy `1007` and externalization | Exact 24G830 endpoint-10 commands and serializers are recovered; no Linux implementation yet | Produces the demonstrated mode-0 credential-set reference after backend policy success |
 | `budd` service and private entitlement | Apple-only host IPC policy | Restricts sharing of an already-created context |
 | SEP subject binding and freshness | UID-bound context create, password/context binding, ten-minute credential selection, and enrollment-authority flag are recovered | Backend authorization is reproducible in protocol, subject to strict broker ownership |
@@ -4799,9 +4799,8 @@ the mandatory escape path throughout.
    the secret from prompt through verification. Its minimal recovered path is:
    create the ACM context for the protected mapped Apple UID; export its 16-byte
    reference; pass the target password and that reference through endpoint-7
-   selector-42 verification as a plain secret with option qword `0x200`;
-   compare `0x280` only for memento behavior, while the separate structured-
-   credential path uses bit `0x100`;
+   selector-42 verification as the canonical codec-v1 session, handle, plain
+   secret blob, and ACM-context blob with no trailing option qword;
    evaluate policy
    `TouchIdEnrollment`/1007 through endpoint 10; re-export the authorized
    context reference and place it in BiometricKit mode 0; then destroy the
@@ -4914,7 +4913,8 @@ approved disposable-finger hardware experiment.
 - Turn the now-recovered endpoint-10/ACM policy-1007 issuance sequence into a
   future read-only-capable broker design: create `0x24`/fallback `1` for the
   authenticated Apple numeric UID, export the 16-byte reference, bind it through
-  endpoint-7 selector-42 verify-secret with raw-secret option `0x200`, retry command `3` for
+  endpoint-7 selector-42 verify-secret with the canonical raw-secret/context
+  codec-v1 body, retry command `3` for
   `TouchIdEnrollment`, and destroy on every failure or uncertain handoff. The
   remaining static uncertainty is the T2 biometric consumer's replay/one-shot
   semantics for the resulting mode-0 externalized credential set. A mode-1

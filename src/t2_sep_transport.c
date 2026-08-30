@@ -122,11 +122,6 @@ module_param_string(aks_platform_cdhash, aks_platform_cdhash,
 MODULE_PARM_DESC(aks_platform_cdhash,
 	"Optional 40-hex-character caller CDHash stamped into verify-secret AKS headers");
 
-static bool aks_allow_zero_verify_options;
-module_param(aks_allow_zero_verify_options, bool, 0600);
-MODULE_PARM_DESC(aks_allow_zero_verify_options,
-	"Permit research-only verify-secret requests with zero options (default: false)");
-
 struct t2_aks_header_v1 {
 	u8 digest[16];
 	__le32 version;
@@ -340,9 +335,9 @@ static bool t2_aks_verify_acm_request_allowed(const u8 *request, size_t length)
 {
 	u32 password_length, padded_length, context_length;
 	s32 handle;
-	u64 flags, session;
+	u64 session;
 
-	if (length < 52 || get_unaligned_le32(request) != 1)
+	if (length < 44 || get_unaligned_le32(request) != 1)
 		return false;
 	/* verify_secret_v1 carries the owning AKS session, then the bag handle. */
 	session = get_unaligned_le64(request + 4);
@@ -353,7 +348,7 @@ static bool t2_aks_verify_acm_request_allowed(const u8 *request, size_t length)
 	if (!password_length || password_length > 128)
 		return false;
 	padded_length = ALIGN(password_length, 4);
-	if (length != 48 + padded_length)
+	if (length != 40 + padded_length)
 		return false;
 	if (memchr_inv(request + 20 + password_length, 0,
 		       padded_length - password_length))
@@ -361,14 +356,8 @@ static bool t2_aks_verify_acm_request_allowed(const u8 *request, size_t length)
 	context_length = get_unaligned_le32(request + 20 + padded_length);
 	if (context_length != 16)
 		return false;
-	/*
-	 * Current selector 42 supplies plaintext with bit 0x200 and optionally
-	 * adds the 0x80 memento bit.  Bit 0x100 selects Apple's structured
-	 * ACM-credential decoder and is intentionally rejected here.
-	 */
-	flags = get_unaligned_le64(request + 40 + padded_length);
-	return flags == 0x200 || flags == 0x280 ||
-		(aks_allow_zero_verify_options && !flags);
+	/* Codec v1 ends after the 16-byte ACM external-context blob. */
+	return true;
 }
 
 static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,

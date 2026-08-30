@@ -16,10 +16,10 @@ int main(void)
 	uint32_t request_length = 0;
 
 	assert(build_verify_password_acm_request(1, -501, secret,
-						 sizeof(secret), context, 0x200, &request,
+						 sizeof(secret), context, &request,
 						 &request_length) == 0);
 	assert(request != NULL);
-	assert(request_length == 56);
+	assert(request_length == 48);
 	assert(get_le32(request) == 1);
 	assert(get_le64(request + 4) == 1);
 	assert((int32_t)get_le32(request + 12) == -501);
@@ -28,28 +28,21 @@ int main(void)
 	assert(request[25] == 0 && request[26] == 0 && request[27] == 0);
 	assert(get_le32(request + 28) == sizeof(context));
 	assert(memcmp(request + 32, context, sizeof(context)) == 0);
-	assert(get_le64(request + 48) == 0x200);
 	memset(request, 0, request_length);
 	free(request);
 
 	request = NULL;
 	assert(build_verify_password_acm_request(1, 4, secret, sizeof(secret),
-						 context, 0x280, &request,
+						 context, &request,
 						 &request_length) == 0);
-	assert(get_le64(request + 48) == 0x280);
+	assert(request_length == 48);
 	memset(request, 0, request_length);
 	free(request);
 
 	request = NULL;
 	assert(build_verify_password_acm_request(1, 0, secret, sizeof(secret),
-						 context, 0x200, &request,
+						 context, &request,
 						 &request_length) == -1);
-	assert(build_verify_password_acm_request(1, 4, secret, sizeof(secret),
-						 context, 0, &request,
-						 &request_length) == 0);
-	assert(get_le64(request + 48) == 0);
-	memset(request, 0, request_length);
-	free(request);
 
 	{
 		unsigned char state_request[24];
