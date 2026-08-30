@@ -30,7 +30,8 @@ BASELINE_KEYS = {
     "apple_uid",
     "account_uuid",
     "bag_uuid",
-    "transport_generation",
+    "linux_boot_uuid",
+    "connection_generation",
     "bridge_boot_uuid",
     "protocol_version",
     "policy_decision",
@@ -115,13 +116,19 @@ def validate_baseline(baseline: Any) -> None:
         "caller_linux_uid",
         "target_linux_uid",
         "apple_uid",
-        "transport_generation",
         "protocol_version",
         "master_enrollment_count",
     ):
         require_nonnegative_int(baseline[field], field)
-    for field in ("account_uuid", "bag_uuid", "bridge_boot_uuid"):
+    for field in (
+        "account_uuid",
+        "bag_uuid",
+        "linux_boot_uuid",
+        "connection_generation",
+    ):
         require_uuid(baseline[field], field)
+    if baseline["bridge_boot_uuid"] is not None:
+        require_uuid(baseline["bridge_boot_uuid"], "bridge_boot_uuid")
     if baseline["policy_decision"] != "authorized":
         raise JournalError("baseline policy decision is not authorized")
     if baseline["double_collection_equal"] is not True:

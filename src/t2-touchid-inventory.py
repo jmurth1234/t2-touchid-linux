@@ -43,6 +43,10 @@ def successful_reply(value: Any) -> bool:
 def summarize_probe(probe: Any, expected_uid: int) -> dict[str, Any]:
     if not isinstance(probe, dict):
         raise InventoryError("probe returned a non-object result")
+    if not successful_reply(probe.get("biometric_protocol_reply")):
+        raise InventoryError("biometric protocol query failed")
+    if probe.get("biometric_protocol_version") != 2:
+        raise InventoryError("full SEP inventory requires biometric protocol version 2")
     if not successful_reply(probe.get("identity_list_reply")):
         raise InventoryError("SEP identity inventory failed")
     count = probe.get("identity_record_count")
@@ -91,6 +95,7 @@ def summarize_probe(probe: Any, expected_uid: int) -> dict[str, Any]:
 
     result: dict[str, Any] = {
         "schema_version": 1,
+        "biometric_protocol_version": 2,
         "user_id": expected_uid,
         "sep_identity_count": count,
         "global_sep_identity_count": global_count,
@@ -143,6 +148,7 @@ def main() -> int:
                 "--port", port_text,
                 "--macos-user-id", str(uid),
                 "--initialize",
+                "--biometric-protocol",
                 "--identity-list",
                 "--global-identity-list",
                 "--identity-capacity",

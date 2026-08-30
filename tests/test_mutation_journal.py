@@ -15,21 +15,22 @@ def baseline():
         "apple_uid": 501,
         "account_uuid": "00000000-0000-0000-0000-000000000001",
         "bag_uuid": "00000000-0000-0000-0000-000000000002",
-        "transport_generation": 1,
-        "bridge_boot_uuid": "00000000-0000-0000-0000-000000000003",
+        "linux_boot_uuid": "00000000-0000-0000-0000-000000000003",
+        "connection_generation": "00000000-0000-0000-0000-000000000004",
+        "bridge_boot_uuid": None,
         "protocol_version": 2,
         "policy_decision": "authorized",
         "identity_records": [
             {
                 "user_id": 501,
-                "uuid": "00000000-0000-0000-0000-000000000004",
+                "uuid": "00000000-0000-0000-0000-000000000005",
                 "entity": 0,
             }
         ],
         "capacity": {"used": 1, "maximum": 5},
         "sep_catacomb": {
             "present": True,
-            "uuid": "00000000-0000-0000-0000-000000000005",
+            "uuid": "00000000-0000-0000-0000-000000000006",
             "hash": "a" * 64,
         },
         "host_components": [

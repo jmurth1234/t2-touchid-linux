@@ -12,6 +12,7 @@ import json
 import os
 import plistlib
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -214,6 +215,46 @@ def summarize_command_reply(reply: object) -> dict:
         output = reply[1]
         summary["output_length"] = len(output) if isinstance(output, bytes) else None
     return summary
+
+
+def write_private_json(path: str, value: object) -> None:
+    """Exclusively write root-only private inventory; never overwrite state."""
+    if os.geteuid() != 0:
+        raise PermissionError("private inventory output requires root")
+    destination = os.path.abspath(path)
+    parent = os.path.dirname(destination)
+    parent_info = os.stat(parent, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(parent_info.st_mode)
+        or parent_info.st_uid != 0
+        or parent_info.st_mode & 0o077
+    ):
+        raise PermissionError("private inventory parent must be root-owned mode 0700")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(destination, flags, 0o600)
+    try:
+        destination_info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(destination_info.st_mode)
+            or destination_info.st_uid != 0
+            or destination_info.st_nlink != 1
+        ):
+            raise PermissionError("private inventory output is not a root-owned regular file")
+        payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        payload += b"\n"
+        offset = 0
+        while offset < len(payload):
+            offset += os.write(descriptor, payload[offset:])
+        os.fsync(descriptor)
+        parent_descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_descriptor)
+        finally:
+            os.close(parent_descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def read_catacomb_payloads(
@@ -423,6 +464,11 @@ def main() -> None:
         help="repeat requested inventory queries and report exact private equality",
     )
     parser.add_argument(
+        "--private-inventory-output",
+        metavar="PATH",
+        help="write raw root-only inventory to a new file (never stdout)",
+    )
+    parser.add_argument(
         "--catacomb-state",
         action="store_true",
         help="query SEP catacomb state metadata without returning its contents",
@@ -474,8 +520,14 @@ def main() -> None:
         send_helo(sock, int(helo.get("BridgeXPCVersion", 39)))
         result = {"peer_helo": helo, "sent": "HELO only"}
         operations = []
+        connection_generation = str(uuid.uuid4())
         enrolled_identity_records: tuple[bytes, ...] = ()
         global_identity_records: tuple[bytes, ...] = ()
+        maximum_output = None
+        free_output = None
+        uuid_output = None
+        hash_output = None
+        catacomb_state_output = None
         if args.initialize:
             version_reply = request(sock, [0])
             if (
@@ -844,6 +896,7 @@ def main() -> None:
                 and isinstance(catacomb_reply[1], bytes)
                 and len(catacomb_reply[1]) in (8, 16)
             ):
+                catacomb_state_output = catacomb_reply[1]
                 result["catacomb_state_words"] = list(
                     struct.unpack(
                         "<" + "I" * (len(catacomb_reply[1]) // 4),
@@ -1034,6 +1087,86 @@ def main() -> None:
             operations.append("timed match" + (" + cancel" if match_started else " (rejected)"))
         if operations:
             result["sent"] = "HELO + read-only " + ", ".join(operations)
+        if args.private_inventory_output:
+            required = (
+                args.initialize,
+                args.biometric_protocol,
+                args.identity_list,
+                args.global_identity_list,
+                args.identity_capacity,
+                args.catacomb_component_state,
+                args.catacomb_state,
+                args.sks_lock_state,
+                args.stability_check,
+            )
+            if not all(required):
+                raise ValueError(
+                    "private inventory requires all inventory queries and --stability-check"
+                )
+            equality_fields = (
+                "identity_inventory_repeat_equal",
+                "global_identity_inventory_repeat_equal",
+                "identity_capacity_repeat_equal",
+                "catacomb_component_repeat_equal",
+                "catacomb_state_repeat_equal",
+                "sks_lock_state_repeat_equal",
+            )
+            if not all(result.get(field) is True for field in equality_fields):
+                raise ValueError("refusing to write unstable private inventory")
+            if not (
+                isinstance(maximum_output, bytes)
+                and len(maximum_output) == 4
+                and isinstance(free_output, bytes)
+                and len(free_output) == 4
+                and isinstance(uuid_output, bytes)
+                and len(uuid_output) == 16
+                and isinstance(hash_output, bytes)
+                and len(hash_output) == 33
+                and isinstance(catacomb_state_output, bytes)
+            ):
+                raise ValueError("refusing to write incomplete private inventory")
+            bridge_boot_uuid = helo.get("BootSessionUUID")
+            try:
+                bridge_boot_uuid = str(uuid.UUID(bridge_boot_uuid))
+            except (AttributeError, TypeError, ValueError):
+                bridge_boot_uuid = None
+            private = {
+                "schema_version": 1,
+                "connection_generation": connection_generation,
+                "bridge_boot_uuid": bridge_boot_uuid,
+                "biometric_protocol_version": result.get(
+                    "biometric_protocol_version"
+                ),
+                "apple_uid": args.macos_user_id,
+                "per_user_identity_records": [
+                    {
+                        "user_id": struct.unpack_from("<I", record)[0],
+                        "identity_uuid": str(uuid.UUID(bytes=record[4:20])),
+                    }
+                    for record in enrolled_identity_records
+                ],
+                "global_identity_records": [
+                    {
+                        "user_id": struct.unpack_from("<I", record)[0],
+                        "identity_uuid": str(uuid.UUID(bytes=record[4:20])),
+                        "group_type": struct.unpack_from("<I", record, 20)[0],
+                        "group_uuid": str(uuid.UUID(bytes=record[24:40])),
+                    }
+                    for record in global_identity_records
+                ],
+                "maximum_capacity": struct.unpack("<I", maximum_output)[0],
+                "configured_user_free_capacity": struct.unpack("<I", free_output)[0],
+                "catacomb": {
+                    "uuid": str(uuid.UUID(bytes=uuid_output)),
+                    "present": bool(hash_output[0]),
+                    "hash": hash_output[1:].hex(),
+                    "global_state": catacomb_state_output.hex(),
+                },
+                "sks_lock_state_raw": result.get("sks_lock_state"),
+                "double_collection_equal": True,
+            }
+            write_private_json(args.private_inventory_output, private)
+            result["private_inventory_written"] = True
         print(json.dumps(result, indent=2))
 
 

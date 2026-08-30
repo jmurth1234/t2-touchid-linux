@@ -17,6 +17,8 @@ def reply(status=0):
 
 def stable_probe(identity_count=2):
     return {
+        "biometric_protocol_reply": reply(),
+        "biometric_protocol_version": 2,
         "identity_list_reply": reply(),
         "identity_record_count": identity_count,
         "identity_record_bytes_valid": True,
