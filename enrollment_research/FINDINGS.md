@@ -4992,6 +4992,16 @@ approved disposable-finger hardware experiment.
   its sudo/pkexec origin must match the Linux account in the protected mapping,
   and the Apple UID is never accepted from the caller. Endpoint-10 correlation
   and the host-versus-SEP subject boundary are exact.
+
+The broker now also has the required operation-scoped handoff shape without
+exposing an enrollment command. `with_authorized_context` holds the exclusive
+endpoint-10 file and kernel context lease while it creates the mapped-user
+context, observes the initial passcode requirement, binds the password through
+endpoint 7, confirms policy 1007, invokes exactly one trusted callback with the
+live external form, and deletes the context on success or failure. The public
+diagnostic installs a no-mutation callback. A later mode-0 enrollment consumer
+can therefore be inserted inside the same lifetime rather than returning or
+caching an authorization object across process boundaries.
 - The endpoint-10 registration, ordinary single-flight correlation, SCRD
   request-ID exception, timeout, and reset/re-registration contracts are now
   exact. The staged Linux driver now represents each registration as a nonzero

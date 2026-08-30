@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import ctypes
 import fcntl
+import inspect
 import os
 import struct
 from pathlib import Path
 from collections.abc import Callable
+from typing import TypeVar, cast
 
 import t2_acm_protocol as protocol
 
@@ -21,6 +23,9 @@ EXCHANGE_SIZE = struct.calcsize(EXCHANGE_FORMAT)
 
 class ACMDeviceError(RuntimeError):
     pass
+
+
+T = TypeVar("T")
 
 
 def _ioc(direction: int, kind: int, number: int, size: int) -> int:
@@ -254,14 +259,15 @@ def policy_preflight_test(device: ACMDevice, user_id: int) -> dict[str, object]:
     }
 
 
-def authorization_test(
+def with_authorized_context(
     device: ACMDevice,
     user_id: int,
     password_binder: Callable[[bytes], None],
+    consumer: Callable[[bytes], T],
     *,
     tracking: bool = True,
-) -> dict[str, object]:
-    """Bind a password, evaluate policy 1007, and always destroy the context."""
+) -> tuple[protocol.PolicyResult, protocol.PolicyResult, T]:
+    """Run one trusted consumer while a fresh policy-1007 context is live."""
     response_capacity = 21 if tracking else 17
     response = device.exchange(
         protocol.build_create(user_id=user_id, tracking=tracking),
@@ -275,6 +281,8 @@ def authorization_test(
         response[: protocol.CONTEXT_SIZE], 0, tracking, False
     )
     initial = final = None
+    missing = object()
+    consumer_result: object = missing
     primary_error: BaseException | None = None
     try:
         handle = protocol.parse_create_response(response, tracking=tracking)
@@ -295,6 +303,13 @@ def authorization_test(
         )
         if not final.satisfied:
             raise ACMDeviceError("policy 1007 remained unsatisfied after password binding")
+        candidate = consumer(handle.context)
+        if inspect.isawaitable(candidate):
+            close = getattr(candidate, "close", None)
+            if callable(close):
+                close()
+            raise ACMDeviceError("authorized consumer must complete synchronously")
+        consumer_result = candidate
     except BaseException as error:
         primary_error = error
     try:
@@ -304,12 +319,35 @@ def authorization_test(
     except BaseException as cleanup_error:
         if primary_error is not None:
             raise ACMDeviceError(
-                f"authorization failed and mandatory cleanup failed: {cleanup_error}"
+                f"authorized operation failed and mandatory cleanup failed: {cleanup_error}"
             ) from primary_error
-        raise ACMDeviceError(f"mandatory context cleanup failed: {cleanup_error}") from cleanup_error
+        raise ACMDeviceError(
+            f"authorized operation completed but mandatory cleanup failed: {cleanup_error}"
+        ) from cleanup_error
     if primary_error is not None:
-        raise ACMDeviceError("authorization failed; context was cleaned up") from primary_error
+        raise ACMDeviceError(
+            "authorized operation failed; context was cleaned up"
+        ) from primary_error
     assert initial is not None and final is not None
+    assert consumer_result is not missing
+    return initial, final, cast(T, consumer_result)
+
+
+def authorization_test(
+    device: ACMDevice,
+    user_id: int,
+    password_binder: Callable[[bytes], None],
+    *,
+    tracking: bool = True,
+) -> dict[str, object]:
+    """Bind a password and authorize a no-mutation consumer for diagnostics."""
+    initial, final, _ = with_authorized_context(
+        device,
+        user_id,
+        password_binder,
+        lambda _context: None,
+        tracking=tracking,
+    )
     return {
         "schema_version": 1,
         "policy": 1007,

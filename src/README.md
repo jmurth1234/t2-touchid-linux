@@ -67,6 +67,14 @@ and the Apple UID and special bag are always read from that root-owned mapping.
 This is an explicit research authorization boundary; a dedicated production
 PolicyKit action is still required before any enrollment API is exposed.
 
+The internal `with_authorized_context` broker primitive holds the exclusive
+device lease across context creation, password binding, policy-1007 evaluation,
+one trusted consumer callback, and mandatory deletion. The callback is invoked
+only after policy success and before deletion; callback failure still takes the
+same cleanup path, and asynchronous consumers are rejected so work cannot
+escape the context lifetime. No command-line option exposes the context bytes, and the
+current diagnostic supplies a no-mutation consumer.
+
 The v2 platform field formerly labelled `uid` is the caller's macOS audit
 session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent
 64-bit field is the macOS process-unique ID, not a PID. Both are research-only,

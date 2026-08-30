@@ -149,6 +149,86 @@ class ACMDeviceTests(unittest.TestCase):
         self.assertFalse(result["fingerprint_mutation_performed"])
         self.assertEqual(fake.commands[-1][0], protocol.OP_CONTEXT_DELETE)
 
+    def test_authorized_consumer_is_scoped_before_context_delete(self):
+        context = bytes(range(16))
+        requirement = (
+            b"\x00\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x00\x00\x00\x00"
+        )
+        fake = FakeDevice(
+            context + b"\x00" * 4 + b"\x01",
+            policy_response=[requirement, b"\x01\x00\x00\x00"],
+        )
+
+        def consume(value: bytes) -> str:
+            self.assertEqual(value, context)
+            self.assertEqual(
+                [command for command, _capacity in fake.commands],
+                [
+                    protocol.OP_CONTEXT_CREATE_TRACKING,
+                    protocol.OP_VERIFY_POLICY,
+                    protocol.OP_VERIFY_POLICY,
+                ],
+            )
+            return "consumed"
+
+        initial, final, result = device.with_authorized_context(
+            fake, 501, lambda _context: None, consume
+        )
+        self.assertFalse(initial.satisfied)
+        self.assertTrue(final.satisfied)
+        self.assertEqual(result, "consumed")
+        self.assertEqual(fake.commands[-1][0], protocol.OP_CONTEXT_DELETE)
+
+    def test_authorized_consumer_failure_still_deletes_context(self):
+        context = bytes(range(16))
+        requirement = (
+            b"\x00\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x00\x00\x00\x00"
+        )
+        fake = FakeDevice(
+            context + b"\x00" * 4 + b"\x01",
+            policy_response=[requirement, b"\x01\x00\x00\x00"],
+        )
+
+        def fail(_context: bytes) -> None:
+            raise RuntimeError("synthetic consumer failure")
+
+        with self.assertRaisesRegex(device.ACMDeviceError, "context was cleaned up"):
+            device.with_authorized_context(fake, 501, lambda _: None, fail)
+        self.assertEqual(fake.commands[-1][0], protocol.OP_CONTEXT_DELETE)
+
+    def test_authorized_consumer_rejects_async_result_and_deletes_context(self):
+        context = bytes(range(16))
+        requirement = (
+            b"\x00\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x00\x00\x00\x00"
+        )
+        fake = FakeDevice(
+            context + b"\x00" * 4 + b"\x01",
+            policy_response=[requirement, b"\x01\x00\x00\x00"],
+        )
+
+        async def consume(_context: bytes) -> None:
+            return None
+
+        with self.assertRaisesRegex(
+            device.ACMDeviceError, "context was cleaned up"
+        ) as raised:
+            device.with_authorized_context(fake, 501, lambda _: None, consume)
+        self.assertIsInstance(raised.exception.__cause__, device.ACMDeviceError)
+        self.assertRegex(str(raised.exception.__cause__), "complete synchronously")
+        self.assertEqual(fake.commands[-1][0], protocol.OP_CONTEXT_DELETE)
+
     def test_authorization_can_use_legacy_context_create(self):
         context = bytes(range(16))
         requirement = (
