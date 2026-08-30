@@ -294,13 +294,18 @@ def append(
         os.close(fd)
 
 
-def create(path: Path, kind: str, baseline: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def create(
+    path: Path,
+    kind: str,
+    baseline: dict[str, Any],
+    operation_id: str | None = None,
+) -> tuple[str, dict[str, Any]]:
     if kind not in ALLOWED_KINDS:
         raise JournalError("unsupported mutation kind")
     if path.exists():
         raise JournalError("refusing to replace an existing journal")
     validate_baseline(baseline)
-    operation_id = str(uuid.uuid4())
+    operation_id = operation_id or str(uuid.uuid4())
     record = append(
         path,
         operation_id,

@@ -19,6 +19,7 @@ def stable_probe(identity_count=2):
     return {
         "biometric_protocol_reply": reply(),
         "biometric_protocol_version": 2,
+        "biometric_protocol_v2_attested": True,
         "identity_list_reply": reply(),
         "identity_record_count": identity_count,
         "identity_record_bytes_valid": True,
@@ -42,6 +43,7 @@ def stable_probe(identity_count=2):
         "catacomb_component_repeat_equal": True,
         "catacomb_state_repeat_equal": True,
         "sks_lock_state_repeat_equal": True,
+        "full_snapshot_repeat_equal": True,
     }
 
 

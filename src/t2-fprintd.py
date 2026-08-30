@@ -115,6 +115,12 @@ class T2Backend:
 
     async def _run_probe(self, port: int) -> dict:
         command = [
+            "/usr/bin/flock",
+            "--exclusive",
+            "--timeout",
+            "10",
+            "--no-fork",
+            "/run/t2-touchid/operation.lock",
             sys.executable,
             str(self.project_dir / "src/bridge-xpc-probe.py"),
             "--port",

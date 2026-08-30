@@ -55,7 +55,9 @@ if [[ -r $port_file ]]; then
 fi
 
 warm_up() {
-  $python "$source_dir/bridge-xpc-probe.py" \
+  /usr/bin/flock --exclusive --timeout 10 --no-fork \
+    /run/t2-touchid/operation.lock \
+    $python "$source_dir/bridge-xpc-probe.py" \
     --host "$host" --interface "$interface" --port "$1" \
     --initialize --reset-sensor --cancel-operation --load-calibration \
     --identity-list >/dev/null 2>&1

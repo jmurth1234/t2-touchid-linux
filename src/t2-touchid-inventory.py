@@ -43,10 +43,8 @@ def successful_reply(value: Any) -> bool:
 def summarize_probe(probe: Any, expected_uid: int) -> dict[str, Any]:
     if not isinstance(probe, dict):
         raise InventoryError("probe returned a non-object result")
-    if not successful_reply(probe.get("biometric_protocol_reply")):
-        raise InventoryError("biometric protocol query failed")
-    if probe.get("biometric_protocol_version") != 2:
-        raise InventoryError("full SEP inventory requires biometric protocol version 2")
+    if probe.get("biometric_protocol_v2_attested") is not True:
+        raise InventoryError("full SEP inventory requires attested biometric protocol v2")
     if not successful_reply(probe.get("identity_list_reply")):
         raise InventoryError("SEP identity inventory failed")
     count = probe.get("identity_record_count")
@@ -64,6 +62,7 @@ def summarize_probe(probe: Any, expected_uid: int) -> dict[str, Any]:
         ("catacomb_component_repeat_equal", "Catacomb component"),
         ("catacomb_state_repeat_equal", "Catacomb state"),
         ("sks_lock_state_repeat_equal", "SKS lock state"),
+        ("full_snapshot_repeat_equal", "complete inventory snapshot"),
     ):
         if probe.get(field) is not True:
             raise InventoryError(f"{description} changed during double collection")
@@ -141,6 +140,12 @@ def main() -> int:
             raise InventoryError("Touch ID installation is incomplete")
         completed = subprocess.run(
             [
+                "/usr/bin/flock",
+                "--exclusive",
+                "--timeout",
+                "10",
+                "--no-fork",
+                "/run/t2-touchid/operation.lock",
                 str(python),
                 str(probe),
                 "--host", host,
@@ -148,14 +153,7 @@ def main() -> int:
                 "--port", port_text,
                 "--macos-user-id", str(uid),
                 "--initialize",
-                "--biometric-protocol",
-                "--identity-list",
-                "--global-identity-list",
-                "--identity-capacity",
-                "--catacomb-component-state",
-                "--catacomb-state",
-                "--sks-lock-state",
-                "--stability-check",
+                "--full-inventory",
             ],
             check=False,
             capture_output=True,

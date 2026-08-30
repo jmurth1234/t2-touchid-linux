@@ -257,6 +257,204 @@ def write_private_json(path: str, value: object) -> None:
         os.close(descriptor)
 
 
+def reply_bytes(reply: object) -> bytes | None:
+    if (
+        isinstance(reply, list)
+        and len(reply) > 1
+        and reply[0] == 0
+        and isinstance(reply[1], bytes)
+    ):
+        return reply[1]
+    return None
+
+
+def collect_full_inventory(sock: socket.socket, macos_user_id: int) -> dict:
+    uid_data = struct.pack("<I", macos_user_id)
+    commands = {
+        "protocol": (1, b"", 4),
+        "global_identities": (0x51, b"", 40 * 10),
+        "maximum_capacity": (0x0F, b"", 4),
+        "per_user_identities": (0x42, uid_data, 20 * 10),
+        "free_capacity": (0x41, uid_data, 4),
+        "catacomb_uuid": (0x38, uid_data, 16),
+        "catacomb_hash": (0x3A, uid_data, 33),
+        "catacomb_state": (0x3C, b"", 4096),
+        "sks_lock_state": (0x27, uid_data, 4),
+    }
+    replies = {}
+    events = {}
+    for name, (command, data, capacity) in commands.items():
+        replies[name], events[name] = biometric_command(
+            sock, command, data=data, output_capacity=capacity
+        )
+        # A freshly opened BiometricKit session can acknowledge the first
+        # protocol query without returning its four-byte payload.  The query
+        # is read-only and idempotent, so retry only this missing reply.  All
+        # other inventory fields remain single-read per snapshot.
+        if name == "protocol":
+            for _attempt in range(2):
+                protocol_payload = reply_bytes(replies[name])
+                if isinstance(protocol_payload, bytes) and len(protocol_payload) == 4:
+                    break
+                retry_reply, retry_events = biometric_command(
+                    sock, command, data=data, output_capacity=capacity
+                )
+                replies[name] = retry_reply
+                events[name].extend(retry_events)
+    return {"replies": replies, "events": events}
+
+
+def summarize_full_inventory(
+    first: dict, second: dict, macos_user_id: int, connection_generation: str, helo: dict
+) -> tuple[dict, dict]:
+    a = first["replies"]
+    b = second["replies"]
+    equality = {name: a[name] == b[name] for name in a}
+    protocol = reply_bytes(a["protocol"])
+    global_output = reply_bytes(a["global_identities"])
+    maximum_output = reply_bytes(a["maximum_capacity"])
+    per_user_output = reply_bytes(a["per_user_identities"])
+    free_output = reply_bytes(a["free_capacity"])
+    uuid_output = reply_bytes(a["catacomb_uuid"])
+    hash_output = reply_bytes(a["catacomb_hash"])
+    state_output = reply_bytes(a["catacomb_state"])
+    sks_output = reply_bytes(a["sks_lock_state"])
+
+    per_user_valid = isinstance(per_user_output, bytes) and len(per_user_output) % 20 == 0
+    global_valid = isinstance(global_output, bytes) and len(global_output) % 40 == 0
+    per_user_records = (
+        tuple(per_user_output[offset : offset + 20] for offset in range(0, len(per_user_output), 20))
+        if per_user_valid
+        else ()
+    )
+    global_records = (
+        tuple(global_output[offset : offset + 40] for offset in range(0, len(global_output), 40))
+        if global_valid
+        else ()
+    )
+    configured_global = {
+        record[:20]
+        for record in global_records
+        if struct.unpack_from("<I", record)[0] == macos_user_id
+    }
+    reconciled = per_user_valid and global_valid and configured_global == set(per_user_records)
+    explicit_protocol_v2 = (
+        isinstance(protocol, bytes)
+        and len(protocol) == 4
+        and struct.unpack("<I", protocol)[0] == 2
+    )
+    # Global identity command 0x51 exists only in protocol v2.  A successful,
+    # structurally valid reply therefore attests v2 even on firmware sessions
+    # that reject the standalone command-1 query with kIOReturnBadArgument.
+    protocol_v2_attested = explicit_protocol_v2 or global_valid
+
+    public = {
+        "biometric_protocol_reply": summarize_command_reply(a["protocol"]),
+        "identity_list_reply": summarize_command_reply(a["per_user_identities"]),
+        "identity_record_bytes_valid": per_user_valid,
+        "identity_record_count": len(per_user_records) if per_user_valid else None,
+        "identity_user_field": (
+            "prefix"
+            if per_user_records
+            and all(struct.unpack_from("<I", record)[0] == macos_user_id for record in per_user_records)
+            else None
+        ),
+        "global_identity_list_reply": summarize_command_reply(a["global_identities"]),
+        "global_identity_record_bytes_valid": global_valid,
+        "global_identity_record_count": len(global_records) if global_valid else None,
+        "configured_identity_records_reconciled": reconciled,
+        "biometric_protocol_v2_attested": protocol_v2_attested,
+        "biometric_protocol_attestation": (
+            "command-1" if explicit_protocol_v2 else "v2-global-identity-command"
+        ) if protocol_v2_attested else None,
+        "identity_capacity_reply": summarize_command_reply(a["maximum_capacity"]),
+        "identity_free_count_reply": summarize_command_reply(a["free_capacity"]),
+        "catacomb_uuid_reply": summarize_command_reply(a["catacomb_uuid"]),
+        "catacomb_hash_reply": summarize_command_reply(a["catacomb_hash"]),
+        "catacomb_uuid_length_valid": isinstance(uuid_output, bytes) and len(uuid_output) == 16,
+        "catacomb_hash_length_valid": isinstance(hash_output, bytes) and len(hash_output) == 33,
+        "catacomb_state_reply": summarize_command_reply(a["catacomb_state"]),
+        "sks_lock_state_reply": summarize_command_reply(a["sks_lock_state"]),
+        "identity_inventory_repeat_equal": equality["per_user_identities"],
+        "global_identity_inventory_repeat_equal": equality["global_identities"],
+        "identity_capacity_repeat_equal": equality["maximum_capacity"] and equality["free_capacity"],
+        "catacomb_component_repeat_equal": equality["catacomb_uuid"] and equality["catacomb_hash"],
+        "catacomb_state_repeat_equal": equality["catacomb_state"],
+        "sks_lock_state_repeat_equal": equality["sks_lock_state"],
+        "full_snapshot_repeat_equal": all(equality.values()),
+    }
+    if isinstance(protocol, bytes) and len(protocol) == 4:
+        public["biometric_protocol_version"] = struct.unpack("<I", protocol)[0]
+    if isinstance(maximum_output, bytes) and len(maximum_output) == 4:
+        public["identity_maximum_capacity"] = struct.unpack("<I", maximum_output)[0]
+    if isinstance(free_output, bytes) and len(free_output) == 4:
+        public["identity_free_count"] = struct.unpack("<I", free_output)[0]
+    if isinstance(hash_output, bytes) and len(hash_output) == 33:
+        public["catacomb_component_present"] = bool(hash_output[0])
+    if isinstance(state_output, bytes) and len(state_output) in (8, 16):
+        public["catacomb_state_words"] = list(
+            struct.unpack("<" + "I" * (len(state_output) // 4), state_output)
+        )
+    if isinstance(sks_output, bytes) and len(sks_output) == 4:
+        public["sks_lock_state"] = struct.unpack("<I", sks_output)[0]
+
+    private_gate = {
+        "snapshot_stable": all(equality.values()),
+        "identity_lists_reconciled": reconciled,
+        "protocol_v2_attested": protocol_v2_attested,
+        "maximum_capacity_length": isinstance(maximum_output, bytes) and len(maximum_output) == 4,
+        "free_capacity_length": isinstance(free_output, bytes) and len(free_output) == 4,
+        "catacomb_uuid_length": isinstance(uuid_output, bytes) and len(uuid_output) == 16,
+        "catacomb_hash_length": isinstance(hash_output, bytes) and len(hash_output) == 33,
+        "catacomb_state_present": isinstance(state_output, bytes),
+        "sks_lock_state_length": isinstance(sks_output, bytes) and len(sks_output) == 4,
+    }
+    failures = [name for name, passed in private_gate.items() if not passed]
+    public["private_inventory_complete"] = not failures
+    public["private_inventory_gate_failures"] = failures
+    if failures:
+        return public, {}
+    bridge_boot_uuid = helo.get("BootSessionUUID")
+    try:
+        bridge_boot_uuid = str(uuid.UUID(bridge_boot_uuid))
+    except (AttributeError, TypeError, ValueError):
+        bridge_boot_uuid = None
+    private = {
+        "schema_version": 1,
+        "connection_generation": connection_generation,
+        "bridge_boot_uuid": bridge_boot_uuid,
+        "biometric_protocol_version": 2,
+        "apple_uid": macos_user_id,
+        "per_user_identity_records": [
+            {
+                "user_id": struct.unpack_from("<I", record)[0],
+                "identity_uuid": str(uuid.UUID(bytes=record[4:20])),
+            }
+            for record in per_user_records
+        ],
+        "global_identity_records": [
+            {
+                "user_id": struct.unpack_from("<I", record)[0],
+                "identity_uuid": str(uuid.UUID(bytes=record[4:20])),
+                "group_type": struct.unpack_from("<I", record, 20)[0],
+                "group_uuid": str(uuid.UUID(bytes=record[24:40])),
+            }
+            for record in global_records
+        ],
+        "maximum_capacity": struct.unpack("<I", maximum_output)[0],
+        "configured_user_free_capacity": struct.unpack("<I", free_output)[0],
+        "catacomb": {
+            "uuid": str(uuid.UUID(bytes=uuid_output)),
+            "present": bool(hash_output[0]),
+            "hash": hash_output[1:].hex(),
+            "global_state": state_output.hex(),
+        },
+        "sks_lock_state_raw": struct.unpack("<I", sks_output)[0],
+        "double_collection_equal": True,
+    }
+    return public, private
+
+
 def read_catacomb_payloads(
     archive_path: str, macos_user_id: int = 501
 ) -> list[tuple[str, int, bytes]]:
@@ -464,6 +662,11 @@ def main() -> None:
         help="repeat requested inventory queries and report exact private equality",
     )
     parser.add_argument(
+        "--full-inventory",
+        action="store_true",
+        help="collect complete inventory snapshots A and B on one connection",
+    )
+    parser.add_argument(
         "--private-inventory-output",
         metavar="PATH",
         help="write raw root-only inventory to a new file (never stdout)",
@@ -528,6 +731,7 @@ def main() -> None:
         uuid_output = None
         hash_output = None
         catacomb_state_output = None
+        private_inventory = None
         if args.initialize:
             version_reply = request(sock, [0])
             if (
@@ -546,6 +750,20 @@ def main() -> None:
             )
             result["bridge_client_version"] = client_version
             operations.append("version negotiation")
+        if args.full_inventory:
+            if not args.initialize:
+                raise ValueError("--full-inventory requires --initialize")
+            first_inventory = collect_full_inventory(sock, args.macos_user_id)
+            second_inventory = collect_full_inventory(sock, args.macos_user_id)
+            public_inventory, private_inventory = summarize_full_inventory(
+                first_inventory,
+                second_inventory,
+                args.macos_user_id,
+                connection_generation,
+                helo,
+            )
+            result.update(public_inventory)
+            operations.append("full inventory snapshots A/B")
         if args.bridge_version:
             result["bridge_version_reply"] = request(sock, [0])
             operations.append("getBridgeVersion")
@@ -1088,6 +1306,17 @@ def main() -> None:
         if operations:
             result["sent"] = "HELO + read-only " + ", ".join(operations)
         if args.private_inventory_output:
+            if args.full_inventory:
+                if not private_inventory:
+                    failures = result.get("private_inventory_gate_failures", ["unknown"])
+                    raise ValueError(
+                        "refusing to write incomplete private inventory: "
+                        + ", ".join(failures)
+                    )
+                write_private_json(args.private_inventory_output, private_inventory)
+                result["private_inventory_written"] = True
+                print(json.dumps(result, indent=2))
+                return
             required = (
                 args.initialize,
                 args.biometric_protocol,
