@@ -25,9 +25,26 @@ root-only exchange device. The kernel, rather than userspace, owns header
 generation, transaction matching, SHA-256 verification, size bounds, and
 request-buffer scrubbing. It accepts only the recovered AppleKeyStore opcodes
 `0x03` (load keybag), `0x04` (change lock state), `0x19` (get device state),
-and `0x4d` (capabilities); every other opcode is rejected. Capability
+`0x21` (verify secret with a 16-byte ACM context), and `0x4d` (capabilities);
+every other opcode is rejected. Operation `0x21` is additionally restricted to
+the recovered codec, session, password, context, and option layouts. Capability
 negotiation uses the required v1 header, while normal operations use the
 negotiated v2 header and calendar-time extension.
+
+The research-only `get-device-state-v1 SESSION HANDLE SELECTOR OUTPUT` command
+implements the recovered 24-byte operation-`0x19` codec. Its output can contain
+a private keybag UUID, is created mode `0600`, and must never be committed or
+published. Decode only a private copy, redact identifiers in notes, and remove
+the raw output when the observation is complete.
+
+Selector-42 verification normally permits only option `0x200`, plus the
+`0x280` memento comparison. For one bounded operation-`0x21` diagnostic, the
+root-writable `aks_allow_zero_verify_options` module parameter can also permit
+option zero. It defaults to false and does not relax any opcode, codec, session,
+handle, password-length, padding, or ACM-context validation. Enable it only for
+the comparison, then set it back to false. Because the loaded module is pinned,
+adding this parameter to an existing installation requires rebuilding followed
+by a reboot; never unload the active module.
 
 After either buffer is successfully registered, the module pins itself in
 memory. SEP retains the DMA address and Apple exposes no matching unregister

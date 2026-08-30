@@ -4322,27 +4322,38 @@ the `-501` system alias, and the positive runtime handle, using either the
 tracked command-`0x24` ACM context or the legacy command-`1` context. Memento
 `0x280` returns `-12` for the alias and positive handle and `-1` for `-3`.
 Changing the synthetic outer UID/process identity does not change those
-results. The `0x280` result is therefore explained by the selector's memento
-branch rather than by password failure.
+results. Native AKS headers also carry a 20-byte caller CodeDirectory hash;
+testing all five evidence-derived hashes from the current macOS caller chain
+left the `0x200` result at `-1`. Caller identity is therefore ruled out for
+this failure. The `0x280` result is explained by the selector's memento branch
+rather than by password failure.
 
 The running kext's `ipc_verify_secret_v1` implementation narrows `-1` further.
 It is returned before normal secret unwrap when `keybag_for_handle` cannot
 resolve the supplied owner/handle, or when the unlock helper fails at function
 level; a normal wrong plaintext password becomes status `-5`. The raw-secret
-initializer itself cannot produce `-1` for a non-empty valid request. The host
-kext's policy-operation-6 target is a zero-return stub followed by a backoff
-check, although the bridgeOS implementation may differ. Consequently the exact
-remaining boundary is pre-password keybag/policy lookup or dispatch identity,
-not password encoding and not the two-blob selector body.
+initializer itself cannot produce `-1` for a non-empty valid request.
 
-Native header generation stamps a 20-byte CodeDirectory hash after the process
-unique ID and UID in the 32-byte AKS platform field. Linux currently proves
-only the first two fields; its CDHash is zero. The transport therefore exposes
-a root-only, research-only `aks_platform_cdhash` module parameter accepting
-exactly 40 hexadecimal characters. The macOS evidence collector preserves the
-candidate LocalAuthentication/AKS caller binaries and their code-signing
-metadata. Testing the actual selector caller's CDHash is the next decisive
-diagnostic; unrelated daemon hashes must not be guessed into production.
+The exact v1 operation-`0x19` state-query codec was then recovered and tested.
+Its 24-byte body is codec version `1`, owning session, signed handle, an empty
+PFK-parameters blob, and selector. Session `1` with both the positive loaded
+handle and special alias `-501` returned a valid state dictionary; current-user
+alias `-3` failed. A private, UUID-redacted decode of the positive handle
+reported bag handle `9`, maximum attempts `11`, backoff `0`, failed attempts
+`0`, lock state `0`, generation state `0`, and state word `0x06000004`. The raw
+state files were removed after decoding. This proves that the positive handle
+and `-501` both pass keybag lookup and keystore verification, and that neither
+policy backoff nor a locked bag explains operation `0x21`'s `-1`.
+
+The remaining boundary is now the operation-`0x21` unlock helper itself:
+secret derivation/unwrap or bridgeOS-specific handling of option `0x200`. In
+the current host kext, `0x200` survives validation but does not change the
+subsequent unlock route compared with option zero. A zero-option comparison is
+therefore the next bounded discriminator. The first attempt was rejected
+locally with `EACCES` by the Linux kernel allowlist and never reached SEP. A
+root-only, default-off `aks_allow_zero_verify_options` module parameter gates
+only that exact diagnostic request shape; enabling it requires a reboot into
+the rebuilt, pinned transport module.
 
 One framework helper recovers a generic passphrase credential envelope, but
 the matching ModuleACM dispatch now proves that it is **not** the enrollment

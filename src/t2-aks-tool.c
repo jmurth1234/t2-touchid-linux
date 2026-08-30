@@ -323,7 +323,7 @@ static int build_verify_password_acm_request(uint64_t session, int32_t handle,
 
 	if (!secret || !secret_length || secret_length > 128 || !context ||
 	    !request_out || !request_length_out || !handle ||
-	    (flags != 0x200 && flags != 0x280))
+	    (flags != 0 && flags != 0x200 && flags != 0x280))
 		return -1;
 	padded_length = (secret_length + 3) & ~(size_t)3;
 	request = calloc(1, 48 + padded_length);
@@ -458,7 +458,7 @@ static int verify_password_acm(int fd, const char *session_text,
 
 	if (parse_u64(session_text, &session) ||
 	    (flags_text && (parse_u64(flags_text, &flags) ||
-				    (flags != 0x200 && flags != 0x280)))) {
+				    (flags != 0 && flags != 0x200 && flags != 0x280)))) {
 		fprintf(stderr, "invalid AKS session or diagnostic flags\n");
 		return 2;
 	}
@@ -538,6 +538,102 @@ out:
 	memset(secret, 0, sizeof(secret));
 	memset(context, 0, sizeof(context));
 	return ret;
+}
+
+static int build_get_device_state_v1_request(uint64_t session, int32_t handle,
+					     uint32_t selector,
+					     unsigned char request[24])
+{
+	if (!session || !handle || !request)
+		return -1;
+	memset(request, 0, 24);
+	put_le32(request, 1); /* AKS codec version. */
+	put_le64(request + 4, session);
+	put_le32(request + 12, (uint32_t)handle);
+	/* Empty v1 PFK-parameters blob: its zero length is at +16. */
+	put_le32(request + 20, selector);
+	return 0;
+}
+
+static int get_device_state_v1(int fd, const char *session_text,
+			       const char *handle_text,
+			       const char *selector_text,
+			       const char *output_path)
+{
+	unsigned char request[24];
+	unsigned char response[16300] = { 0 };
+	struct t2_aks_ioc_exchange exchange = {
+		.operation = 0x19,
+		.request_length = sizeof(request),
+		.response_capacity = sizeof(response),
+		.request = (uintptr_t)request,
+		.response = (uintptr_t)response,
+	};
+	uint64_t session;
+	char *end = NULL;
+	long handle;
+	unsigned long selector;
+	uint32_t codec_version, blob_length;
+	int output;
+	ssize_t written;
+
+	if (parse_u64(session_text, &session) || !session) {
+		fprintf(stderr, "invalid session: %s\n", session_text);
+		return 2;
+	}
+	errno = 0;
+	handle = strtol(handle_text, &end, 0);
+	if (errno || !end || *end || !handle || handle < INT32_MIN ||
+	    handle > INT32_MAX) {
+		fprintf(stderr, "invalid handle: %s\n", handle_text);
+		return 2;
+	}
+	errno = 0;
+	end = NULL;
+	selector = strtoul(selector_text, &end, 0);
+	if (errno || !end || *end || selector > UINT32_MAX) {
+		fprintf(stderr, "invalid selector: %s\n", selector_text);
+		return 2;
+	}
+	if (build_get_device_state_v1_request(session, (int32_t)handle,
+					      (uint32_t)selector, request)) {
+		fprintf(stderr, "invalid get-device-state-v1 request\n");
+		return 2;
+	}
+	if (ioctl(fd, T2_AKS_IOC_EXCHANGE, &exchange) < 0) {
+		perror("T2_AKS_IOC_EXCHANGE");
+		return 1;
+	}
+	if (exchange.response_length < 8) {
+		fprintf(stderr, "short device-state-v1 response: %u bytes\n",
+			exchange.response_length);
+		return 1;
+	}
+	codec_version = get_le32(response);
+	blob_length = get_le32(response + 4);
+	if (codec_version != 1 || blob_length > exchange.response_length - 8) {
+		fprintf(stderr,
+			"invalid device-state-v1 response: codec_version=%u blob_length=%u response_length=%u\n",
+			codec_version, blob_length,
+			exchange.response_length);
+		return 1;
+	}
+	output = open(output_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+		      0600);
+	if (output < 0) {
+		perror("open output");
+		return 1;
+	}
+	written = write(output, response + 8, blob_length);
+	if (written < 0 || (uint32_t)written != blob_length) {
+		perror("write output");
+		close(output);
+		return 1;
+	}
+	close(output);
+	printf("codec_version=1 blob_length=%u response_length=%u\n",
+	       blob_length, exchange.response_length);
+	return 0;
 }
 
 static int get_device_state(int fd, const char *handle_text,
@@ -621,7 +717,8 @@ int main(int argc, char **argv)
 	      ((argc == 4 || argc == 5) &&
 	       !strcmp(argv[1], "verify-password-acm")) ||
 	      (argc == 5 && !strcmp(argv[1], "verify-password-acm-matrix")) ||
-	      (argc == 5 && !strcmp(argv[1], "get-device-state")))) {
+	      (argc == 5 && !strcmp(argv[1], "get-device-state")) ||
+	      (argc == 6 && !strcmp(argv[1], "get-device-state-v1")))) {
 		fprintf(stderr,
 			"Usage: %s capabilities\n"
 			"       %s load-keybag INPUT [SESSION]\n"
@@ -630,9 +727,10 @@ int main(int argc, char **argv)
 			"       %s unlock-keybag-stdin SESSION HANDLE\n"
 			"       %s verify-password-acm SESSION HANDLE [FLAGS] < CONTEXT_16_BYTES\n"
 			"       %s verify-password-acm-matrix SESSION SPECIAL POSITIVE < CONTEXT_16_BYTES\n"
-			"       %s get-device-state HANDLE SELECTOR OUTPUT\n",
+			"       %s get-device-state HANDLE SELECTOR OUTPUT\n"
+			"       %s get-device-state-v1 SESSION HANDLE SELECTOR OUTPUT\n",
 			argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0],
-			argv[0]);
+			argv[0], argv[0]);
 		return 2;
 	}
 	fd = open("/dev/t2-aks", O_RDWR | O_CLOEXEC);
@@ -655,6 +753,8 @@ int main(int argc, char **argv)
 					 argc == 5 ? argv[4] : NULL);
 	else if (!strcmp(argv[1], "verify-password-acm-matrix"))
 		ret = verify_password_acm_matrix(fd, argv[2], argv[3], argv[4]);
+	else if (!strcmp(argv[1], "get-device-state-v1"))
+		ret = get_device_state_v1(fd, argv[2], argv[3], argv[4], argv[5]);
 	else
 		ret = get_device_state(fd, argv[2], argv[3], argv[4]);
 	close(fd);

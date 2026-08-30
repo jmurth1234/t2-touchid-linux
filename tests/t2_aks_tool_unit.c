@@ -44,5 +44,32 @@ int main(void)
 	assert(build_verify_password_acm_request(1, 0, secret, sizeof(secret),
 						 context, 0x200, &request,
 						 &request_length) == -1);
+	assert(build_verify_password_acm_request(1, 4, secret, sizeof(secret),
+						 context, 0, &request,
+						 &request_length) == 0);
+	assert(get_le64(request + 48) == 0);
+	memset(request, 0, request_length);
+	free(request);
+
+	{
+		unsigned char state_request[24];
+
+		assert(build_get_device_state_v1_request(1, 9, 0,
+						 state_request) == 0);
+		assert(get_le32(state_request) == 1);
+		assert(get_le64(state_request + 4) == 1);
+		assert((int32_t)get_le32(state_request + 12) == 9);
+		assert(get_le32(state_request + 16) == 0);
+		assert(get_le32(state_request + 20) == 0);
+
+		assert(build_get_device_state_v1_request(1, -501, 7,
+						 state_request) == 0);
+		assert((int32_t)get_le32(state_request + 12) == -501);
+		assert(get_le32(state_request + 20) == 7);
+		assert(build_get_device_state_v1_request(0, 9, 0,
+						 state_request) == -1);
+		assert(build_get_device_state_v1_request(1, 0, 0,
+						 state_request) == -1);
+	}
 	return 0;
 }
