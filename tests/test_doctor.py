@@ -60,6 +60,44 @@ class DoctorTests(unittest.TestCase):
         ):
             self.assertEqual(doctor.dkms_check().status, "pass")
 
+    def test_gnu_build_id_reads_sysfs_note(self):
+        descriptor = bytes(range(20))
+        note = (
+            (4).to_bytes(4, "little")
+            + len(descriptor).to_bytes(4, "little")
+            + (3).to_bytes(4, "little")
+            + b"GNU\0"
+            + descriptor
+        )
+        self.assertEqual(doctor.gnu_build_id(note), descriptor)
+
+    def test_module_build_check_warns_when_reboot_is_required(self):
+        live_descriptor = bytes(range(20))
+        installed_descriptor = bytes(reversed(range(20)))
+
+        def note(descriptor):
+            return (
+                (4).to_bytes(4, "little")
+                + len(descriptor).to_bytes(4, "little")
+                + (3).to_bytes(4, "little")
+                + b"GNU\0"
+                + descriptor
+            )
+
+        completed = mock.Mock(returncode=0, stdout="/module.ko\n")
+        with (
+            mock.patch.object(doctor, "run", return_value=completed),
+            mock.patch.object(
+                Path,
+                "read_bytes",
+                side_effect=(note(live_descriptor), note(installed_descriptor)),
+            ),
+            mock.patch.object(Path, "is_file", return_value=True),
+        ):
+            check = doctor.module_build_check()
+        self.assertEqual(check.status, "warn")
+        self.assertIn("reboot required", check.detail)
+
     def test_journal_no_entries_banner_is_suppressed(self):
         completed = mock.Mock(returncode=0, stdout="-- No entries --\n")
         with mock.patch.object(doctor, "run", return_value=completed):

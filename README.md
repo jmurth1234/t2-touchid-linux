@@ -197,6 +197,11 @@ sudo t2-touchid-doctor
 sudo t2-touchid-doctor --json
 ```
 
+The doctor compares the loaded transport module's GNU build ID with the module
+installed for the running kernel. A `module-build` warning means an update is
+on disk but the old pinned SEP transport is still live; reboot before testing
+the updated protocol path.
+
 The report never prints configured addresses, usernames, ports, keybag handles,
 credential contents, identity UUIDs, or biometric payloads.
 

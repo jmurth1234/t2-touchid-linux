@@ -130,6 +130,63 @@ def dkms_check() -> Check:
     )
 
 
+def gnu_build_id(data: bytes) -> bytes | None:
+    """Return the GNU build-id descriptor from an ELF image or sysfs note."""
+    marker = b"GNU\0"
+    offset = data.find(marker)
+    while offset >= 12:
+        header = data[offset - 12 : offset]
+        namesz = int.from_bytes(header[0:4], "little")
+        descsz = int.from_bytes(header[4:8], "little")
+        note_type = int.from_bytes(header[8:12], "little")
+        descriptor = offset + ((namesz + 3) & ~3)
+        if (
+            namesz == len(marker)
+            and note_type == 3
+            and descsz > 0
+            and descriptor + descsz <= len(data)
+        ):
+            return data[descriptor : descriptor + descsz]
+        offset = data.find(marker, offset + len(marker))
+    return None
+
+
+def module_build_check() -> Check:
+    live_note = Path(
+        "/sys/module/t2_sep_transport/notes/.note.gnu.build-id"
+    )
+    try:
+        live_build = gnu_build_id(live_note.read_bytes())
+        module_path_result = run("modinfo", "-n", "t2_sep_transport")
+        module_path = Path(module_path_result.stdout.strip())
+        if module_path_result.returncode or not module_path.is_file():
+            raise OSError("installed module path unavailable")
+        if module_path.suffix == ".zst":
+            installed = subprocess.run(
+                ("zstdcat", str(module_path)),
+                check=False,
+                capture_output=True,
+                timeout=5,
+            )
+            if installed.returncode:
+                raise OSError("installed module decompression failed")
+            installed_image = installed.stdout
+        else:
+            installed_image = module_path.read_bytes()
+        installed_build = gnu_build_id(installed_image)
+        if live_build is None or installed_build is None:
+            raise ValueError("GNU build ID unavailable")
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return Check("warn", "module-build", "live/installed comparison unavailable")
+    if live_build != installed_build:
+        return Check(
+            "warn",
+            "module-build",
+            "live module differs from installed build; reboot required",
+        )
+    return Check("pass", "module-build", "live module matches installed build")
+
+
 def watchdog_check() -> Check:
     kernel_log = run(
         "journalctl",
@@ -169,6 +226,7 @@ def collect() -> list[Check]:
     )
     checks.extend(service_check(service) for service in SERVICES)
     checks.append(dkms_check())
+    checks.append(module_build_check())
 
     config: dict[str, str] = {}
     try:

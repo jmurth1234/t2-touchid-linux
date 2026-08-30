@@ -4362,6 +4362,32 @@ repeating the caller platform-data matrix without changing the body. One reboot
 is required because the currently loaded pinned module still enforces the
 superseded short request.
 
+A fresh manifest-verified capture from that same running 25B77 installation now
+bounds the caller-platform matrix without relying on another macOS release. The
+five candidate CodeDirectory hashes are `coreauthd`
+`620afcb94070430680b6aada2419400c1dd7b255`, `authd`
+`45bd55f93f3f65a59a4b5faa92468a94e781a4dc`,
+`LocalAuthenticationRemoteService`
+`22b2c0a027a115893cec3aebca6365c226b2f27c`, `applekeystored`
+`5990fc3b4106fedbfdd780aaadce411fc64efc22`, and `biometrickitd`
+`1da1f25b69074f4346a8db5083ab85518056d900`. The process snapshot contained
+both root and per-user `coreauthd` instances plus root `applekeystored` and
+`biometrickitd`. This is a candidate set, not proof of the selector-42 caller;
+the matrix must remain fail-closed and must not permanently trust any hash on
+the strength of process presence alone.
+
+The first reboot after the canonical-body correction exposed an installation
+boundary rather than a new protocol result. The pinned live module had GNU
+build ID `10c190cfa6e1ec46d383925283dde1c30b2ec6aa`, while the corrected signed
+DKMS module on disk had build ID `ade422d1bbed10839885937cc21539c6203b11e2`.
+The early operation-`0x21` attempt, made while the matching intermediate helper
+was still installed, sent the truncated body and logged SEP `-13`. Reinstalling
+then updated the helper to the canonical body, but the pinned intermediate
+kernel validator rejected all three handles locally and emitted no SEP log.
+Consequently no post-correction canonical-body status has yet been observed.
+The public doctor now compares the live and installed GNU build IDs and reports
+`module-build ... reboot required` for this state.
+
 One framework helper recovers a generic passphrase credential envelope, but
 the matching ModuleACM dispatch now proves that it is **not** the enrollment
 path. `LACACMHelper.replacePassphraseCredentialWithPurpose:
@@ -5042,6 +5068,11 @@ fingerprint setup.
   ownership checks, and raw-versus-structured verify-secret option paths. The Apple
   binary and full kernel collection are private local research artifacts and
   are not redistributed by this repository.
+- Local primary evidence: manifest-verified CodeDirectory metadata and process
+  snapshot collected from the same running 25B77 installation for `coreauthd`,
+  `authd`, `LocalAuthenticationRemoteService`, `applekeystored`, and
+  `biometrickitd`. The public repository retains only the resulting hashes and
+  conclusions; the captured Apple executables remain private.
 - Same-generation ModuleACM decompilation used to corroborate the preflight ->
   mechanism -> retry flow, policy-1007 parameter omission, and option-derived
   maximum-global-credential-age input:
