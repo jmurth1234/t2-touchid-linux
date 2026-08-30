@@ -2,11 +2,11 @@
 [Unit]
 Description=Apple T2 SEP transport for Touch ID research
 After=local-fs.target
-ConditionPathExists=/usr/local/lib/t2-touchid/t2_sep_transport.ko
+ConditionPathExists=/usr/local/sbin/t2-sep-transport-load
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/insmod /usr/local/lib/t2-touchid/t2_sep_transport.ko register_ool=1
+ExecStart=/usr/local/sbin/t2-sep-transport-load
 RemainAfterExit=yes
 
 [Install]

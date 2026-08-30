@@ -91,9 +91,11 @@ or an alternative sleep mode has been validated on the specific Mac model.
    then run `sudo ./install.sh`. Edit `/etc/t2-touchid.conf` when prompted,
    including the numeric macOS user ID and its corresponding special bag.
 4. Start `t2-sep-transport.service`. The installer builds the module for the
-   running kernel and installs it with `register_ool=1`. Do not unload it;
-   reboot before rebuilding or replacing it. Re-run the installer after a
-   kernel upgrade.
+   running kernel and configures PCI autoload with `register_ool=1`. The loader
+   accepts an already operational module and can safely replace an early
+   observation-only instance; it never unloads an instance that registered SEP
+   DMA. After `/dev/t2-aks` exists, do not unload the module: reboot before
+   rebuilding or replacing it. Re-run the installer after a kernel upgrade.
 5. Place the extracted keybag at `/var/lib/t2-touchid/user.kb`, owned by root
    and mode `0600`, then start `t2-keybag-load.service`.
 6. Unlock the loaded normal handle and special user bag with the macOS password:

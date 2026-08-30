@@ -63,7 +63,11 @@ install -o root -g root -m 0755 "$source_dir/src/t2-keybag-load.sh" /usr/local/s
 install -o root -g root -m 0700 "$source_dir/src/t2-pam-unlock.sh" /usr/local/sbin/t2-pam-unlock
 install -o root -g root -m 0700 "$source_dir/src/t2-credential-unlock.sh" /usr/local/sbin/t2-credential-unlock
 install -o root -g root -m 0700 "$source_dir/src/t2-biometric-ready.sh" /usr/local/sbin/t2-biometric-ready
+install -o root -g root -m 0700 "$source_dir/src/t2-sep-transport-load.sh" /usr/local/sbin/t2-sep-transport-load
 install -o root -g root -m 0644 "$source_dir/systemd/system/"*.service /etc/systemd/system/
+install -d -o root -g root -m 0755 /etc/modprobe.d
+printf '%s\n' 'options t2_sep_transport register_ool=1' >/etc/modprobe.d/t2-sep-transport.conf
+chmod 0644 /etc/modprobe.d/t2-sep-transport.conf
 
 install -d -o "$target_user" -g "$target_user" -m 0755 "$target_home/.config/systemd/user"
 install -o "$target_user" -g "$target_user" -m 0644 \
