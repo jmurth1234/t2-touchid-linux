@@ -22,8 +22,11 @@ performs no SEP mutation. The separately installed
 `t2-acm-lifecycle-test --acknowledge-transient-context-mutation` performs one
 root-only, UID-bound tracking-context create followed by mandatory deletion; it
 does not enroll or delete a fingerprint. Use it only on an already backed-up
-research machine. Because SEP retains the DMA addresses, changing this setting
-requires a reboot; never unload the active module.
+research machine. The kernel grants one endpoint-10 owner and one context lease
+at a time, attempts context deletion when that owner exits, and disables the
+endpoint until reboot after a timeout or ambiguous create response so a late
+reply cannot be reused. Because SEP retains the DMA addresses, changing this
+setting requires a reboot; never unload the active module.
 
 See the redacted conversation that produced this here: https://gist.github.com/jmurth1234/4a138019fd832dfabbed26475613db3a
 

@@ -8,6 +8,7 @@
  * issue an AppleKeyStore operation.
  */
 
+#include <linux/atomic.h>
 #include <linux/bitfield.h>
 #include <linux/capability.h>
 #include <crypto/hash.h>
@@ -25,6 +26,7 @@
 #include <linux/unaligned.h>
 #include <linux/uaccess.h>
 
+#include "t2_acm_lifecycle.h"
 #include "t2_aks_protocol.h"
 #include "t2_sep_transport_uapi.h"
 
@@ -87,8 +89,12 @@ struct t2_sep_transport {
 	struct miscdevice aks_miscdev;
 	struct miscdevice acm_miscdev;
 	struct mutex exchange_lock;
+	atomic_t acm_opened;
 	u8 next_transaction;
 	u64 acm_generation;
+	bool acm_poisoned;
+	bool acm_context_active;
+	u8 acm_context[T2_ACM_CONTEXT_SIZE];
 	bool misc_registered;
 	bool acm_misc_registered;
 };
@@ -551,18 +557,74 @@ static bool t2_acm_command_allowed(const u8 *request, size_t length)
 static bool t2_acm_response_buffer_valid(const u8 *request,
 					 u32 capacity, u64 response)
 {
-	switch (request[4]) {
-	case 0x01:
-		return capacity >= 17 && response;
-	case 0x24:
-		return capacity >= 21 && response;
-	case 0x02:
-		return capacity == 0;
-	case 0x03:
-		return capacity == 4096 && response;
-	default:
-		return false;
+	return t2_acm_response_capacity_allowed(request[4], capacity,
+						response != 0);
+}
+
+static void t2_acm_clear_context_locked(struct t2_sep_transport *sep)
+{
+	memzero_explicit(sep->acm_context, sizeof(sep->acm_context));
+	sep->acm_context_active = false;
+}
+
+static void t2_acm_poison_locked(struct t2_sep_transport *sep)
+{
+	sep->acm_poisoned = true;
+	if (!++sep->acm_generation)
+		++sep->acm_generation;
+	t2_acm_clear_context_locked(sep);
+}
+
+static int t2_acm_validate_context_locked(struct t2_sep_transport *sep,
+					  const u8 *request)
+{
+	switch (t2_acm_context_preflight(request[4],
+					 sep->acm_context_active)) {
+	case T2_ACM_CONTEXT_ALLOW:
+		return 0;
+	case T2_ACM_CONTEXT_BUSY:
+		return -EBUSY;
+	case T2_ACM_CONTEXT_STALE:
+		return -ESTALE;
+	case T2_ACM_CONTEXT_MATCH_REQUIRED:
+		return memcmp(request + 8, sep->acm_context,
+			      sizeof(sep->acm_context)) ? -EACCES : 0;
+	case T2_ACM_CONTEXT_DENY:
+		return -EACCES;
 	}
+	return -EACCES;
+}
+
+static int t2_acm_record_reply_locked(struct t2_sep_transport *sep,
+				      const u8 *request, const u8 *response,
+				      size_t response_length, u32 response_info)
+{
+	switch (t2_acm_reply_action(request[4], response_length,
+				   response_info)) {
+	case T2_ACM_REPLY_ACCEPT:
+		return 0;
+	case T2_ACM_REPLY_REJECT:
+		return -EPROTO;
+	case T2_ACM_REPLY_POISON:
+		/* SEP may have created a context whose handle is unavailable. */
+		t2_acm_poison_locked(sep);
+		return -EPROTO;
+	case T2_ACM_REPLY_SET_CONTEXT:
+		memcpy(sep->acm_context, response, sizeof(sep->acm_context));
+		sep->acm_context_active = true;
+		return 0;
+	case T2_ACM_REPLY_SET_CONTEXT_AND_REJECT:
+		memcpy(sep->acm_context, response, sizeof(sep->acm_context));
+		sep->acm_context_active = true;
+		return -EPROTO;
+	case T2_ACM_REPLY_CLEAR_CONTEXT:
+		t2_acm_clear_context_locked(sep);
+		return 0;
+	case T2_ACM_REPLY_CLEAR_CONTEXT_AND_REJECT:
+		t2_acm_clear_context_locked(sep);
+		return -EPROTO;
+	}
+	return -EPROTO;
 }
 
 static int t2_acm_exchange_locked(struct t2_sep_transport *sep,
@@ -596,18 +658,24 @@ static int t2_acm_exchange_locked(struct t2_sep_transport *sep,
 
 	for (;;) {
 		ret = t2_sep_receive(sep, &reply);
-		if (ret)
+		if (ret) {
+			t2_acm_poison_locked(sep);
 			return ret;
+		}
 		if ((reply.word[0] & 0xff) == T2_SEP_ACM_ENDPOINT &&
 		    ((reply.word[0] >> 8) & 0xff) == request_code)
 			break;
-		if (++skipped == 32)
+		if (++skipped == 32) {
+			t2_acm_poison_locked(sep);
 			return -EOVERFLOW;
+		}
 	}
 
 	reply_length = reply.word[0] >> 16;
-	if (reply_length > T2_SEP_OOL_SIZE)
+	if (reply_length > T2_SEP_OOL_SIZE) {
+		t2_acm_poison_locked(sep);
 		return -EPROTO;
+	}
 	*response_body = sep->acm_ool_out;
 	*response_body_length = reply_length;
 	*response_info = reply.word[1];
@@ -632,11 +700,16 @@ static long t2_acm_ioctl(struct file *file, unsigned int command,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	if (command == T2_ACM_IOC_GET_INFO) {
+		ret = mutex_lock_interruptible(&sep->exchange_lock);
+		if (ret)
+			return ret;
 		info.generation = sep->acm_generation;
 		info.capacity = T2_SEP_OOL_SIZE;
-		if (copy_to_user(user_argument, &info, sizeof(info)))
-			return -EFAULT;
-		return 0;
+		if (sep->acm_poisoned)
+			info.flags |= T2_ACM_INFO_F_POISONED;
+		mutex_unlock(&sep->exchange_lock);
+		return copy_to_user(user_argument, &info, sizeof(info)) ?
+			-EFAULT : 0;
 	}
 	if (command != T2_ACM_IOC_EXCHANGE)
 		return -ENOTTY;
@@ -647,12 +720,6 @@ static long t2_acm_ioctl(struct file *file, unsigned int command,
 	    exchange.request_length > T2_SEP_OOL_SIZE ||
 	    exchange.response_capacity > T2_SEP_OOL_SIZE || !exchange.request)
 		return -EINVAL;
-	if (exchange.generation != sep->acm_generation) {
-		exchange.generation = sep->acm_generation;
-		if (copy_to_user(user_argument, &exchange, sizeof(exchange)))
-			return -EFAULT;
-		return -ESTALE;
-	}
 	request = memdup_user(u64_to_user_ptr(exchange.request),
 			      exchange.request_length);
 	if (IS_ERR(request))
@@ -667,6 +734,18 @@ static long t2_acm_ioctl(struct file *file, unsigned int command,
 	ret = mutex_lock_interruptible(&sep->exchange_lock);
 	if (ret)
 		goto out;
+	if (exchange.generation != sep->acm_generation) {
+		exchange.generation = sep->acm_generation;
+		ret = -ESTALE;
+		goto out_copy_exchange;
+	}
+	if (sep->acm_poisoned) {
+		ret = -ESHUTDOWN;
+		goto out_unlock;
+	}
+	ret = t2_acm_validate_context_locked(sep, request);
+	if (ret)
+		goto out_unlock;
 	ret = t2_acm_exchange_locked(sep, exchange.request_code,
 			exchange.request_info, request, exchange.request_length,
 			&response, &response_length, &response_info);
@@ -674,6 +753,10 @@ static long t2_acm_ioctl(struct file *file, unsigned int command,
 		goto out_unlock;
 	exchange.response_length = response_length;
 	exchange.response_info = response_info;
+	ret = t2_acm_record_reply_locked(sep, request, response,
+					 response_length, response_info);
+	if (ret)
+		goto out_copy_exchange;
 	if (response_length > exchange.response_capacity) {
 		ret = -ENOSPC;
 		goto out_copy_exchange;
@@ -696,8 +779,66 @@ out:
 	return ret;
 }
 
+static int t2_acm_open(struct inode *inode, struct file *file)
+{
+	struct miscdevice *misc = file->private_data;
+	struct t2_sep_transport *sep = container_of(misc,
+		struct t2_sep_transport, acm_miscdev);
+	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	if (atomic_cmpxchg(&sep->acm_opened, 0, 1))
+		return -EBUSY;
+	ret = nonseekable_open(inode, file);
+	if (ret)
+		atomic_set(&sep->acm_opened, 0);
+	return ret;
+}
+
+static int t2_acm_release(struct inode *inode, struct file *file)
+{
+	struct miscdevice *misc = file->private_data;
+	struct t2_sep_transport *sep = container_of(misc,
+		struct t2_sep_transport, acm_miscdev);
+	u8 request[8 + T2_ACM_CONTEXT_SIZE] = {
+		'D', 'R', 'C', 'S', 0x02, 0, 0, 1,
+	};
+	u8 *response = NULL;
+	size_t response_length = 0;
+	u32 response_info = 0;
+	int ret = 0;
+
+	(void)inode;
+
+	mutex_lock(&sep->exchange_lock);
+	if (sep->acm_context_active && !sep->acm_poisoned) {
+		memcpy(request + 8, sep->acm_context,
+		       sizeof(sep->acm_context));
+		ret = t2_acm_exchange_locked(sep, 1, 0, request,
+					     sizeof(request), &response,
+					     &response_length, &response_info);
+		if (!ret && !response_info && !response_length)
+			t2_acm_clear_context_locked(sep);
+		else {
+			dev_warn(&sep->pdev->dev,
+				 "automatic ACM context cleanup failed; endpoint disabled until reboot\n");
+			if (!sep->acm_poisoned)
+				t2_acm_poison_locked(sep);
+		}
+	}
+	memzero_explicit(sep->acm_ool_in, T2_SEP_OOL_SIZE);
+	memzero_explicit(sep->acm_ool_out, T2_SEP_OOL_SIZE);
+	mutex_unlock(&sep->exchange_lock);
+	memzero_explicit(request, sizeof(request));
+	atomic_set(&sep->acm_opened, 0);
+	return 0;
+}
+
 static const struct file_operations t2_acm_fops = {
 	.owner = THIS_MODULE,
+	.open = t2_acm_open,
+	.release = t2_acm_release,
 	.unlocked_ioctl = t2_acm_ioctl,
 	.compat_ioctl = compat_ptr_ioctl,
 };
@@ -834,6 +975,7 @@ static int t2_sep_probe(struct pci_dev *pdev,
 	if (!sep->bar)
 		return -ENODEV;
 	mutex_init(&sep->exchange_lock);
+	atomic_set(&sep->acm_opened, 0);
 	pci_set_drvdata(pdev, sep);
 
 	inbox = readl(sep->bar + T2_SEP_INBOX_STATUS);

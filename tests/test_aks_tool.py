@@ -47,6 +47,24 @@ class AKSToolTests(unittest.TestCase):
             )
             subprocess.run([str(executable)], check=True)
 
+    def test_acm_kernel_lifecycle_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "t2-acm-lifecycle-unit"
+            subprocess.run(
+                [
+                    "cc",
+                    "-O2",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    str(ROOT / "tests/t2_acm_lifecycle_unit.c"),
+                    "-o",
+                    str(executable),
+                ],
+                check=True,
+            )
+            subprocess.run([str(executable)], check=True)
+
 
 if __name__ == "__main__":
     unittest.main()

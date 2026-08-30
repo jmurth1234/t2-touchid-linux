@@ -66,6 +66,16 @@ session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent
 64-bit field is the macOS process-unique ID, not a PID. Both are research-only,
 boot-scoped data; they must not be inferred from the configured account UID.
 
+When endpoint 10 is enabled, `/dev/t2-acm` permits one root/CAP_SYS_ADMIN owner
+at a time and leases at most one live context to that open file. Policy and
+delete commands must carry that exact context. Closing the file with a live
+context performs a kernel-side delete, covering ordinary exit and process
+death. A timeout, excess unrelated replies, or an unknowable create result
+increments the endpoint generation, marks it poisoned, rejects all later
+commands, and requires a reboot; this prevents a late uncorrelated ACM reply
+from being mistaken for a later operation. This is still a narrow research
+transport, not an enrollment API or a general ACM command device.
+
 After either buffer is successfully registered, the module pins itself in
 memory. SEP retains the DMA address and Apple exposes no matching unregister
 control message; freeing that memory while SEP is live would be unsafe. A

@@ -58,8 +58,12 @@ The narrow endpoint-10 research transport has also completed a live tracked
 ACM context create/delete lifecycle on the proven machine. The client accepts
 only the recovered create and delete frames, binds creation to the configured
 macOS UID, redacts the returned context identifier, and attempts deletion even
-when response parsing fails. This validates transient context lifecycle only;
-it does not authorize enrollment or expose a general ACM command interface.
+when response parsing fails. The staged kernel transport now additionally
+enforces one owner and one exact context lease, deletes an active context when
+its owner exits, and poisons the endpoint generation after an ambiguous reply.
+Those new fail-closed guarantees are unit-tested and await activation on the
+next normal reboot. This validates transient context lifecycle only; it does
+not authorize enrollment or expose a general ACM command interface.
 
 The following remain disabled or unverified:
 

@@ -4927,11 +4927,16 @@ Before any mutating probe, require all of the following:
 
 The unresolved items do not all have equal weight:
 
-- **Required before any mutation implementation:** a strict known-schema
-  keyed-archive encoder with independent read-back; a privileged endpoint-10
-  broker with single-flight ownership and generation-safe late-reply rejection;
-  a non-mutating cross-layer identity inventory; a per-component intent/result
-  journal; and explicit approval for the exact target and operation.
+- **Required before any mutation implementation:** independent captured-fixture
+  read-back for the strict known-schema archive encoder; a privileged broker
+  above the endpoint-10 transport that binds the Linux session and PolicyKit
+  decision to the protected Apple-user mapping; a stable non-mutating
+  cross-layer identity inventory; a per-component intent/result journal; and
+  explicit approval for the exact target and operation. The staged kernel
+  transport now supplies the lower-level single-owner context lease,
+  process-exit cleanup, and generation-safe late-reply rejection, but those new
+  guarantees still require activation and live conformance on the next module
+  boot.
 - **Requires controlled device validation:** the final T2 consumer's replay,
   one-shot, expiry, and ambiguous-completion treatment of a mode-0 ACM external
   form. The J132 SEP payload is device-key-wrapped, so the plaintext host corpus
@@ -4977,17 +4982,22 @@ approved disposable-finger hardware experiment.
 - Complete the remaining ACMLib response and lifecycle contracts around the
   now-exact authorization sequence. Context create/import/export/destroy,
   command-3 request framing, selector-42 password/context framing, the 24G830
-  OD/PAM/MKB cascade, and UID-to-handle mapping are recovered. The outstanding
-  work is complete ACM command/response serialization, trusted-broker context
-  ownership and invalidation after process/session loss, and the final consumer's
-  handling of the credential-set authorization bit. Endpoint-10 correlation and
-  the host-versus-SEP subject boundary are now exact.
+  OD/PAM/MKB cascade, and UID-to-handle mapping are recovered. The kernel now
+  restricts endpoint 10 to one open owner and one exact live context, deletes
+  that context on owner exit, and makes timeout/ambiguous-create generations
+  terminal until reboot. The outstanding host work is complete ACM response
+  serialization, Linux session/PolicyKit binding above that kernel lease, and
+  the final consumer's handling of the credential-set authorization bit.
+  Endpoint-10 correlation and the host-versus-SEP subject boundary are exact.
 - The endpoint-10 registration, ordinary single-flight correlation, SCRD
   request-ID exception, timeout, and reset/re-registration contracts are now
-  exact. The remaining transport question is only how to represent endpoint
-  generations and late-reply rejection in the existing Linux mailbox driver.
-  Keep any future implementation as a separate privileged transport; do not
-  widen the endpoint-7 `/dev/aks` interface.
+  exact. The staged Linux driver now represents each registration as a nonzero
+  generation, rejects stale generations, prevents multiple owners/contexts,
+  and permanently poisons the current generation after a timeout, excess
+  unrelated replies, or a successful create whose context handle is too short
+  to clean up. This conservative implementation awaits live validation after
+  the next normal reboot. It remains a separate privileged transport and does
+  not widen the endpoint-7 `/dev/aks` interface.
 - Turn the now-recovered endpoint-10/ACM policy-1007 issuance sequence into a
   future read-only-capable broker design: create `0x24`/fallback `1` for the
   authenticated Apple numeric UID, export the 16-byte reference, bind it through
@@ -5030,7 +5040,7 @@ plausible design to a proven result:
 | Domain | Strongest current evidence | Static-research disposition | Evidence still required |
 |---|---|---|---|
 | Existing-user enrollment wire protocol | Exact 24G830 command `0x03`, mode-0 authorization wrapper, continue/status/result events, exact target host frameworks | Host side complete enough for a protocol design | Controlled disposable-finger validation of final T2 acceptance, replay/one-shot behavior, and ambiguous completion |
-| Enrollment authorization producer | Exact UID-bound ACM create/export/destroy, endpoint-7 raw-versus-structured credential distinction, policy-1007 command/reply, no Mach audit data crossing endpoint 10 | Protocol-feasible in outline; live password-binding validation remains in progress | Privileged broker conformance tests, followed by the same controlled T2 validation |
+| Enrollment authorization producer | Exact UID-bound ACM create/export/destroy, endpoint-7 raw-versus-structured credential distinction, policy-1007 command/reply, no Mach audit data crossing endpoint 10; staged one-owner/one-context kernel lease with exit cleanup and poisoned generations | Protocol-feasible in outline; live password-binding and new lease validation remain in progress | Linux-session/PolicyKit broker conformance tests, followed by the same controlled T2 validation |
 | Enrollment event flow | Exact envelope/status mappings, progress/continue range, terminal identity record, cancellation and conservative fprintd mappings | Static mapping complete for built-in enrollment; duplicate-specific reporting intentionally unavailable | Hardware traces only to validate timing/repetition behavior, not to invent unsupported result classes |
 | Single and per-user identity deletion | Exact `0x0d` target, Apple loop ordering, Catacomb-save failure windows, nil credential options | Protocol and non-atomic outcome model recovered | Future explicitly approved deletion test with before/after stable inventory; no static blocker remains |
 | Whole biometric-user removal | Exact `0x48` request and host cleanup ordering | Destructive command known, terminal proof incomplete; disabled | An explicit container-presence primitive or validated equivalent that distinguishes empty from absent |

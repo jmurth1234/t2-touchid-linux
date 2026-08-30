@@ -104,6 +104,21 @@ class DoctorTests(unittest.TestCase):
             check = doctor.watchdog_check()
         self.assertEqual(check.status, "pass")
 
+    def test_acm_transport_reports_poisoned_generation(self):
+        completed = mock.Mock(returncode=1, stderr="reboot required\n")
+        with (
+            mock.patch.object(doctor.os, "geteuid", return_value=0),
+            mock.patch.object(doctor, "run", return_value=completed),
+        ):
+            check = doctor.acm_transport_check(True)
+        self.assertEqual(check.status, "warn")
+        self.assertIn("reboot required", check.detail)
+
+    def test_acm_transport_is_explicit_when_disabled(self):
+        check = doctor.acm_transport_check(False)
+        self.assertEqual(check.status, "pass")
+        self.assertIn("disabled", check.detail)
+
 
 if __name__ == "__main__":
     unittest.main()

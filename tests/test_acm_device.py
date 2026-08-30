@@ -1,3 +1,4 @@
+import struct
 import sys
 import unittest
 from pathlib import Path
@@ -42,6 +43,22 @@ class ACMDeviceTests(unittest.TestCase):
         self.assertEqual(device.EXCHANGE_SIZE, 48)
         self.assertEqual(device.T2_ACM_IOC_GET_INFO, 0x8010AC01)
         self.assertEqual(device.T2_ACM_IOC_EXCHANGE, 0xC030AC00)
+
+    def test_registration_metadata_accepts_clean_generation(self):
+        info = struct.pack(device.INFO_FORMAT, 7, 16384, 0)
+        self.assertEqual(device._registration_generation(info), 7)
+
+    def test_registration_metadata_reports_poisoned_endpoint(self):
+        info = struct.pack(
+            device.INFO_FORMAT, 8, 16384, device.T2_ACM_INFO_F_POISONED
+        )
+        with self.assertRaisesRegex(device.ACMDeviceError, "reboot required"):
+            device._registration_generation(info)
+
+    def test_registration_metadata_rejects_unknown_flags(self):
+        info = struct.pack(device.INFO_FORMAT, 8, 16384, 2)
+        with self.assertRaisesRegex(device.ACMDeviceError, "invalid"):
+            device._registration_generation(info)
 
     def test_lifecycle_creates_and_deletes_without_disclosing_context(self):
         context = bytes(range(16))

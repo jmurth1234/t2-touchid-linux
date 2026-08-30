@@ -1,4 +1,5 @@
 import importlib.util
+import struct
 import unittest
 from pathlib import Path
 
@@ -20,6 +21,23 @@ class ACMPreflightTests(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 with self.assertRaises(ValueError):
                     MODULE._ioc(*arguments)
+
+    def test_clean_generation_metadata(self):
+        self.assertEqual(
+            MODULE.parse_info(struct.pack(MODULE.INFO_FORMAT, 4, 16384, 0)),
+            (4, 16384),
+        )
+
+    def test_poisoned_generation_requires_reboot(self):
+        with self.assertRaisesRegex(RuntimeError, "reboot required"):
+            MODULE.parse_info(
+                struct.pack(
+                    MODULE.INFO_FORMAT,
+                    5,
+                    16384,
+                    MODULE.T2_ACM_INFO_F_POISONED,
+                )
+            )
 
 
 if __name__ == "__main__":

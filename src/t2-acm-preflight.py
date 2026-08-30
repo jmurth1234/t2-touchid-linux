@@ -26,6 +26,22 @@ def _ioc(direction: int, kind: int, number: int, size: int) -> int:
 
 
 T2_ACM_IOC_GET_INFO = _ioc(2, 0xAC, 1, INFO_SIZE)
+T2_ACM_INFO_F_POISONED = 1 << 0
+
+
+def parse_info(buffer: bytes | bytearray) -> tuple[int, int]:
+    if len(buffer) != INFO_SIZE:
+        raise RuntimeError("endpoint-10 info size is invalid")
+    generation, capacity, flags = struct.unpack(INFO_FORMAT, buffer)
+    if generation == 0:
+        raise RuntimeError("endpoint-10 generation is zero")
+    if capacity != 16384:
+        raise RuntimeError("endpoint-10 capacity is unexpected")
+    if flags & ~T2_ACM_INFO_F_POISONED:
+        raise RuntimeError("endpoint-10 info contains unknown flags")
+    if flags & T2_ACM_INFO_F_POISONED:
+        raise RuntimeError("endpoint-10 has an ambiguous late reply; reboot required")
+    return generation, capacity
 
 
 def collect() -> dict[str, object]:
@@ -38,13 +54,7 @@ def collect() -> dict[str, object]:
         fcntl.ioctl(fd, T2_ACM_IOC_GET_INFO, buffer, True)
     finally:
         os.close(fd)
-    generation, capacity, reserved = struct.unpack(INFO_FORMAT, buffer)
-    if generation == 0:
-        raise RuntimeError("endpoint-10 generation is zero")
-    if capacity != 16384:
-        raise RuntimeError("endpoint-10 capacity is unexpected")
-    if reserved != 0:
-        raise RuntimeError("endpoint-10 info contains nonzero reserved data")
+    generation, capacity = parse_info(buffer)
     return {
         "schema_version": 1,
         "endpoint": 10,

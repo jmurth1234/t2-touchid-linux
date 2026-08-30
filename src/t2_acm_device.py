@@ -33,6 +33,7 @@ def _ioc(direction: int, kind: int, number: int, size: int) -> int:
 
 T2_ACM_IOC_EXCHANGE = _ioc(3, 0xAC, 0, EXCHANGE_SIZE)
 T2_ACM_IOC_GET_INFO = _ioc(2, 0xAC, 1, INFO_SIZE)
+T2_ACM_INFO_F_POISONED = 1 << 0
 
 
 def _address(buffer: bytearray) -> int:
@@ -48,15 +49,30 @@ def _signed_u32(value: int) -> int:
     return value if value < 0x80000000 else value - 0x100000000
 
 
+def _registration_generation(info: bytes | bytearray) -> int:
+    if len(info) != INFO_SIZE:
+        raise ACMDeviceError("invalid endpoint-10 registration metadata")
+    generation, capacity, flags = struct.unpack(INFO_FORMAT, info)
+    if (
+        generation == 0
+        or capacity != 16384
+        or flags & ~T2_ACM_INFO_F_POISONED
+    ):
+        raise ACMDeviceError("invalid endpoint-10 registration metadata")
+    if flags & T2_ACM_INFO_F_POISONED:
+        raise ACMDeviceError(
+            "endpoint-10 has an ambiguous late reply; reboot required"
+        )
+    return generation
+
+
 class ACMDevice:
     def __init__(self, path: Path = DEVICE) -> None:
         self.fd = os.open(path, os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
         try:
             info = bytearray(INFO_SIZE)
             fcntl.ioctl(self.fd, T2_ACM_IOC_GET_INFO, info, True)
-            self.generation, capacity, reserved = struct.unpack(INFO_FORMAT, info)
-            if self.generation == 0 or capacity != 16384 or reserved != 0:
-                raise ACMDeviceError("invalid endpoint-10 registration metadata")
+            self.generation = _registration_generation(info)
         except BaseException:
             os.close(self.fd)
             self.fd = -1

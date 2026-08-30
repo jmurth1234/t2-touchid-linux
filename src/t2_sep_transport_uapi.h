@@ -39,8 +39,10 @@ struct t2_acm_ioc_exchange {
 struct t2_acm_ioc_info {
 	__u64 generation;
 	__u32 capacity;
-	__u32 reserved;
+	__u32 flags;
 };
+
+#define T2_ACM_INFO_F_POISONED (1U << 0)
 
 #define T2_ACM_IOC_EXCHANGE \
 	_IOWR(T2_ACM_IOC_MAGIC, 0, struct t2_acm_ioc_exchange)

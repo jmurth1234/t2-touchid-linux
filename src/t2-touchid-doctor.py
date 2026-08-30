@@ -20,6 +20,7 @@ CONFIG = Path("/etc/t2-touchid.conf")
 STATE = Path("/run/t2-touchid/keybag.env")
 PORT_CACHE = Path("/var/lib/t2-touchid/biometric-port")
 CREDENTIAL = Path("/etc/credstore.encrypted/t2-touchid-password")
+ACM_PREFLIGHT = Path("/usr/local/sbin/t2-acm-preflight")
 SERVICES = (
     "t2-sep-transport.service",
     "t2-keybag-load.service",
@@ -207,6 +208,22 @@ def watchdog_check() -> Check:
     )
 
 
+def acm_transport_check(enabled: bool) -> Check:
+    if not enabled:
+        return Check("pass", "acm-transport", "research endpoint disabled")
+    if os.geteuid() != 0:
+        return Check("warn", "acm-transport", "run as root to inspect endpoint")
+    try:
+        result = run(str(ACM_PREFLIGHT))
+    except FileNotFoundError:
+        return Check("fail", "acm-transport", "preflight helper is missing")
+    if result.returncode == 0:
+        return Check("pass", "acm-transport", "exclusive generation is healthy")
+    if "reboot required" in result.stderr:
+        return Check("warn", "acm-transport", "ambiguous generation; reboot required")
+    return Check("fail", "acm-transport", "registration preflight failed")
+
+
 def collect() -> list[Check]:
     checks: list[Check] = []
 
@@ -249,6 +266,12 @@ def collect() -> list[Check]:
         checks.append(Check("warn", "configuration", "not readable; run as root"))
     except (OSError, UnicodeError):
         checks.append(Check("fail", "configuration", "missing or malformed"))
+
+    checks.append(
+        acm_transport_check(
+            config.get("T2_TOUCHID_ENABLE_ACM_RESEARCH", "0") == "1"
+        )
+    )
 
     try:
         state = read_assignments(STATE)
