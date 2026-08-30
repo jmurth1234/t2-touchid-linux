@@ -101,6 +101,18 @@ def verify_password_matrix_command(
     ]
 
 
+def verify_password_only_command(session: int, positive_handle: int) -> list[str]:
+    """Build the no-ACM diagnostic against the known live positive bag."""
+    if session != 1 or positive_handle <= 0:
+        raise ACMDeviceError("unsafe password-only verification target")
+    return [
+        str(AKS_TOOL),
+        "verify-password-only",
+        str(session),
+        str(positive_handle),
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -126,6 +138,11 @@ def main() -> int:
         help="test -3, special, and positive handles with the canonical codec-v1 request, stopping at the first success",
     )
     parser.add_argument(
+        "--diagnostic-password-only",
+        action="store_true",
+        help="verify the password against the positive runtime keybag without creating or attaching an ACM context",
+    )
+    parser.add_argument(
         "--legacy-context-create",
         action="store_true",
         help="use ACM context-create command 0x01 instead of tracking command 0x24",
@@ -143,6 +160,17 @@ def main() -> int:
             keybag_handle = args.research_keybag_handle
         elif args.runtime_positive_keybag_handle:
             keybag_handle = positive_handle
+
+        if args.diagnostic_password_only:
+            if args.diagnostic_matrix or args.legacy_context_create:
+                raise ACMDeviceError(
+                    "password-only diagnostic cannot be combined with ACM diagnostics"
+                )
+            completed = subprocess.run(
+                verify_password_only_command(session, positive_handle),
+                check=False,
+            )
+            return completed.returncode
 
         def bind_password(context: bytes) -> None:
             command = (

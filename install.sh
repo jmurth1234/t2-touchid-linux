@@ -36,6 +36,7 @@ ensure_config_default T2_TOUCHID_MACOS_USER_ID 501
 ensure_config_default T2_TOUCHID_SPECIAL_BAG -501
 ensure_config_default T2_TOUCHID_ENROLLED_FINGER right-index-finger
 ensure_config_default T2_TOUCHID_ENABLE_ACM_RESEARCH 0
+ensure_config_default T2_TOUCHID_AKS_PLATFORM_ASID 0
 ensure_config_default T2_TOUCHID_AKS_PLATFORM_CDHASH ''
 chmod 0600 /etc/t2-touchid.conf
 
@@ -52,6 +53,11 @@ fi
 aks_platform_cdhash=$(sed -n 's/^T2_TOUCHID_AKS_PLATFORM_CDHASH=//p' /etc/t2-touchid.conf | tail -n 1)
 if [[ -n $aks_platform_cdhash && ! $aks_platform_cdhash =~ ^[[:xdigit:]]{40}$ ]]; then
   echo "T2_TOUCHID_AKS_PLATFORM_CDHASH must be empty or exactly 40 hexadecimal characters." >&2
+  exit 2
+fi
+aks_platform_asid=$(sed -n 's/^T2_TOUCHID_AKS_PLATFORM_ASID=//p' /etc/t2-touchid.conf | tail -n 1)
+if [[ ! $aks_platform_asid =~ ^[0-9]+$ ]] || (( aks_platform_asid > 4294967295 )); then
+  echo "T2_TOUCHID_AKS_PLATFORM_ASID must be an unsigned 32-bit integer." >&2
   exit 2
 fi
 
@@ -92,7 +98,7 @@ install -o root -g root -m 0644 "$source_dir/systemd/system/"*.service /etc/syst
 install -d -o root -g root -m 0755 /etc/modprobe.d
 module_options='options t2_sep_transport register_ool=1'
 if [[ $acm_research == 1 ]]; then
-  module_options+=" register_acm=1 aks_platform_uid=$macos_user_id aks_platform_proc_uniqueid=1"
+  module_options+=" register_acm=1 aks_platform_asid=$aks_platform_asid aks_platform_proc_uniqueid=1"
   if [[ -n $aks_platform_cdhash ]]; then
     module_options+=" aks_platform_cdhash=${aks_platform_cdhash,,}"
   fi

@@ -34,6 +34,16 @@ int main(void)
 
 	request = NULL;
 	assert(build_verify_password_acm_request(1, 4, secret, sizeof(secret),
+						 NULL, &request,
+						 &request_length) == 0);
+	assert(request_length == 40);
+	assert(get_le32(request + 28) == 0);
+	assert(get_le64(request + 32) == 0x200);
+	memset(request, 0, request_length);
+	free(request);
+
+	request = NULL;
+	assert(build_verify_password_acm_request(1, 4, secret, sizeof(secret),
 						 context, &request,
 						 &request_length) == 0);
 	assert(request_length == 56);

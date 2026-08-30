@@ -25,6 +25,24 @@ private dual-boot transfer location. Never publish or attach it to a public
 issue. The individual collectors below remain useful when only one evidence
 class needs refreshing.
 
+### Current AppleKeyStore caller platform data
+
+Operation `0x21` carries the caller's audit-session ID and process-unique ID,
+not its Unix UID. To capture the current values for likely selector-42 callers
+in one read-only run, boot macOS and run:
+
+```bash
+curl -fL -o ~/collect-aks-platform-identities-macos.sh \
+  https://raw.githubusercontent.com/jmurth1234/t2-touchid-linux/main/enrollment_research/scripts/collect-aks-platform-identities-macos.sh
+chmod 700 ~/collect-aks-platform-identities-macos.sh
+~/collect-aks-platform-identities-macos.sh
+```
+
+The default destination is the mounted `OMARCHY_EFI` volume. The TSV contains
+private, boot-scoped process identifiers: transfer it privately, do not commit
+it, and do not assume its numeric values survive a process restart or reboot.
+The relationships are research evidence; they are not reusable credentials.
+
 If the EFI volume is already mounted at `/Volumes/EFI`, the collector can place
 the archive there directly even when the directory requires administrator
 permission:

@@ -318,13 +318,15 @@ static int build_verify_password_acm_request(uint64_t session, int32_t handle,
 					     uint32_t *request_length_out)
 {
 	unsigned char *request;
-	size_t padded_length;
+	size_t context_length, padded_length, request_length;
 
-	if (!secret || !secret_length || secret_length > 128 || !context ||
+	if (!secret || !secret_length || secret_length > 128 ||
 	    !request_out || !request_length_out || !handle)
 		return -1;
+	context_length = context ? 16 : 0;
 	padded_length = (secret_length + 3) & ~(size_t)3;
-	request = calloc(1, 48 + padded_length);
+	request_length = 32 + padded_length + context_length;
+	request = calloc(1, request_length);
 	if (!request)
 		return -1;
 	put_le32(request, 1); /* verify-secret codec version */
@@ -332,21 +334,68 @@ static int build_verify_password_acm_request(uint64_t session, int32_t handle,
 	put_le32(request + 12, (uint32_t)handle);
 	put_le32(request + 16, (uint32_t)secret_length);
 	memcpy(request + 20, secret, secret_length);
-	put_le32(request + 20 + padded_length, 16);
-	memcpy(request + 24 + padded_length, context, 16);
+	put_le32(request + 20 + padded_length, (uint32_t)context_length);
+	if (context)
+		memcpy(request + 24 + padded_length, context, context_length);
 	/* Selector 42 always supplies plaintext-secret device option 0x200. */
-	put_le64(request + 40 + padded_length, 0x200);
+	put_le64(request + 24 + padded_length + context_length, 0x200);
 	*request_out = request;
-	*request_length_out = 48 + (uint32_t)padded_length;
+	*request_length_out = (uint32_t)request_length;
 	return 0;
+}
+
+static int read_password_input(char secret[129], size_t *length_out,
+			       int password_stdin)
+{
+	struct termios old_term, noecho_term;
+	ssize_t got;
+	int input = STDIN_FILENO;
+	int ret = -1;
+
+	if (!password_stdin) {
+		input = open("/dev/tty", O_RDWR | O_CLOEXEC);
+		if (input < 0 || tcgetattr(input, &old_term)) {
+			perror("open controlling terminal");
+			goto out;
+		}
+		noecho_term = old_term;
+		noecho_term.c_lflag &= ~ECHO;
+		if (tcsetattr(input, TCSAFLUSH, &noecho_term)) {
+			perror("disable terminal echo");
+			goto out;
+		}
+		if (write(input, "macOS login password: ", 22) != 22) {
+			perror("write prompt");
+			(void)tcsetattr(input, TCSAFLUSH, &old_term);
+			goto out;
+		}
+	}
+	/* Keep the final byte zero so strcspn never reads past the buffer. */
+	got = read(input, secret, 128);
+	if (!password_stdin) {
+		(void)tcsetattr(input, TCSAFLUSH, &old_term);
+		(void)write(input, "\n", 1);
+	}
+	if (got <= 0) {
+		fprintf(stderr, "failed to read password\n");
+		goto out;
+	}
+	*length_out = strcspn(secret, "\r\n");
+	if (!*length_out || *length_out > 128) {
+		fprintf(stderr, "password length is outside 1..128 bytes\n");
+		goto out;
+	}
+	ret = 0;
+out:
+	if (!password_stdin && input >= 0)
+		close(input);
+	return ret;
 }
 
 static int read_verify_password_inputs(unsigned char context[16],
 				       char secret[129], size_t *length_out)
 {
-	struct termios old_term, noecho_term;
 	ssize_t got = 0;
-	int tty = -1, ret = -1;
 
 	for (size_t offset = 0; offset < 16;) {
 		got = read(STDIN_FILENO, context + offset, 16 - offset);
@@ -362,39 +411,7 @@ static int read_verify_password_inputs(unsigned char context[16],
 		fprintf(stderr, "expected exactly 16 context bytes on stdin\n");
 		return -1;
 	}
-	tty = open("/dev/tty", O_RDWR | O_CLOEXEC);
-	if (tty < 0 || tcgetattr(tty, &old_term)) {
-		perror("open controlling terminal");
-		goto out;
-	}
-	noecho_term = old_term;
-	noecho_term.c_lflag &= ~ECHO;
-	if (tcsetattr(tty, TCSAFLUSH, &noecho_term)) {
-		perror("disable terminal echo");
-		goto out;
-	}
-	if (write(tty, "macOS login password: ", 22) != 22) {
-		perror("write prompt");
-		(void)tcsetattr(tty, TCSAFLUSH, &old_term);
-		goto out;
-	}
-	got = read(tty, secret, 129);
-	(void)tcsetattr(tty, TCSAFLUSH, &old_term);
-	(void)write(tty, "\n", 1);
-	if (got <= 0) {
-		fprintf(stderr, "failed to read password\n");
-		goto out;
-	}
-	*length_out = strcspn(secret, "\r\n");
-	if (!*length_out || *length_out > 128) {
-		fprintf(stderr, "password length is outside 1..128 bytes\n");
-		goto out;
-	}
-	ret = 0;
-out:
-	if (tty >= 0)
-		close(tty);
-	return ret;
+	return read_password_input(secret, length_out, 0);
 }
 
 static int exchange_verify_password_acm(int fd, uint64_t session,
@@ -476,6 +493,37 @@ static int verify_password_acm(int fd, const char *session_text,
 out:
 	memset(secret, 0, sizeof(secret));
 	memset(context, 0, sizeof(context));
+	return ret;
+}
+
+static int verify_password_only(int fd, const char *session_text,
+				const char *handle_text, int password_stdin)
+{
+	char secret[129] = { 0 };
+	char *end = NULL;
+	uint64_t session;
+	long handle;
+	size_t length = 0;
+	int ret = 1;
+
+	if (parse_u64(session_text, &session) || !session) {
+		fprintf(stderr, "invalid AKS session\n");
+		return 2;
+	}
+	errno = 0;
+	handle = strtol(handle_text, &end, 0);
+	if (errno || !end || *end || !handle || handle < INT32_MIN ||
+	    handle > INT32_MAX) {
+		fprintf(stderr, "invalid keybag handle\n");
+		return 2;
+	}
+	if (read_password_input(secret, &length, password_stdin))
+		goto out;
+	ret = exchange_verify_password_acm(fd, session, (int32_t)handle,
+					   (unsigned char *)secret, length,
+					   NULL, "verify-password-only");
+out:
+	memset(secret, 0, sizeof(secret));
 	return ret;
 }
 
@@ -710,6 +758,8 @@ int main(int argc, char **argv)
 	      (argc == 4 && (!strcmp(argv[1], "unlock-keybag") ||
 	                     !strcmp(argv[1], "unlock-keybag-stdin"))) ||
 	      (argc == 4 && !strcmp(argv[1], "verify-password-acm")) ||
+	      (argc == 4 && (!strcmp(argv[1], "verify-password-only") ||
+	                     !strcmp(argv[1], "verify-password-only-stdin"))) ||
 	      (argc == 5 && !strcmp(argv[1], "verify-password-acm-matrix")) ||
 	      (argc == 5 && !strcmp(argv[1], "get-device-state")) ||
 	      (argc == 6 && !strcmp(argv[1], "get-device-state-v1")))) {
@@ -720,11 +770,13 @@ int main(int argc, char **argv)
 			"       %s unlock-keybag SESSION HANDLE\n"
 			"       %s unlock-keybag-stdin SESSION HANDLE\n"
 			"       %s verify-password-acm SESSION HANDLE < CONTEXT_16_BYTES\n"
+			"       %s verify-password-only SESSION HANDLE\n"
+			"       %s verify-password-only-stdin SESSION HANDLE\n"
 			"       %s verify-password-acm-matrix SESSION SPECIAL POSITIVE < CONTEXT_16_BYTES\n"
 			"       %s get-device-state HANDLE SELECTOR OUTPUT\n"
 			"       %s get-device-state-v1 SESSION HANDLE SELECTOR OUTPUT\n",
 			argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0],
-			argv[0], argv[0]);
+			argv[0], argv[0], argv[0], argv[0]);
 		return 2;
 	}
 	fd = open("/dev/t2-aks", O_RDWR | O_CLOEXEC);
@@ -744,6 +796,10 @@ int main(int argc, char **argv)
 		ret = unlock_keybag(fd, argv[2], argv[3], 1);
 	else if (!strcmp(argv[1], "verify-password-acm"))
 		ret = verify_password_acm(fd, argv[2], argv[3]);
+	else if (!strcmp(argv[1], "verify-password-only"))
+		ret = verify_password_only(fd, argv[2], argv[3], 0);
+	else if (!strcmp(argv[1], "verify-password-only-stdin"))
+		ret = verify_password_only(fd, argv[2], argv[3], 1);
 	else if (!strcmp(argv[1], "verify-password-acm-matrix"))
 		ret = verify_password_acm_matrix(fd, argv[2], argv[3], argv[4]);
 	else if (!strcmp(argv[1], "get-device-state-v1"))

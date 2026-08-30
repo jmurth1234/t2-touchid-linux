@@ -5,7 +5,7 @@ Touch ID enrollment, identity management, multi-user mapping, Catacomb
 persistence, and recovery on Intel Macs with an Apple T2.
 
 - [FINDINGS.md](FINDINGS.md) is a sanitized snapshot of the detailed research
-  ledger, last updated 2026-08-30.
+  ledger, last updated 2026-08-31.
 - [EVIDENCE_COLLECTION.md](EVIDENCE_COLLECTION.md) explains the remaining
   evidence gaps and how to collect data for each one later.
 - [`scripts/`](scripts/) contains collection and preflight helpers. They do not
@@ -21,6 +21,12 @@ It copies only likely Apple system caller executables and their public
 code-signing metadata. It does not read a password, keybag, Catacomb, or
 fingerprint. Its output is still private research evidence because Apple
 binaries must not be committed or redistributed.
+
+The smaller
+[`scripts/collect-aks-platform-identities-macos.sh`](scripts/collect-aks-platform-identities-macos.sh)
+records the boot-scoped audit-session and process-unique values for currently
+running candidate callers. Its output is private and non-replayable; the script
+exists to test relationships and field semantics, not to mint credentials.
 
 After transferring an archive privately, inspect a Catacomb component on Linux
 without printing its UUIDs:

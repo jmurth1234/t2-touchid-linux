@@ -61,6 +61,18 @@ class ACMAuthorizeCommandTests(unittest.TestCase):
             ],
         )
 
+    def test_password_only_uses_positive_runtime_handle(self) -> None:
+        self.assertEqual(
+            MODULE.verify_password_only_command(1, 6),
+            [str(MODULE.AKS_TOOL), "verify-password-only", "1", "6"],
+        )
+
+    def test_password_only_rejects_special_handle(self) -> None:
+        with self.assertRaisesRegex(
+            MODULE.ACMDeviceError, "unsafe password-only verification target"
+        ):
+            MODULE.verify_password_only_command(1, -501)
+
     def test_runtime_state_rejects_nonpositive_loaded_handle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory) / "keybag.env"

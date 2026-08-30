@@ -4326,12 +4326,13 @@ exactly `0x200` and preserve the endpoint-10 context lifetime.
 Live tests on 2026-08-30 with complete codec-v1 bodies returned SEP status
 `-1` for `0x200`, `-12` for `0x280`, and `-1` for zero. A subsequent body that
 stopped after the context blob returned `-13`; that request was eight bytes
-short and is now known malformed. The complete-body statuses are therefore
-meaningful, but synthetic UID/process and five evidence-derived
-CodeDirectory-hash comparisons must still be repeated with the canonical
-`0x200` body before drawing a caller-identity conclusion. The kernel allowlist
-now permits only the exact selector-42 value rather than exposing the memento
-or zero-option variants.
+short and is now known malformed. Later canonical `0x200` tests with the
+correct full body returned `-1` for the special and positive handles, both
+context-create variants, both tested 32-bit platform values, both tested process
+values, and the five evidence-derived CodeDirectory hashes. The kernel
+allowlist permits only the exact selector-42 option rather than exposing the
+memento or zero-option variants. These negatives bound the tested matrix but
+do not prove that platform data is ignored.
 
 The running kext's `ipc_verify_secret_v1` implementation narrows `-1` further.
 It is returned before normal secret unwrap when `keybag_for_handle` cannot
@@ -4356,11 +4357,12 @@ refer to the same now-unlocked bag, the second call enters
 `_unlock_keybag_with_opts` in verify-only mode: null destination, raw password,
 and no device options. That succeeds. Consequently the shared keybag lookup,
 raw-secret initialization, policy/backoff, KDF, unwrap, already-unlocked state,
-and verify-only path are all known-good for the same password. The next bounded
-test is the rebuilt canonical `0x200` request, followed—if it remains `-1`—by
-repeating the caller platform-data matrix without changing the body. One reboot
-is required because the currently loaded pinned module still enforces the
-superseded short request.
+and verify-only path are all known-good for the same password. Because the
+full canonical request and caller matrix still return `-1`, the next bounded
+test is the same codec with a zero-length ACM external-form blob. The exact
+running-kext implementation skips `ACMSecContextCreateWithExternalForm` when
+that descriptor is absent; success would isolate the failure to ACM-context
+attachment, while another `-1` would keep it in keybag/password/header handling.
 
 A fresh manifest-verified capture from that same running 25B77 installation now
 bounds the caller-platform matrix without relying on another macOS release. The
@@ -4381,12 +4383,29 @@ boundary rather than a new protocol result. The pinned live module had GNU
 build ID `10c190cfa6e1ec46d383925283dde1c30b2ec6aa`, while the corrected signed
 DKMS module on disk had build ID `ade422d1bbed10839885937cc21539c6203b11e2`.
 The early operation-`0x21` attempt, made while the matching intermediate helper
-was still installed, sent the truncated body and logged SEP `-13`. Reinstalling
-then updated the helper to the canonical body, but the pinned intermediate
-kernel validator rejected all three handles locally and emitted no SEP log.
-Consequently no post-correction canonical-body status has yet been observed.
-The public doctor now compares the live and installed GNU build IDs and reports
-`module-build ... reboot required` for this state.
+was still installed, sent the truncated body and logged SEP `-13`. The public
+doctor now compares the live and installed GNU build IDs and reports
+`module-build ... reboot required` for such a state. A later reboot did load
+the matching canonical module, after which the full-body `-1` matrix above was
+observed; the historical `-13` is not evidence about the canonical request.
+
+An instruction-level trace of the exact 25B77 user client also corrects two
+platform-header assumptions. `AppleKeyStoreUserClient::start` assigns its
+session value from a per-boot random instance base plus
+`proc_uniqueid(current_proc)` and passes that value directly to
+`verify_password`; there is no separate client-registration request to SEP.
+`_get_platform_proc_stuff` writes `proc_uniqueid` and then reads
+`cr_audit.as_aia_p->ai_asid`. The adjacent 32-bit v2 field is therefore the
+macOS **audit-session ID**, not a Unix UID. The Linux parameter and public
+configuration now call it `aks_platform_asid` accordingly.
+
+A private historical audit-session value was tried with the canonical body,
+first with an empty caller hash and then with all five current 25B77 candidate
+hashes; every case returned `-1`. The value is intentionally redacted and is
+not stable across audit sessions or boots. This rules out that stale value as
+a standalone fix, not the current audit-session/process-unique pair. The
+read-only macOS collector now records current candidate pairs together with a
+boot UUID, while explicitly treating them as non-replayable private evidence.
 
 One framework helper recovers a generic passphrase credential envelope, but
 the matching ModuleACM dispatch now proves that it is **not** the enrollment
@@ -4718,7 +4737,7 @@ production, but does not prove it is the exact producer of the object stored in
 |---|---|---|
 | Serialized per-user cache, timeout, invalidation, explicit wiping | Reproducible and desirable | Local secret hygiene only |
 | Numeric UID carried separately with enrollment | Already protocol-visible | Selects target; does not itself authorize it |
-| Password input and keybag unlock | Existing endpoint-7 tooling covers unlock; a root-only canonical codec-v1 verify-secret path exists, but its corrected body remains pending live validation after reboot | The endpoint request is session, handle, raw password blob, ACM-context blob, and the exact selector-42 `0x200` option qword |
+| Password input and keybag unlock | Existing endpoint-7 tooling covers unlock; the corrected root-only canonical codec-v1 path reaches SEP but returns `-1` across the bounded handle/context/platform matrix; a zero-context stage-isolation diagnostic is ready for the next module boot | The endpoint request is session, handle, raw password blob, optional ACM-context blob, and the exact selector-42 `0x200` option qword |
 | `LAContext` policy `1007` and externalization | Exact 24G830 endpoint-10 commands and serializers are recovered; no Linux implementation yet | Produces the demonstrated mode-0 credential-set reference after backend policy success |
 | `budd` service and private entitlement | Apple-only host IPC policy | Restricts sharing of an already-created context |
 | SEP subject binding and freshness | UID-bound context create, password/context binding, ten-minute credential selection, and enrollment-authority flag are recovered | Backend authorization is reproducible in protocol, subject to strict broker ownership |

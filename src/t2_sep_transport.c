@@ -107,10 +107,10 @@ module_param(register_acm, bool, 0400);
 MODULE_PARM_DESC(register_acm,
 	"Register separate endpoint-10 ACM OOL buffers (default: false)");
 
-static uint aks_platform_uid;
-module_param(aks_platform_uid, uint, 0600);
-MODULE_PARM_DESC(aks_platform_uid,
-	"Apple user UID stamped into verify-secret AKS headers (default: 0)");
+static uint aks_platform_asid;
+module_param(aks_platform_asid, uint, 0600);
+MODULE_PARM_DESC(aks_platform_asid,
+	"macOS audit-session ID stamped into verify-secret AKS headers (default: 0)");
 
 static ulong aks_platform_proc_uniqueid;
 module_param(aks_platform_proc_uniqueid, ulong, 0600);
@@ -149,7 +149,7 @@ static int t2_aks_stamp_verify_platform_data(struct t2_aks_header_v2 *header)
 
 	put_unaligned_le64(aks_platform_proc_uniqueid,
 			     header->v1.platform_data);
-	put_unaligned_le32(aks_platform_uid,
+	put_unaligned_le32(aks_platform_asid,
 			     header->v1.platform_data + sizeof(__le64));
 
 	length = strnlen(aks_platform_cdhash, sizeof(aks_platform_cdhash));
@@ -324,7 +324,7 @@ static bool t2_aks_operation_allowed(u8 operation)
 	case 0x04: /* change_lock_state */
 	case 0x0d: /* make_system_keybag */
 	case 0x19: /* get_device_state */
-	case 0x21: /* verify_secret_v1 with an ACM context */
+	case 0x21: /* bounded verify_secret_v1, with optional ACM context */
 	case T2_SEP_AKS_GET_CAPABILITIES:
 		return true;
 	default:
@@ -338,7 +338,7 @@ static bool t2_aks_verify_acm_request_allowed(const u8 *request, size_t length)
 	s32 handle;
 	u64 options, session;
 
-	if (length < 52 || get_unaligned_le32(request) != 1)
+	if (length < 36 || get_unaligned_le32(request) != 1)
 		return false;
 	/* verify_secret_v1 carries the owning AKS session, then the bag handle. */
 	session = get_unaligned_le64(request + 4);
@@ -349,16 +349,20 @@ static bool t2_aks_verify_acm_request_allowed(const u8 *request, size_t length)
 	if (!password_length || password_length > 128)
 		return false;
 	padded_length = ALIGN(password_length, 4);
-	if (length != 48 + padded_length)
+	if (length < 32 + padded_length)
 		return false;
 	if (memchr_inv(request + 20 + password_length, 0,
 		       padded_length - password_length))
 		return false;
 	context_length = get_unaligned_le32(request + 20 + padded_length);
-	if (context_length != 16)
+	/* A zero-length context isolates password/keybag verification. */
+	if (context_length != 0 && context_length != 16)
+		return false;
+	if (length != 32 + padded_length + context_length)
 		return false;
 	/* The v1 request ends with the selector-42 plaintext-secret option. */
-	options = get_unaligned_le64(request + 40 + padded_length);
+	options = get_unaligned_le64(request + 24 + padded_length +
+				   context_length);
 	return options == 0x200;
 }
 
@@ -395,7 +399,8 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 	put_unaligned_le32(T2_SEP_AKS_HEADER_V2_SIZE, sep->ool_in);
 	header = sep->ool_in + sizeof(__le32);
 	header->v1.version = cpu_to_le32(T2_SEP_AKS_HEADER_V2);
-	header->v1.usec_time = cpu_to_le64(ktime_get_ns() / NSEC_PER_USEC);
+	header->v1.usec_time = cpu_to_le64(ktime_get_boottime_ns() /
+					      NSEC_PER_USEC);
 	header->calendar_seconds = cpu_to_le64(ktime_get_real_seconds());
 	if (operation == 0x21) {
 		ret = t2_aks_stamp_verify_platform_data(header);
@@ -746,7 +751,8 @@ static int t2_aks_probe_capabilities(struct t2_sep_transport *sep)
 	put_unaligned_le32(T2_SEP_AKS_HEADER_V1_SIZE, sep->ool_in);
 	header = sep->ool_in + sizeof(__le32);
 	header->version = cpu_to_le32(T2_SEP_AKS_HEADER_V1);
-	header->usec_time = cpu_to_le64(ktime_get_ns() / NSEC_PER_USEC);
+	header->usec_time = cpu_to_le64(ktime_get_boottime_ns() /
+					   NSEC_PER_USEC);
 
 	/* Request payload: result=0, selector=1, empty input blob. */
 	payload = sep->ool_in + T2_SEP_AKS_V1_WIRE_SIZE;

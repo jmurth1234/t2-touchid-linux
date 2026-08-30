@@ -25,7 +25,8 @@ root-only exchange device. The kernel, rather than userspace, owns header
 generation, transaction matching, SHA-256 verification, size bounds, and
 request-buffer scrubbing. It accepts only the recovered AppleKeyStore opcodes
 `0x03` (load keybag), `0x04` (change lock state), `0x19` (get device state),
-`0x21` (verify secret with a 16-byte ACM context), and `0x4d` (capabilities);
+`0x21` (verify secret with either a 16-byte ACM context or the bounded
+password-only diagnostic), and `0x4d` (capabilities);
 every other opcode is rejected. Operation `0x21` is additionally restricted to
 the recovered codec, session, password, context, and option layouts. Capability
 negotiation uses the required v1 header, while normal operations use the
@@ -44,6 +45,18 @@ that canonical value. Memento and structured-credential variants are not
 exposed by this research interface. Endpoint-7 mailbox failures are returned
 to the root-only caller as a signed SEP status in the fixed-size ioctl record,
 so diagnostics do not depend on scraping the kernel log.
+
+`verify-password-only SESSION HANDLE` emits the same recovered codec with a
+zero-length external-context blob. It is deliberately restricted to a nonzero
+handle, session `1`, a nonempty bounded password, and option `0x200`. This is a
+stage-isolation diagnostic: success would prove password/keybag verification
+before ACM attachment, while failure remains inside that earlier stage. It
+does not enroll, delete, or evaluate an ACM policy.
+
+The v2 platform field formerly labelled `uid` is the caller's macOS audit
+session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent
+64-bit field is the macOS process-unique ID, not a PID. Both are research-only,
+boot-scoped data; they must not be inferred from the configured account UID.
 
 After either buffer is successfully registered, the module pins itself in
 memory. SEP retains the DMA address and Apple exposes no matching unregister
