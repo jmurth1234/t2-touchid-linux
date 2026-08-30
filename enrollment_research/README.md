@@ -34,7 +34,8 @@ path, event protocol, per-identity deletion, Catacomb schema, and crash windows
 are substantially recovered.
 
 Active development now includes two non-mutating foundations: a privacy-safe
-offline Catacomb decoder and a live SEP identity-count inventory. The internal
+offline Catacomb decoder and a live, double-collected SEP inventory that joins
+protocol-v2 global and per-user identities plus capacity and Catacomb state. The internal
 mutation journal implementation durably syncs append-only, hash-chained intent
 and observation records, rejects secret-shaped fields and raw bytes, and fails
 closed on tampering or insecure storage. It is not yet connected to any T2

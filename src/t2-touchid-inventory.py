@@ -55,16 +55,49 @@ def summarize_probe(probe: Any, expected_uid: int) -> dict[str, Any]:
         raise InventoryError("SEP identity records do not match the expected layout")
     for field, description in (
         ("identity_inventory_repeat_equal", "identity inventory"),
+        ("global_identity_inventory_repeat_equal", "global identity inventory"),
+        ("identity_capacity_repeat_equal", "identity capacity"),
+        ("catacomb_component_repeat_equal", "Catacomb component"),
         ("catacomb_state_repeat_equal", "Catacomb state"),
         ("sks_lock_state_repeat_equal", "SKS lock state"),
     ):
         if probe.get(field) is not True:
             raise InventoryError(f"{description} changed during double collection")
+    if not successful_reply(probe.get("global_identity_list_reply")):
+        raise InventoryError("global SEP identity inventory failed")
+    if probe.get("global_identity_record_bytes_valid") is not True:
+        raise InventoryError("SEP returned malformed global identity records")
+    if probe.get("configured_identity_records_reconciled") is not True:
+        raise InventoryError("per-user and global SEP identities disagree")
+    for field, description in (
+        ("identity_capacity_reply", "maximum identity capacity"),
+        ("identity_free_count_reply", "free identity capacity"),
+        ("catacomb_uuid_reply", "Catacomb UUID"),
+        ("catacomb_hash_reply", "Catacomb hash"),
+    ):
+        if not successful_reply(probe.get(field)):
+            raise InventoryError(f"{description} query failed")
+    if probe.get("catacomb_uuid_length_valid") is not True:
+        raise InventoryError("SEP returned a malformed Catacomb UUID")
+    if probe.get("catacomb_hash_length_valid") is not True:
+        raise InventoryError("SEP returned a malformed Catacomb hash")
+    maximum = probe.get("identity_maximum_capacity")
+    free = probe.get("identity_free_count")
+    global_count = probe.get("global_identity_record_count")
+    if not all(isinstance(value, int) and value >= 0 for value in (maximum, free, global_count)):
+        raise InventoryError("SEP returned invalid identity capacity metadata")
+    if free > maximum or global_count > maximum:
+        raise InventoryError("SEP identity counts exceed reported capacity")
 
     result: dict[str, Any] = {
         "schema_version": 1,
         "user_id": expected_uid,
         "sep_identity_count": count,
+        "global_sep_identity_count": global_count,
+        "maximum_identity_capacity": maximum,
+        "configured_user_free_capacity": free,
+        "per_user_global_reconciled": True,
+        "catacomb_component_present": probe.get("catacomb_component_present"),
         "identity_records_valid": True,
         "double_collection_equal": True,
         "identifiers_redacted": True,
@@ -111,6 +144,9 @@ def main() -> int:
                 "--macos-user-id", str(uid),
                 "--initialize",
                 "--identity-list",
+                "--global-identity-list",
+                "--identity-capacity",
+                "--catacomb-component-state",
                 "--catacomb-state",
                 "--sks-lock-state",
                 "--stability-check",

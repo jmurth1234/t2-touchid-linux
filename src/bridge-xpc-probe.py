@@ -403,6 +403,21 @@ def main() -> None:
         help="query the SEP identity-record count for the configured macOS user",
     )
     parser.add_argument(
+        "--global-identity-list",
+        action="store_true",
+        help="query protocol-v2 global SEP identity records (command 0x51)",
+    )
+    parser.add_argument(
+        "--identity-capacity",
+        action="store_true",
+        help="query maximum and configured-user free identity capacity",
+    )
+    parser.add_argument(
+        "--catacomb-component-state",
+        action="store_true",
+        help="query configured-user SEP Catacomb UUID/presence/hash metadata",
+    )
+    parser.add_argument(
         "--stability-check",
         action="store_true",
         help="repeat requested inventory queries and report exact private equality",
@@ -460,6 +475,7 @@ def main() -> None:
         result = {"peer_helo": helo, "sent": "HELO only"}
         operations = []
         enrolled_identity_records: tuple[bytes, ...] = ()
+        global_identity_records: tuple[bytes, ...] = ()
         if args.initialize:
             version_reply = request(sock, [0])
             if (
@@ -659,6 +675,162 @@ def main() -> None:
                     summarize_event(event) for event in repeated_events
                 ]
             operations.append("get identity count")
+        if args.global_identity_list:
+            global_reply, global_events = biometric_command(
+                sock, 0x51, output_capacity=40 * 10
+            )
+            result["global_identity_list_reply"] = summarize_command_reply(
+                global_reply
+            )
+            global_output = (
+                global_reply[1]
+                if isinstance(global_reply, list)
+                and len(global_reply) > 1
+                and isinstance(global_reply[1], bytes)
+                else None
+            )
+            result["global_identity_record_bytes_valid"] = (
+                isinstance(global_output, bytes) and len(global_output) % 40 == 0
+            )
+            if result["global_identity_record_bytes_valid"]:
+                global_identity_records = tuple(
+                    global_output[offset : offset + 40]
+                    for offset in range(0, len(global_output), 40)
+                )
+                result["global_identity_record_count"] = len(
+                    global_identity_records
+                )
+                configured_records = {
+                    record[:20]
+                    for record in global_identity_records
+                    if struct.unpack_from("<I", record)[0] == args.macos_user_id
+                }
+                result["configured_identity_records_reconciled"] = (
+                    bool(enrolled_identity_records)
+                    and configured_records == set(enrolled_identity_records)
+                ) or (not configured_records and not enrolled_identity_records)
+            result["global_identity_list_events"] = [
+                summarize_event(event) for event in global_events
+            ]
+            if args.stability_check:
+                repeated_reply, repeated_events = biometric_command(
+                    sock, 0x51, output_capacity=40 * 10
+                )
+                result["global_identity_inventory_repeat_equal"] = (
+                    repeated_reply == global_reply
+                )
+                result["global_identity_list_repeat_reply"] = (
+                    summarize_command_reply(repeated_reply)
+                )
+                result["global_identity_list_repeat_events"] = [
+                    summarize_event(event) for event in repeated_events
+                ]
+            operations.append("get global identity inventory")
+        if args.identity_capacity:
+            maximum_reply, maximum_events = biometric_command(
+                sock, 0x0F, output_capacity=4
+            )
+            free_reply, free_events = biometric_command(
+                sock,
+                0x41,
+                data=struct.pack("<I", args.macos_user_id),
+                output_capacity=4,
+            )
+            result["identity_capacity_reply"] = summarize_command_reply(
+                maximum_reply
+            )
+            result["identity_free_count_reply"] = summarize_command_reply(free_reply)
+            maximum_output = (
+                maximum_reply[1]
+                if isinstance(maximum_reply, list)
+                and len(maximum_reply) > 1
+                and isinstance(maximum_reply[1], bytes)
+                else None
+            )
+            free_output = (
+                free_reply[1]
+                if isinstance(free_reply, list)
+                and len(free_reply) > 1
+                and isinstance(free_reply[1], bytes)
+                else None
+            )
+            if isinstance(maximum_output, bytes) and len(maximum_output) == 4:
+                result["identity_maximum_capacity"] = struct.unpack(
+                    "<I", maximum_output
+                )[0]
+            if isinstance(free_output, bytes) and len(free_output) == 4:
+                result["identity_free_count"] = struct.unpack("<I", free_output)[0]
+            result["identity_capacity_events"] = [
+                summarize_event(event) for event in maximum_events + free_events
+            ]
+            if args.stability_check:
+                repeated_maximum, repeated_maximum_events = biometric_command(
+                    sock, 0x0F, output_capacity=4
+                )
+                repeated_free, repeated_free_events = biometric_command(
+                    sock,
+                    0x41,
+                    data=struct.pack("<I", args.macos_user_id),
+                    output_capacity=4,
+                )
+                result["identity_capacity_repeat_equal"] = (
+                    repeated_maximum == maximum_reply and repeated_free == free_reply
+                )
+                result["identity_capacity_repeat_events"] = [
+                    summarize_event(event)
+                    for event in repeated_maximum_events + repeated_free_events
+                ]
+            operations.append("get identity capacity")
+        if args.catacomb_component_state:
+            uid_data = struct.pack("<I", args.macos_user_id)
+            uuid_reply, uuid_events = biometric_command(
+                sock, 0x38, data=uid_data, output_capacity=16
+            )
+            hash_reply, hash_events = biometric_command(
+                sock, 0x3A, data=uid_data, output_capacity=33
+            )
+            result["catacomb_uuid_reply"] = summarize_command_reply(uuid_reply)
+            result["catacomb_hash_reply"] = summarize_command_reply(hash_reply)
+            uuid_output = (
+                uuid_reply[1]
+                if isinstance(uuid_reply, list)
+                and len(uuid_reply) > 1
+                and isinstance(uuid_reply[1], bytes)
+                else None
+            )
+            hash_output = (
+                hash_reply[1]
+                if isinstance(hash_reply, list)
+                and len(hash_reply) > 1
+                and isinstance(hash_reply[1], bytes)
+                else None
+            )
+            result["catacomb_uuid_length_valid"] = (
+                isinstance(uuid_output, bytes) and len(uuid_output) == 16
+            )
+            result["catacomb_hash_length_valid"] = (
+                isinstance(hash_output, bytes) and len(hash_output) == 33
+            )
+            if result["catacomb_hash_length_valid"]:
+                result["catacomb_component_present"] = bool(hash_output[0])
+            result["catacomb_component_events"] = [
+                summarize_event(event) for event in uuid_events + hash_events
+            ]
+            if args.stability_check:
+                repeated_uuid, repeated_uuid_events = biometric_command(
+                    sock, 0x38, data=uid_data, output_capacity=16
+                )
+                repeated_hash, repeated_hash_events = biometric_command(
+                    sock, 0x3A, data=uid_data, output_capacity=33
+                )
+                result["catacomb_component_repeat_equal"] = (
+                    repeated_uuid == uuid_reply and repeated_hash == hash_reply
+                )
+                result["catacomb_component_repeat_events"] = [
+                    summarize_event(event)
+                    for event in repeated_uuid_events + repeated_hash_events
+                ]
+            operations.append("get Catacomb component metadata")
         if args.catacomb_state:
             catacomb_reply, catacomb_events = biometric_command(
                 sock, 0x3C, output_capacity=4096

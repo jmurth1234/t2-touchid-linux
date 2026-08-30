@@ -196,10 +196,14 @@ sudo t2-touchid-inventory
 ```
 
 This read-only command performs two exact back-to-back collections and fails if
-the private identity records, Catacomb state, or secure-key-store lock state
-change between them. It exposes only the stable count and equality result—not
-identity UUIDs or hashes. It is the inventory gate for future enrollment and
-deletion operations; it does not mutate biometric state.
+the private global/per-user identity records, capacity replies, Catacomb
+UUID/hash/state, or secure-key-store lock state change between them. It also
+requires protocol-v2 global identities to reconcile with the configured user's
+detail records. It exposes only counts, presence, query status, and equality—not
+identity or Catacomb UUIDs/hashes. Maximum capacity and configured-user free
+capacity remain separate because their arithmetic scope is not yet proven. This
+is the inventory gate for future enrollment and deletion operations; it does
+not mutate biometric state.
 
 This machine has no usable TPM, so the credential is encrypted with systemd's
 host key. It protects against casual/offline disclosure without the decrypted
