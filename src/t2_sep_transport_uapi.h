@@ -9,7 +9,8 @@
 
 struct t2_aks_ioc_exchange {
 	__u8 operation;
-	__u8 reserved0[3];
+	__s8 sep_status;
+	__u8 reserved0[2];
 	__u32 request_length;
 	__u32 response_capacity;
 	__u32 response_length;

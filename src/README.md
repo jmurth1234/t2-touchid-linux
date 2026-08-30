@@ -41,7 +41,9 @@ Operation `0x21` codec v1 contains the password and 16-byte ACM
 external-context blobs followed by one 64-bit device-options value. Exact
 selector `42` supplies plaintext-secret option `0x200`; the kernel accepts only
 that canonical value. Memento and structured-credential variants are not
-exposed by this research interface.
+exposed by this research interface. Endpoint-7 mailbox failures are returned
+to the root-only caller as a signed SEP status in the fixed-size ioctl record,
+so diagnostics do not depend on scraping the kernel log.
 
 After either buffer is successfully registered, the module pins itself in
 memory. SEP retains the DMA address and Apple exposes no matching unregister

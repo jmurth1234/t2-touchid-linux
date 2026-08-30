@@ -422,7 +422,11 @@ static int exchange_verify_password_acm(int fd, uint64_t session,
 	}
 	exchange.request = (uintptr_t)request;
 	if (ioctl(fd, T2_AKS_IOC_EXCHANGE, &exchange) < 0) {
-		fprintf(stderr, "%s: %s\n", label, strerror(errno));
+		if (exchange.sep_status)
+			fprintf(stderr, "%s: SEP status %d\n", label,
+				exchange.sep_status);
+		else
+			fprintf(stderr, "%s: %s\n", label, strerror(errno));
 		goto out;
 	}
 	if (exchange.response_length != sizeof(response) ||

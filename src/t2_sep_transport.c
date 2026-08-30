@@ -29,6 +29,7 @@
 
 static_assert(sizeof(struct t2_acm_ioc_exchange) == 48);
 static_assert(sizeof(struct t2_acm_ioc_info) == 16);
+static_assert(sizeof(struct t2_aks_ioc_exchange) == 32);
 
 #define T2_SEP_VENDOR_ID            0x106b
 #define T2_SEP_DEVICE_ID            0x1802
@@ -365,7 +366,8 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 				  const void *request_body,
 				  size_t request_body_length,
 				  u8 **response_body,
-				  size_t *response_body_length)
+				  size_t *response_body_length,
+				  s8 *sep_status_out)
 {
 	struct t2_aks_header_v2 *header;
 	struct t2_sep_message request = { };
@@ -377,6 +379,7 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 	unsigned int skipped = 0;
 	int ret;
 
+	*sep_status_out = 0;
 	if (!t2_aks_operation_allowed(operation))
 		return -EACCES;
 	if (operation == 0x21 &&
@@ -432,6 +435,7 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 	/* EP7 reply: endpoint, operation|response, transaction, signed status. */
 	reply_status = (s8)(reply.word[0] >> 24);
 	if (reply_status) {
+		*sep_status_out = reply_status;
 		dev_err(&sep->pdev->dev,
 			"AKS operation %#x returned SEP status %d (flags %#x)\n",
 			operation, reply_status, reply.word[1] & 0xffff);
@@ -491,7 +495,8 @@ static long t2_aks_ioctl(struct file *file, unsigned int command,
 		return -ENOTTY;
 	if (copy_from_user(&exchange, user_argument, sizeof(exchange)))
 		return -EFAULT;
-	if (memchr_inv(exchange.reserved0, 0, sizeof(exchange.reserved0)))
+	if (exchange.sep_status ||
+	    memchr_inv(exchange.reserved0, 0, sizeof(exchange.reserved0)))
 		return -EINVAL;
 	if (exchange.request_length > T2_SEP_AKS_MAX_BODY_SIZE ||
 	    exchange.response_capacity > T2_SEP_AKS_MAX_BODY_SIZE)
@@ -511,9 +516,13 @@ static long t2_aks_ioctl(struct file *file, unsigned int command,
 		goto out_free;
 	ret = t2_aks_exchange_locked(sep, exchange.operation, request,
 				     exchange.request_length, &response,
-				     &response_length);
-	if (ret)
+				     &response_length, &exchange.sep_status);
+	if (ret) {
+		if (exchange.sep_status &&
+		    copy_to_user(user_argument, &exchange, sizeof(exchange)))
+			ret = -EFAULT;
 		goto out_unlock;
+	}
 	if (response_length > exchange.response_capacity) {
 		ret = -ENOSPC;
 		goto out_set_length;
