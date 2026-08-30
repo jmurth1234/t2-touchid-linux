@@ -33,6 +33,13 @@ serialized Linux enrollment and identity management. The host authorization
 path, event protocol, per-identity deletion, Catacomb schema, and crash windows
 are substantially recovered.
 
+Active development now includes two non-mutating foundations: a privacy-safe
+offline Catacomb decoder and a live SEP identity-count inventory. The internal
+mutation journal implementation durably syncs append-only, hash-chained intent
+and observation records, rejects secret-shaped fields and raw bytes, and fails
+closed on tampering or insecure storage. It is not yet connected to any T2
+mutation command.
+
 The following remain disabled or unverified:
 
 - final T2 acceptance and replay behavior for a fresh mode-0 ACM context;
