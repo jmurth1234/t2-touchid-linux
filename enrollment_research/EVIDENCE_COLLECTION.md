@@ -4,6 +4,39 @@ These tasks correspond to the unresolved evidence table in
 [FINDINGS.md](FINDINGS.md). Collection output is private by default and must not
 be committed to this repository.
 
+## Recommended one-shot collection
+
+For the currently available macOS evidence, use the standalone collector:
+
+```bash
+curl -fL -o ~/collect-t2-enrollment-evidence.sh \
+  https://raw.githubusercontent.com/jmurth1234/t2-touchid-linux/main/enrollment_research/scripts/collect-all-macos-evidence.sh
+chmod 700 ~/collect-t2-enrollment-evidence.sh
+~/collect-t2-enrollment-evidence.sh
+```
+
+It creates one private archive in the current directory, briefly freezes and
+always resumes `biometrickitd` while copying Catacomb state, and also captures
+the console user's OpenDirectory record, host UUID, `persona.kb`, hashes, and
+Catacomb filesystem metadata. It performs no biometric or keybag command.
+
+After it prints `Created private archive`, move that archive through your
+private dual-boot transfer location. Never publish or attach it to a public
+issue. The individual collectors below remain useful when only one evidence
+class needs refreshing.
+
+If the EFI volume is already mounted at `/Volumes/EFI`, the collector can place
+the archive there directly even when the directory requires administrator
+permission:
+
+```bash
+~/collect-t2-enrollment-evidence.sh \
+  /Volumes/EFI/t2-enrollment-evidence.tar.gz
+```
+
+Delete the EFI copy after transferring it into the Linux home directory; FAT
+volumes do not provide meaningful Unix confidentiality permissions.
+
 ## 1. Exact Catacomb fixtures
 
 Needed for independent keyed-archive reader/writer and crash-recovery tests:

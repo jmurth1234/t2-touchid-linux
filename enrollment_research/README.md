@@ -11,6 +11,10 @@ persistence, and recovery on Intel Macs with an Apple T2.
 - [`scripts/`](scripts/) contains collection and preflight helpers. They do not
   enroll, delete, load, confirm, or repair biometric state.
 
+The recommended macOS entry point is
+[`scripts/collect-all-macos-evidence.sh`](scripts/collect-all-macos-evidence.sh),
+which produces one private archive for later offline analysis.
+
 ## Current boundary
 
 Existing, already-provisioned Apple users appear protocol-feasible for
