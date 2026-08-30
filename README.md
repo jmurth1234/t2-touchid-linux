@@ -18,8 +18,12 @@ The in-development endpoint-10 transport is separately opt-in. Setting
 registers dedicated ACM DMA buffers on the next boot and creates a root-only
 `/dev/t2-acm`. This still does not enable enrollment or expose a generic raw
 command CLI. `sudo t2-acm-preflight` only verifies registration metadata and
-performs no SEP mutation. Because SEP retains the DMA addresses, changing this
-setting requires a reboot; never unload the active module.
+performs no SEP mutation. The separately installed
+`t2-acm-lifecycle-test --acknowledge-transient-context-mutation` performs one
+root-only, UID-bound tracking-context create followed by mandatory deletion; it
+does not enroll or delete a fingerprint. Use it only on an already backed-up
+research machine. Because SEP retains the DMA addresses, changing this setting
+requires a reboot; never unload the active module.
 
 See the redacted conversation that produced this here: https://gist.github.com/jmurth1234/4a138019fd832dfabbed26475613db3a
 

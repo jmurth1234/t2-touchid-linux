@@ -33,7 +33,7 @@ serialized Linux enrollment and identity management. The host authorization
 path, event protocol, per-identity deletion, Catacomb schema, and crash windows
 are substantially recovered.
 
-Active development now includes two non-mutating foundations: a privacy-safe
+Active development includes two non-mutating foundations: a privacy-safe
 offline Catacomb decoder and a live, double-collected SEP inventory that joins
 protocol-v2 global and per-user identities plus capacity and Catacomb state. The internal
 mutation journal implementation durably syncs append-only, hash-chained intent
@@ -41,9 +41,16 @@ and observation records, rejects secret-shaped fields and raw bytes, and fails
 closed on tampering or insecure storage. It is not yet connected to any T2
 mutation command.
 
+The narrow endpoint-10 research transport has also completed a live tracked
+ACM context create/delete lifecycle on the proven machine. The client accepts
+only the recovered create and delete frames, binds creation to the configured
+macOS UID, redacts the returned context identifier, and attempts deletion even
+when response parsing fails. This validates transient context lifecycle only;
+it does not authorize enrollment or expose a general ACM command interface.
+
 The following remain disabled or unverified:
 
-- final T2 acceptance and replay behavior for a fresh mode-0 ACM context;
+- policy authorization and replay behavior for a fresh mode-0 ACM context;
 - creation of new AppleKeyStore/OpenDirectory/APFS users from Linux;
 - whole-biometric-user removal with command `0x48`;
 - writing Linux-generated Catacombs back into macOS; and

@@ -64,11 +64,12 @@ def parse_create_response(response: bytes, *, tracking: bool) -> ContextHandle:
     expected = 21 if tracking else 17
     if type(response) is not bytes or len(response) != expected:
         raise ACMProtocolError(f"create response must be exactly {expected} bytes")
-    response_flag = response[CONTEXT_SIZE]
+    flag_offset = CONTEXT_SIZE + (4 if tracking else 0)
+    response_flag = response[flag_offset]
     if response_flag not in (0, 1):
         raise ACMProtocolError("create response flag is not boolean")
     payload = (
-        struct.unpack_from("<I", response, CONTEXT_SIZE + 1)[0] if tracking else 0
+        struct.unpack_from("<I", response, CONTEXT_SIZE)[0] if tracking else 0
     )
     return ContextHandle(response[:CONTEXT_SIZE], payload, tracking, bool(response_flag))
 

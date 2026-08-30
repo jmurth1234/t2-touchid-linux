@@ -4250,6 +4250,13 @@ extraction of the 24G830 x86_64 `LocalAuthenticationCore` resolves the earlier
 cross-generation ambiguity: when tracking is requested it sends command `0x24`
 with a 21-byte reply capacity, and otherwise (or when `0x24` returns unsupported)
 uses legacy command `1` with a 17-byte reply capacity. It never selects `0x34`.
+The tracking reply places the 20-byte client handle first: a 16-byte context
+identifier followed by its four-byte little-endian tracking payload. The final
+byte is the Boolean response flag. A live Linux endpoint-10 test on the proven
+24G830 machine confirmed that 21-byte layout, accepted creation for configured
+UID 501, and successfully deleted the returned context immediately afterward;
+the public tool reports only typed/Boolean outcomes and never the identifier or
+payload.
 The matching x86_64 AppleCredentialManager kext appends effective UID for exactly
 `1` and `0x24`, so the host client and kext agree. Command `0x34` belongs only to
 the newer bridgeOS client artifact and is not part of the target macOS ABI.

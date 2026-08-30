@@ -28,7 +28,7 @@ class ACMProtocolTests(unittest.TestCase):
     def test_tracking_create_response_is_exact_and_typed(self):
         context = bytes(range(16))
         parsed = acm.parse_create_response(
-            context + b"\x01" + bytes.fromhex("78563412"), tracking=True
+            context + bytes.fromhex("78563412") + b"\x01", tracking=True
         )
         self.assertEqual(parsed, acm.ContextHandle(context, 0x12345678, True, True))
 
@@ -47,7 +47,7 @@ class ACMProtocolTests(unittest.TestCase):
         with self.assertRaises(acm.ACMProtocolError):
             acm.parse_create_response(b"\x00" * 20, tracking=True)
         with self.assertRaises(acm.ACMProtocolError):
-            acm.parse_create_response(b"\x00" * 16 + b"\x02" + b"\x00" * 4, tracking=True)
+            acm.parse_create_response(b"\x00" * 20 + b"\x02", tracking=True)
         with self.assertRaises(acm.ACMProtocolError):
             acm.parse_create_response(b"\x00" * 16 + b"\x02", tracking=False)
 
