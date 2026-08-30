@@ -15,6 +15,17 @@ The recommended macOS entry point is
 [`scripts/collect-all-macos-evidence.sh`](scripts/collect-all-macos-evidence.sh),
 which produces one private archive for later offline analysis.
 
+After transferring an archive privately, inspect a Catacomb component on Linux
+without printing its UUIDs:
+
+```sh
+enrollment_research/scripts/inspect-catacomb.py path/to/user_000001f5.cat
+```
+
+The JSON inventory reports identity labels, counters, creation times, owner UID,
+and schema version. UUID output is deliberately opt-in with
+`--include-identifiers`; never paste that form into a public issue or log.
+
 ## Current boundary
 
 Existing, already-provisioned Apple users appear protocol-feasible for
