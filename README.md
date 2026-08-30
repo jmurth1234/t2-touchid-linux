@@ -188,6 +188,17 @@ sudo t2-touchid-doctor --json
 The report never prints configured addresses, usernames, ports, keybag handles,
 credential contents, identity UUIDs, or biometric payloads.
 
+Query the live SEP identity count and owner/layout consistency without exposing
+template UUIDs:
+
+```sh
+sudo t2-touchid-inventory
+```
+
+This read-only command also reports whether the Catacomb-state and secure-key-
+store lock-state queries succeeded. It is the inventory gate for future
+enrollment and deletion operations; it does not mutate biometric state.
+
 This machine has no usable TPM, so the credential is encrypted with systemd's
 host key. It protects against casual/offline disclosure without the decrypted
 Linux filesystem, but root can decrypt it. Since the credential is also the

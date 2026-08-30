@@ -22,7 +22,7 @@ systemctl disable --now fprintd.service t2-biometric-ready.service \
   t2-credential-unlock.service t2-keybag-load.service \
   t2-sep-transport.service 2>/dev/null || true
 for file in /etc/systemd/system/{fprintd,t2-biometric-ready,t2-credential-unlock,t2-keybag-load,t2-sep-transport}.service \
-  /usr/local/sbin/{t2-aks-tool,t2-keybag-load,t2-pam-unlock,t2-credential-unlock,t2-biometric-ready,t2-sep-transport-load,t2-touchid-doctor} \
+  /usr/local/sbin/{t2-aks-tool,t2-keybag-load,t2-pam-unlock,t2-credential-unlock,t2-biometric-ready,t2-sep-transport-load,t2-touchid-doctor,t2-touchid-inventory} \
   /etc/modprobe.d/t2-sep-transport.conf \
   /etc/dbus-1/system.d/99-t2-touchid-fprint.conf; do
   [[ ! -e $file ]] || rm -- "$file"
