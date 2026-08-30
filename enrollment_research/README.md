@@ -62,8 +62,11 @@ when response parsing fails. The staged kernel transport now additionally
 enforces one owner and one exact context lease, deletes an active context when
 its owner exits, and poisons the endpoint generation after an ambiguous reply.
 Those new fail-closed guarantees are unit-tested and await activation on the
-next normal reboot. This validates transient context lifecycle only; it does
-not authorize enrollment or expose a general ACM command interface.
+next normal reboot. The authorization diagnostic also accepts only a
+sudo/pkexec caller matching the Linux account in the private mapping; it never
+accepts a caller-supplied Apple UID. This validates transient context lifecycle
+only; it does not authorize enrollment or expose a general ACM command
+interface.
 
 The following remain disabled or unverified:
 

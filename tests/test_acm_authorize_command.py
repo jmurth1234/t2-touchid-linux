@@ -81,6 +81,65 @@ class ACMAuthorizeCommandTests(unittest.TestCase):
         self.assertFalse(MODULE.acknowledgement_valid(False, False, True))
         self.assertTrue(MODULE.acknowledgement_valid(False, True, False))
 
+    def test_caller_must_be_the_mapped_sudo_user(self) -> None:
+        MODULE.validate_caller_environment({"SUDO_UID": "1000"}, 1000)
+        MODULE.validate_caller_environment({"PKEXEC_UID": "1000"}, 1000)
+        with self.assertRaises(MODULE.ACMDeviceError):
+            MODULE.validate_caller_environment({}, 1000)
+        with self.assertRaises(MODULE.ACMDeviceError):
+            MODULE.validate_caller_environment({"SUDO_UID": "1001"}, 1000)
+        with self.assertRaises(MODULE.ACMDeviceError):
+            MODULE.validate_caller_environment(
+                {"SUDO_UID": "1000", "PKEXEC_UID": "1001"}, 1000
+            )
+
+    def test_configuration_joins_linux_user_and_apple_bag(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "t2-touchid.conf"
+            config.write_text(
+                "T2_TOUCHID_USER=mapped\n"
+                "T2_TOUCHID_MACOS_USER_ID=501\n"
+                "T2_TOUCHID_SPECIAL_BAG=-501\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(MODULE, "CONFIG", config),
+                mock.patch.object(
+                    Path,
+                    "stat",
+                    return_value=SimpleNamespace(st_uid=0, st_mode=0o100600),
+                ),
+                mock.patch.object(
+                    MODULE.pwd,
+                    "getpwnam",
+                    return_value=SimpleNamespace(pw_uid=1000),
+                ),
+            ):
+                self.assertEqual(MODULE.configuration(), (501, -501, 1000))
+
+    def test_configuration_rejects_duplicate_mapping_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "t2-touchid.conf"
+            config.write_text(
+                "T2_TOUCHID_USER=mapped\n"
+                "T2_TOUCHID_USER=other\n"
+                "T2_TOUCHID_MACOS_USER_ID=501\n"
+                "T2_TOUCHID_SPECIAL_BAG=-501\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(MODULE, "CONFIG", config),
+                mock.patch.object(
+                    Path,
+                    "stat",
+                    return_value=SimpleNamespace(st_uid=0, st_mode=0o100600),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.ACMDeviceError, "unique mapped Linux user"
+                ):
+                    MODULE.configuration()
+
     def test_runtime_state_rejects_nonpositive_loaded_handle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory) / "keybag.env"

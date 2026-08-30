@@ -61,6 +61,12 @@ sudo t2-acm-authorize-test --diagnostic-password-only \
   --acknowledge-password-verification
 ```
 
+The wrapper refuses direct-root and cross-user invocation: `SUDO_UID` or
+`PKEXEC_UID` must resolve to the single Linux account in the protected mapping,
+and the Apple UID and special bag are always read from that root-owned mapping.
+This is an explicit research authorization boundary; a dedicated production
+PolicyKit action is still required before any enrollment API is exposed.
+
 The v2 platform field formerly labelled `uid` is the caller's macOS audit
 session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent
 64-bit field is the macOS process-unique ID, not a PID. Both are research-only,

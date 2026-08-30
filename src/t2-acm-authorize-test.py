@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pwd
 import re
 import subprocess
 import sys
@@ -26,25 +27,56 @@ KEYBAG_STATE = Path("/run/t2-touchid/keybag.env")
 AKS_TOOL = Path("/usr/local/sbin/t2-aks-tool")
 
 
-def configuration() -> tuple[int, int]:
+def configuration() -> tuple[int, int, int]:
     info = CONFIG.stat()
     if info.st_uid != 0 or info.st_mode & 0o077:
         raise ACMDeviceError("configuration ownership or mode is unsafe")
-    values: dict[str, list[int]] = {
+    values: dict[str, list[str]] = {
         "T2_TOUCHID_MACOS_USER_ID": [],
         "T2_TOUCHID_SPECIAL_BAG": [],
+        "T2_TOUCHID_USER": [],
     }
     for line in CONFIG.read_text(encoding="utf-8").splitlines():
-        match = re.fullmatch(r"([A-Z0-9_]+)=(-?[0-9]+)", line)
+        match = re.fullmatch(r"([A-Z0-9_]+)=(.*)", line)
         if match and match.group(1) in values:
-            values[match.group(1)].append(int(match.group(2)))
+            values[match.group(1)].append(match.group(2))
     user_ids = values["T2_TOUCHID_MACOS_USER_ID"]
     handles = values["T2_TOUCHID_SPECIAL_BAG"]
-    if len(user_ids) != 1 or not 0 <= user_ids[0] <= 0xFFFFFFFF:
+    linux_users = values["T2_TOUCHID_USER"]
+    if (
+        len(user_ids) != 1
+        or not user_ids[0].isdecimal()
+        or not 0 <= int(user_ids[0]) <= 0xFFFFFFFF
+    ):
         raise ACMDeviceError("configuration has no unique valid macOS user ID")
-    if len(handles) != 1 or handles[0] != -user_ids[0]:
+    if (
+        len(handles) != 1
+        or not re.fullmatch(r"-?[0-9]+", handles[0])
+        or int(handles[0]) != -int(user_ids[0])
+    ):
         raise ACMDeviceError("special bag does not match the configured macOS user ID")
-    return user_ids[0], handles[0]
+    if len(linux_users) != 1 or not linux_users[0]:
+        raise ACMDeviceError("configuration has no unique mapped Linux user")
+    try:
+        linux_uid = pwd.getpwnam(linux_users[0]).pw_uid
+    except KeyError as error:
+        raise ACMDeviceError("configured Linux user does not exist") from error
+    if linux_uid <= 0:
+        raise ACMDeviceError("configured Linux user cannot be root")
+    return int(user_ids[0]), int(handles[0]), linux_uid
+
+
+def validate_caller_environment(environment: dict[str, str], mapped_uid: int) -> None:
+    values = [
+        environment[key]
+        for key in ("SUDO_UID", "PKEXEC_UID")
+        if key in environment
+    ]
+    callers = {int(value) for value in values if value.isdecimal()}
+    if not values or len(callers) != len(set(values)) or callers != {mapped_uid}:
+        raise ACMDeviceError(
+            "caller is not the configured mapped Linux user via sudo or pkexec"
+        )
 
 
 def keybag_runtime(expected_special: int) -> tuple[int, int]:
@@ -173,7 +205,8 @@ def main() -> int:
         print("t2-acm-authorize-test must run as root", file=sys.stderr)
         return 2
     try:
-        user_id, keybag_handle = configuration()
+        user_id, keybag_handle, mapped_linux_uid = configuration()
+        validate_caller_environment(os.environ, mapped_linux_uid)
         session, positive_handle = keybag_runtime(keybag_handle)
         if args.research_keybag_handle is not None:
             keybag_handle = args.research_keybag_handle

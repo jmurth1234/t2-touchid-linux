@@ -4986,9 +4986,12 @@ approved disposable-finger hardware experiment.
   restricts endpoint 10 to one open owner and one exact live context, deletes
   that context on owner exit, and makes timeout/ambiguous-create generations
   terminal until reboot. The outstanding host work is complete ACM response
-  serialization, Linux session/PolicyKit binding above that kernel lease, and
-  the final consumer's handling of the credential-set authorization bit.
-  Endpoint-10 correlation and the host-versus-SEP subject boundary are exact.
+  serialization, a dedicated PolicyKit action above that kernel lease, and the
+  final consumer's handling of the credential-set authorization bit. The
+  current research wrapper already rejects direct-root and cross-user callers:
+  its sudo/pkexec origin must match the Linux account in the protected mapping,
+  and the Apple UID is never accepted from the caller. Endpoint-10 correlation
+  and the host-versus-SEP subject boundary are exact.
 - The endpoint-10 registration, ordinary single-flight correlation, SCRD
   request-ID exception, timeout, and reset/re-registration contracts are now
   exact. The staged Linux driver now represents each registration as a nonzero
