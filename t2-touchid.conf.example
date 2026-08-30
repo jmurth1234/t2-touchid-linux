@@ -7,3 +7,5 @@ T2_TOUCHID_PROJECT_DIR=/opt/t2-touchid
 T2_TOUCHID_MACOS_USER_ID=501
 T2_TOUCHID_SPECIAL_BAG=-501
 T2_TOUCHID_ENROLLED_FINGER=right-index-finger
+# Research-only endpoint-10 registration. It does not enable enrollment.
+T2_TOUCHID_ENABLE_ACM_RESEARCH=0

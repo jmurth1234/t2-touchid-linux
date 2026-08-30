@@ -9,6 +9,7 @@
  */
 
 #include <linux/bitfield.h>
+#include <linux/capability.h>
 #include <crypto/hash.h>
 #include <crypto/sha2.h>
 #include <linux/compat.h>
@@ -25,6 +26,9 @@
 
 #include "t2_sep_transport_uapi.h"
 
+static_assert(sizeof(struct t2_acm_ioc_exchange) == 48);
+static_assert(sizeof(struct t2_acm_ioc_info) == 16);
+
 #define T2_SEP_VENDOR_ID            0x106b
 #define T2_SEP_DEVICE_ID            0x1802
 #define T2_SEP_MAILBOX_BAR          4
@@ -40,6 +44,7 @@
 #define T2_SEP_ENDPOINT_MASK        GENMASK(4, 0)
 #define T2_SEP_CONTROL_ENDPOINT     0
 #define T2_SEP_AKS_ENDPOINT         7
+#define T2_SEP_ACM_ENDPOINT         10
 #define T2_SEP_CMSG_SET_OOL_IN      2
 #define T2_SEP_CMSG_SET_OOL_OUT     3
 #define T2_SEP_OOL_SIZE             0x4000
@@ -68,10 +73,19 @@ struct t2_sep_transport {
 	dma_addr_t ool_out_dma;
 	bool ool_in_registered;
 	bool ool_out_registered;
+	void *acm_ool_in;
+	dma_addr_t acm_ool_in_dma;
+	void *acm_ool_out;
+	dma_addr_t acm_ool_out_dma;
+	bool acm_ool_in_registered;
+	bool acm_ool_out_registered;
 	struct miscdevice aks_miscdev;
+	struct miscdevice acm_miscdev;
 	struct mutex exchange_lock;
 	u8 next_transaction;
+	u64 acm_generation;
 	bool misc_registered;
+	bool acm_misc_registered;
 };
 
 static bool register_ool;
@@ -83,6 +97,11 @@ static bool probe_capabilities;
 module_param(probe_capabilities, bool, 0400);
 MODULE_PARM_DESC(probe_capabilities,
 	"Issue one read-only AppleKeyStore capability query (default: false)");
+
+static bool register_acm;
+module_param(register_acm, bool, 0400);
+MODULE_PARM_DESC(register_acm,
+	"Register separate endpoint-10 ACM OOL buffers (default: false)");
 
 struct t2_aks_header_v1 {
 	u8 digest[16];
@@ -152,8 +171,8 @@ static int t2_sep_receive(struct t2_sep_transport *sep,
 	return -ETIMEDOUT;
 }
 
-static int t2_sep_control(struct t2_sep_transport *sep, u8 opcode, u8 tag,
-			  dma_addr_t dma, size_t size)
+static int t2_sep_control(struct t2_sep_transport *sep, u8 target_endpoint,
+			  u8 opcode, u8 tag, dma_addr_t dma, size_t size)
 {
 	struct t2_sep_message request = { };
 	struct t2_sep_message reply;
@@ -166,7 +185,7 @@ static int t2_sep_control(struct t2_sep_transport *sep, u8 opcode, u8 tag,
 
 	/* EP0 wire layout: endpoint, tag, opcode, target endpoint. */
 	request.word[0] = T2_SEP_CONTROL_ENDPOINT | (tag << 8) |
-		(opcode << 16) | (T2_SEP_AKS_ENDPOINT << 24);
+		(opcode << 16) | (target_endpoint << 24);
 	request.word[1] = lower_32_bits(dma >> PAGE_SHIFT);
 	request.word[2] = size;
 
@@ -420,6 +439,176 @@ static const struct file_operations t2_aks_fops = {
 	.compat_ioctl = compat_ptr_ioctl,
 };
 
+static bool t2_acm_command_allowed(const u8 *request, size_t length)
+{
+	static const u8 prefix[] = { 'D', 'R', 'C', 'S' };
+
+	if (length < 8 || memcmp(request, prefix, sizeof(prefix)) ||
+	    request[5] != 0 || request[6] != 0 || request[7] != 1)
+		return false;
+	switch (request[4]) {
+	case 0x01: /* legacy context create */
+	case 0x24: /* context create with tracking */
+		return length == 12; /* command header + appended effective UID */
+	case 0x02: /* context destroy */
+		return length == 24; /* command header + 16-byte context */
+	default:
+		return false;
+	}
+}
+
+static bool t2_acm_response_buffer_valid(const u8 *request,
+					 u32 capacity, u64 response)
+{
+	switch (request[4]) {
+	case 0x01:
+		return capacity >= 17 && response;
+	case 0x24:
+		return capacity >= 21 && response;
+	case 0x02:
+		return capacity == 0;
+	default:
+		return false;
+	}
+}
+
+static int t2_acm_exchange_locked(struct t2_sep_transport *sep,
+				  u8 request_code, u32 request_info,
+				  const void *request_body,
+				  size_t request_body_length,
+				  u8 **response_body,
+				  size_t *response_body_length,
+				  u32 *response_info)
+{
+	struct t2_sep_message request = { };
+	struct t2_sep_message reply;
+	unsigned int skipped = 0;
+	u16 reply_length;
+	int ret;
+
+	if (request_code != 1 || request_info != 0 ||
+	    request_body_length > T2_SEP_OOL_SIZE ||
+	    !t2_acm_command_allowed(request_body, request_body_length))
+		return -EACCES;
+
+	memset(sep->acm_ool_in, 0, T2_SEP_OOL_SIZE);
+	memset(sep->acm_ool_out, 0, T2_SEP_OOL_SIZE);
+	memcpy(sep->acm_ool_in, request_body, request_body_length);
+	request.word[0] = T2_SEP_ACM_ENDPOINT | (request_code << 8) |
+		(request_body_length << 16);
+	request.word[1] = request_info;
+	ret = t2_sep_send(sep, &request);
+	if (ret)
+		return ret;
+
+	for (;;) {
+		ret = t2_sep_receive(sep, &reply);
+		if (ret)
+			return ret;
+		if ((reply.word[0] & 0xff) == T2_SEP_ACM_ENDPOINT &&
+		    ((reply.word[0] >> 8) & 0xff) == request_code)
+			break;
+		if (++skipped == 32)
+			return -EOVERFLOW;
+	}
+
+	reply_length = reply.word[0] >> 16;
+	if (reply_length > T2_SEP_OOL_SIZE)
+		return -EPROTO;
+	*response_body = sep->acm_ool_out;
+	*response_body_length = reply_length;
+	*response_info = reply.word[1];
+	return 0;
+}
+
+static long t2_acm_ioctl(struct file *file, unsigned int command,
+			 unsigned long argument)
+{
+	struct miscdevice *misc = file->private_data;
+	struct t2_sep_transport *sep = container_of(misc,
+		struct t2_sep_transport, acm_miscdev);
+	void __user *user_argument = (void __user *)argument;
+	struct t2_acm_ioc_exchange exchange;
+	struct t2_acm_ioc_info info = { };
+	void *request = NULL;
+	u8 *response = NULL;
+	size_t response_length = 0;
+	u32 response_info = 0;
+	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	if (command == T2_ACM_IOC_GET_INFO) {
+		info.generation = sep->acm_generation;
+		info.capacity = T2_SEP_OOL_SIZE;
+		if (copy_to_user(user_argument, &info, sizeof(info)))
+			return -EFAULT;
+		return 0;
+	}
+	if (command != T2_ACM_IOC_EXCHANGE)
+		return -ENOTTY;
+	if (copy_from_user(&exchange, user_argument, sizeof(exchange)))
+		return -EFAULT;
+	if (memchr_inv(exchange.reserved0, 0, sizeof(exchange.reserved0)) ||
+	    !exchange.request_length ||
+	    exchange.request_length > T2_SEP_OOL_SIZE ||
+	    exchange.response_capacity > T2_SEP_OOL_SIZE || !exchange.request)
+		return -EINVAL;
+	if (exchange.generation != sep->acm_generation) {
+		exchange.generation = sep->acm_generation;
+		if (copy_to_user(user_argument, &exchange, sizeof(exchange)))
+			return -EFAULT;
+		return -ESTALE;
+	}
+	request = memdup_user(u64_to_user_ptr(exchange.request),
+			      exchange.request_length);
+	if (IS_ERR(request))
+		return PTR_ERR(request);
+	if (!t2_acm_command_allowed(request, exchange.request_length) ||
+	    !t2_acm_response_buffer_valid(request, exchange.response_capacity,
+					  exchange.response)) {
+		ret = -EACCES;
+		goto out;
+	}
+
+	ret = mutex_lock_interruptible(&sep->exchange_lock);
+	if (ret)
+		goto out;
+	ret = t2_acm_exchange_locked(sep, exchange.request_code,
+			exchange.request_info, request, exchange.request_length,
+			&response, &response_length, &response_info);
+	if (ret)
+		goto out_unlock;
+	exchange.response_length = response_length;
+	exchange.response_info = response_info;
+	if (response_length > exchange.response_capacity) {
+		ret = -ENOSPC;
+		goto out_copy_exchange;
+	}
+	if (response_length && copy_to_user(u64_to_user_ptr(exchange.response),
+					 response, response_length)) {
+		ret = -EFAULT;
+		goto out_unlock;
+	}
+out_copy_exchange:
+	if (copy_to_user(user_argument, &exchange, sizeof(exchange)))
+		ret = -EFAULT;
+out_unlock:
+	memzero_explicit(sep->acm_ool_in, T2_SEP_OOL_SIZE);
+	memzero_explicit(sep->acm_ool_out, T2_SEP_OOL_SIZE);
+	mutex_unlock(&sep->exchange_lock);
+out:
+	memzero_explicit(request, exchange.request_length);
+	kfree(request);
+	return ret;
+}
+
+static const struct file_operations t2_acm_fops = {
+	.owner = THIS_MODULE,
+	.unlocked_ioctl = t2_acm_ioctl,
+	.compat_ioctl = compat_ptr_ioctl,
+};
+
 static int t2_aks_probe_capabilities(struct t2_sep_transport *sep)
 {
 	struct t2_aks_header_v1 *header;
@@ -510,6 +699,12 @@ static int t2_aks_probe_capabilities(struct t2_sep_transport *sep)
 
 static void t2_sep_free_ool(struct t2_sep_transport *sep)
 {
+	if (sep->acm_ool_out)
+		dma_free_coherent(&sep->pdev->dev, T2_SEP_OOL_SIZE,
+				  sep->acm_ool_out, sep->acm_ool_out_dma);
+	if (sep->acm_ool_in)
+		dma_free_coherent(&sep->pdev->dev, T2_SEP_OOL_SIZE,
+				  sep->acm_ool_in, sep->acm_ool_in_dma);
 	if (sep->ool_out)
 		dma_free_coherent(&sep->pdev->dev, T2_SEP_OOL_SIZE,
 				  sep->ool_out, sep->ool_out_dma);
@@ -575,13 +770,29 @@ static int t2_sep_probe(struct pci_dev *pdev,
 		ret = -ENOMEM;
 		goto err_free_ool;
 	}
+	if (register_acm) {
+		sep->acm_ool_in = dma_alloc_coherent(&pdev->dev,
+			T2_SEP_OOL_SIZE, &sep->acm_ool_in_dma, GFP_KERNEL);
+		if (!sep->acm_ool_in) {
+			ret = -ENOMEM;
+			goto err_free_ool;
+		}
+		sep->acm_ool_out = dma_alloc_coherent(&pdev->dev,
+			T2_SEP_OOL_SIZE, &sep->acm_ool_out_dma, GFP_KERNEL);
+		if (!sep->acm_ool_out) {
+			ret = -ENOMEM;
+			goto err_free_ool;
+		}
+	}
 
-	ret = t2_sep_control(sep, T2_SEP_CMSG_SET_OOL_IN, 1,
+	ret = t2_sep_control(sep, T2_SEP_AKS_ENDPOINT,
+			 T2_SEP_CMSG_SET_OOL_IN, 1,
 				 sep->ool_in_dma, T2_SEP_OOL_SIZE);
 	if (ret)
 		goto err_free_ool;
 	sep->ool_in_registered = true;
-	ret = t2_sep_control(sep, T2_SEP_CMSG_SET_OOL_OUT, 2,
+	ret = t2_sep_control(sep, T2_SEP_AKS_ENDPOINT,
+			 T2_SEP_CMSG_SET_OOL_OUT, 2,
 				 sep->ool_out_dma, T2_SEP_OOL_SIZE);
 	if (ret) {
 		/*
@@ -595,6 +806,29 @@ static int t2_sep_probe(struct pci_dev *pdev,
 		return 0;
 	}
 	sep->ool_out_registered = true;
+	if (register_acm) {
+		ret = t2_sep_control(sep, T2_SEP_ACM_ENDPOINT,
+				 T2_SEP_CMSG_SET_OOL_IN, 3,
+				 sep->acm_ool_in_dma, T2_SEP_OOL_SIZE);
+		if (ret) {
+			dev_err(&pdev->dev,
+				"endpoint-7 registered but ACM input registration failed; reboot before retry\n");
+			__module_get(THIS_MODULE);
+			return 0;
+		}
+		sep->acm_ool_in_registered = true;
+		ret = t2_sep_control(sep, T2_SEP_ACM_ENDPOINT,
+				 T2_SEP_CMSG_SET_OOL_OUT, 4,
+				 sep->acm_ool_out_dma, T2_SEP_OOL_SIZE);
+		if (ret) {
+			dev_err(&pdev->dev,
+				"ACM input registered but output registration failed; reboot before retry\n");
+			__module_get(THIS_MODULE);
+			return 0;
+		}
+		sep->acm_ool_out_registered = true;
+		sep->acm_generation = 1;
+	}
 	/* SEP retains both DMA addresses, so prevent unsafe module removal. */
 	__module_get(THIS_MODULE);
 
@@ -624,6 +858,23 @@ static int t2_sep_probe(struct pci_dev *pdev,
 		dev_info(&pdev->dev,
 			 "root-only /dev/t2-aks exchange enabled for whitelisted operations\n");
 	}
+	if (register_acm) {
+		sep->acm_miscdev.minor = MISC_DYNAMIC_MINOR;
+		sep->acm_miscdev.name = "t2-acm";
+		sep->acm_miscdev.fops = &t2_acm_fops;
+		sep->acm_miscdev.parent = &pdev->dev;
+		sep->acm_miscdev.mode = 0600;
+		ret = misc_register(&sep->acm_miscdev);
+		if (ret)
+			dev_warn(&pdev->dev,
+				 "cannot register root-only ACM exchange device: %d\n",
+				 ret);
+		else {
+			sep->acm_misc_registered = true;
+			dev_info(&pdev->dev,
+				 "root-only generation-pinned /dev/t2-acm enabled\n");
+		}
+	}
 	return 0;
 
 err_free_ool:
@@ -642,7 +893,10 @@ static void t2_sep_remove(struct pci_dev *pdev)
 		return;
 	if (sep->misc_registered)
 		misc_deregister(&sep->aks_miscdev);
-	if (sep->ool_in_registered || sep->ool_out_registered) {
+	if (sep->acm_misc_registered)
+		misc_deregister(&sep->acm_miscdev);
+	if (sep->ool_in_registered || sep->ool_out_registered ||
+	    sep->acm_ool_in_registered || sep->acm_ool_out_registered) {
 		dev_warn(&pdev->dev,
 			 "retaining SEP-registered DMA memory until reboot\n");
 		return;

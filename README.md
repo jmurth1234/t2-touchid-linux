@@ -13,6 +13,14 @@ The separate [enrollment research](enrollment_research/README.md) publishes the
 current protocol findings and deferred evidence-collection helpers. It does not
 enable enrollment or deletion in the shipped service.
 
+The in-development endpoint-10 transport is separately opt-in. Setting
+`T2_TOUCHID_ENABLE_ACM_RESEARCH=1` in the private root-owned configuration
+registers dedicated ACM DMA buffers on the next boot and creates a root-only
+`/dev/t2-acm`. This still does not enable enrollment or expose a generic raw
+command CLI. `sudo t2-acm-preflight` only verifies registration metadata and
+performs no SEP mutation. Because SEP retains the DMA addresses, changing this
+setting requires a reboot; never unload the active module.
+
 See the redacted conversation that produced this here: https://gist.github.com/jmurth1234/4a138019fd832dfabbed26475613db3a
 
 ## Proven configuration

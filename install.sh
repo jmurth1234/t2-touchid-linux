@@ -35,13 +35,21 @@ ensure_config_default() {
 ensure_config_default T2_TOUCHID_MACOS_USER_ID 501
 ensure_config_default T2_TOUCHID_SPECIAL_BAG -501
 ensure_config_default T2_TOUCHID_ENROLLED_FINGER right-index-finger
+ensure_config_default T2_TOUCHID_ENABLE_ACM_RESEARCH 0
 chmod 0600 /etc/t2-touchid.conf
+
+acm_research=$(sed -n 's/^T2_TOUCHID_ENABLE_ACM_RESEARCH=//p' /etc/t2-touchid.conf | tail -n 1)
+if [[ $acm_research != 0 && $acm_research != 1 ]]; then
+  echo "T2_TOUCHID_ENABLE_ACM_RESEARCH must be exactly 0 or 1." >&2
+  exit 2
+fi
 
 install -d -o root -g root -m 0755 "$target_dir" "$target_dir/src" /usr/local/lib/t2-touchid
 install -o root -g root -m 0755 "$source_dir/src/"*.py "$target_dir/src/"
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-doctor.py" /usr/local/sbin/t2-touchid-doctor
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-inventory.py" /usr/local/sbin/t2-touchid-inventory
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-baseline.py" /usr/local/sbin/t2-touchid-baseline
+install -o root -g root -m 0755 "$source_dir/src/t2-acm-preflight.py" /usr/local/sbin/t2-acm-preflight
 install -o root -g root -m 0644 "$source_dir/README.md" "$target_dir/README.md"
 install -o root -g root -m 0644 "$source_dir/ROADMAP.md" "$target_dir/ROADMAP.md"
 
@@ -68,7 +76,11 @@ install -o root -g root -m 0700 "$source_dir/src/t2-biometric-ready.sh" /usr/loc
 install -o root -g root -m 0700 "$source_dir/src/t2-sep-transport-load.sh" /usr/local/sbin/t2-sep-transport-load
 install -o root -g root -m 0644 "$source_dir/systemd/system/"*.service /etc/systemd/system/
 install -d -o root -g root -m 0755 /etc/modprobe.d
-printf '%s\n' 'options t2_sep_transport register_ool=1' >/etc/modprobe.d/t2-sep-transport.conf
+module_options='options t2_sep_transport register_ool=1'
+if [[ $acm_research == 1 ]]; then
+  module_options+=' register_acm=1'
+fi
+printf '%s\n' "$module_options" >/etc/modprobe.d/t2-sep-transport.conf
 chmod 0644 /etc/modprobe.d/t2-sep-transport.conf
 
 install -d -o "$target_user" -g "$target_user" -m 0755 "$target_home/.config/systemd/user"
@@ -94,6 +106,13 @@ systemctl --machine="$target_user@.host" --user daemon-reload || true
 
 if command -v dkms >/dev/null 2>&1; then
   dkms_source=/usr/src/t2-sep-transport-0.1.0
+  dkms_stamp=$dkms_source/.source.sha256
+  module_source_hash=$(
+    sha256sum "$source_dir/dkms.conf" "$source_dir/src/t2_sep_transport.c" \
+      "$source_dir/src/t2_sep_transport_uapi.h" "$source_dir/src/Makefile" |
+      awk '{print $1}' | sha256sum | awk '{print $1}'
+  )
+  installed_source_hash=$(sed -n '1p' "$dkms_stamp" 2>/dev/null || true)
   install -d -o root -g root -m 0755 "$dkms_source/src"
   install -o root -g root -m 0644 "$source_dir/dkms.conf" "$dkms_source/dkms.conf"
   install -o root -g root -m 0644 "$source_dir/src/t2_sep_transport.c" \
@@ -101,7 +120,8 @@ if command -v dkms >/dev/null 2>&1; then
   running_kernel=$(uname -r)
   dkms_state=$(dkms status -m t2-sep-transport -v 0.1.0 2>/dev/null || true)
   if grep -Fq "t2-sep-transport/0.1.0, $running_kernel" <<<"$dkms_state" && \
-      grep -Fq ': installed' <<<"$dkms_state"; then
+      grep -Fq ': installed' <<<"$dkms_state" && \
+      [[ $installed_source_hash == "$module_source_hash" ]]; then
     echo "DKMS module is already installed for $running_kernel."
   else
     if [[ -z $dkms_state ]]; then
@@ -109,6 +129,8 @@ if command -v dkms >/dev/null 2>&1; then
     fi
     dkms build --force -m t2-sep-transport -v 0.1.0 -k "$running_kernel"
     dkms install --force -m t2-sep-transport -v 0.1.0 -k "$running_kernel"
+    printf '%s\n' "$module_source_hash" >"$dkms_stamp"
+    chmod 0644 "$dkms_stamp"
   fi
 else
   echo "Warning: dkms is unavailable; rerun this installer after kernel upgrades." >&2
