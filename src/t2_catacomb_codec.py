@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import datetime as dt
 import dataclasses
+import hashlib
 import math
 import plistlib
 import uuid
 from dataclasses import dataclass
 from typing import Any
+
+from t2_catacomb_oracle import read_biolockout, read_master, read_user
 
 
 MAX_FILE_BYTES = 1024 * 1024
@@ -377,7 +380,7 @@ class UserCatacomb:
         position = self.identity_indices.index(index)
         identities = list(self.identities)
         identities[position] = dataclasses.replace(identities[position], name=name)
-        return self._encode_and_verify(self._build_root(identities))
+        return self._encode_and_verify(self._build_root(identities), identities)
 
     def delete(self, identity_uuid: str) -> bytes:
         if len(self.identities) <= 1:
@@ -390,7 +393,7 @@ class UserCatacomb:
             for index, identity in zip(self.identity_indices, self.identities)
             if index != target
         ]
-        return self._encode_and_verify(self._build_root(identities))
+        return self._encode_and_verify(self._build_root(identities), identities)
 
     def add(
         self,
@@ -434,7 +437,7 @@ class UserCatacomb:
                 creation_time=seconds,
             ),
         ]
-        return self._encode_and_verify(self._build_root(identities))
+        return self._encode_and_verify(self._build_root(identities), identities)
 
     def replace_secure_data(self, secure_data: bytes) -> bytes:
         secure_data = _secure_envelope(
@@ -442,6 +445,7 @@ class UserCatacomb:
         )
         return self._encode_and_verify(
             self._build_root(self.identities, secure_data=secure_data),
+            self.identities,
             expected_secure_data=secure_data,
         )
 
@@ -523,6 +527,7 @@ class UserCatacomb:
     def _encode_and_verify(
         self,
         root: dict[str, Any],
+        expected_identities: list[Identity] | tuple[Identity, ...],
         *,
         expected_secure_data: bytes | None = None,
     ) -> bytes:
@@ -535,6 +540,16 @@ class UserCatacomb:
             raise CatacombCodecError("encoder changed opaque secure data")
         if decoded.account_uuid != self.account_uuid or decoded.keybag_uuid != self.keybag_uuid:
             raise CatacombCodecError("encoder changed account or keybag binding")
+        oracle = read_user(data, self.expected_user_id)
+        expected_model = [dataclasses.asdict(identity) for identity in expected_identities]
+        if (
+            oracle["account_uuid"] != self.account_uuid
+            or oracle["keybag_uuid"] != self.keybag_uuid
+            or oracle["secure_sha256"] != hashlib.sha256(expected_secure_data).hexdigest()
+            or oracle["secure_length"] != len(expected_secure_data)
+            or oracle["identities"] != expected_model
+        ):
+            raise CatacombCodecError("independent user read-back mismatch")
         return data
 
 
@@ -621,6 +636,15 @@ class MasterCatacomb:
             or decoded.current_time != float(current_time)
         ):
             raise CatacombCodecError("master encoder read-back mismatch")
+        oracle = read_master(output)
+        if oracle != {
+            "component": "master",
+            "secure_sha256": hashlib.sha256(secure_data).hexdigest(),
+            "secure_length": len(secure_data),
+            "enrollment_count": enrollment_count,
+            "current_time": float(current_time),
+        }:
+            raise CatacombCodecError("independent master read-back mismatch")
         return output
 
 
@@ -656,6 +680,12 @@ class BioLockoutCatacomb:
         output = plistlib.dumps(root, fmt=plistlib.FMT_BINARY, sort_keys=False)
         if BioLockoutCatacomb(output).secure_data != secure_data:
             raise CatacombCodecError("bio-lockout encoder read-back mismatch")
+        if read_biolockout(output) != {
+            "component": "biolockout",
+            "secure_sha256": hashlib.sha256(secure_data).hexdigest(),
+            "secure_length": len(secure_data),
+        }:
+            raise CatacombCodecError("independent bio-lockout read-back mismatch")
         return output
 
 
