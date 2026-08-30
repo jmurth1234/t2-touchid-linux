@@ -5,7 +5,7 @@ Touch ID enrollment, identity management, multi-user mapping, Catacomb
 persistence, and recovery on Intel Macs with an Apple T2.
 
 - [FINDINGS.md](FINDINGS.md) is a sanitized snapshot of the detailed research
-  ledger as of 2026-08-28.
+  ledger, last updated 2026-08-30.
 - [EVIDENCE_COLLECTION.md](EVIDENCE_COLLECTION.md) explains the remaining
   evidence gaps and how to collect data for each one later.
 - [`scripts/`](scripts/) contains collection and preflight helpers. They do not

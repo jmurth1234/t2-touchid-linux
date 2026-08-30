@@ -997,6 +997,29 @@ and contain no xattrs or APFS protection-class metadata. They therefore prove
 mode/owner values as archived, not the files' data-protection class, ACLs,
 flags, or coordinator staging layout.
 
+The 2026-08-30 one-shot evidence capture closes part of that metadata gap on
+the observed macOS 26.1 host. `ls -ldeO@`, `xattr -lr`, and `stat` were recorded
+against the live Catacomb tree while `biometrickitd` was frozen. The root,
+machine directory, and three component files had no visible ACL entries,
+extended attributes, or filesystem flags; ownership and modes remained
+`root:wheel 0755` for directories and `root:wheel 0644` for files. This is
+positive evidence for that installation, not a universal claim about APFS data
+protection or other macOS releases.
+
+Independent `plistlib` decoding of the same private capture reproduced the
+18-object user keyed-archive graph exactly: one `BiometricKitIdentity`, its
+accessory and accessory group, an identity array, secure data, creation date,
+and the account and keybag `NSUUID` objects. The account UUID joined the
+OpenDirectory/persona record, the Catacomb machine directory joined the host
+UUID, and numeric UID 501 joined the filename and identity owner. The identity
+name was Apple's ordinal label `Finger 1`; the Catacomb did not encode an
+anatomical finger position. Linux therefore needs its own explicit fprintd
+finger-name mapping rather than inferring `right-index-finger` from Catacomb.
+Although this newer fixture had one identity, its master enrollment-count hint
+was 2, reinforcing that the field is a generation/change counter rather than a
+current identity count. No private UUID, hostname, raw component, or component
+hash from this capture is published here.
+
 ### Observed generation and rollback signals
 
 Structural decoding of the preserved NSKeyedArchiver files gives one complete
