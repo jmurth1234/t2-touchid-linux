@@ -17,7 +17,13 @@ CONTEXT_SIZE = 16
 
 OP_CONTEXT_CREATE = 0x01
 OP_CONTEXT_DELETE = 0x02
+OP_VERIFY_POLICY = 0x03
 OP_CONTEXT_CREATE_TRACKING = 0x24
+ENROLLMENT_POLICY = b"TouchIdEnrollment"
+POLICY_RESPONSE_CAPACITY = 0x1000
+SIMPLE_REQUIREMENT_TYPES = frozenset(
+    {1, 2, 3, 6, *range(8, 16), *range(18, 29)}
+)
 
 
 class ACMProtocolError(ValueError):
@@ -29,7 +35,7 @@ class ContextHandle:
     context: bytes
     payload: int
     tracking: bool
-    response_flag: bool
+    response_byte: int
 
     def __post_init__(self) -> None:
         if type(self.context) is not bytes or len(self.context) != CONTEXT_SIZE:
@@ -38,14 +44,32 @@ class ContextHandle:
             raise ACMProtocolError("context payload is outside uint32 range")
         if type(self.tracking) is not bool:
             raise ACMProtocolError("tracking must be boolean")
-        if type(self.response_flag) is not bool:
-            raise ACMProtocolError("response_flag must be boolean")
+        if not 0 <= self.response_byte <= 0xFF:
+            raise ACMProtocolError("response_byte is outside uint8 range")
+        if self.tracking and self.response_byte not in (0, 1):
+            raise ACMProtocolError("tracking response flag is not boolean")
+
+    @property
+    def response_flag(self) -> bool | None:
+        return bool(self.response_byte) if self.tracking else None
+
+
+@dataclass(frozen=True)
+class PolicyResult:
+    satisfied: bool
+    requirement_present: bool
+    requirement_length: int
+    requirement_type: int | None
+    requirement_state: int | None
+    requirement_flags: int | None
+    requirement_payload_length: int | None
 
 
 def _header(opcode: int) -> bytes:
     if opcode not in {
         OP_CONTEXT_CREATE,
         OP_CONTEXT_DELETE,
+        OP_VERIFY_POLICY,
         OP_CONTEXT_CREATE_TRACKING,
     }:
         raise ACMProtocolError("opcode is outside the lifecycle allowlist")
@@ -65,13 +89,13 @@ def parse_create_response(response: bytes, *, tracking: bool) -> ContextHandle:
     if type(response) is not bytes or len(response) != expected:
         raise ACMProtocolError(f"create response must be exactly {expected} bytes")
     flag_offset = CONTEXT_SIZE + (4 if tracking else 0)
-    response_flag = response[flag_offset]
-    if response_flag not in (0, 1):
-        raise ACMProtocolError("create response flag is not boolean")
+    response_byte = response[flag_offset]
+    if tracking and response_byte not in (0, 1):
+        raise ACMProtocolError("tracking create response flag is not boolean")
     payload = (
         struct.unpack_from("<I", response, CONTEXT_SIZE)[0] if tracking else 0
     )
-    return ContextHandle(response[:CONTEXT_SIZE], payload, tracking, bool(response_flag))
+    return ContextHandle(response[:CONTEXT_SIZE], payload, tracking, response_byte)
 
 
 def build_delete(handle: ContextHandle) -> bytes:
@@ -79,6 +103,57 @@ def build_delete(handle: ContextHandle) -> bytes:
     if not isinstance(handle, ContextHandle):
         raise ACMProtocolError("handle must be a ContextHandle")
     return _header(OP_CONTEXT_DELETE) + handle.context
+
+
+def build_enrollment_policy(handle: ContextHandle, *, preflight: bool) -> bytes:
+    """Build policy 1007's exact empty-parameter request."""
+    if not isinstance(handle, ContextHandle):
+        raise ACMProtocolError("handle must be a ContextHandle")
+    return (
+        _header(OP_VERIFY_POLICY)
+        + handle.context
+        + ENROLLMENT_POLICY
+        + b"\x00"
+        + bytes((int(preflight),))
+        + struct.pack("<I", 0)  # absent maxGlobalCredentialAge option
+        + struct.pack("<I", 0)  # empty ACM parameter array
+    )
+
+
+def build_enrollment_policy_preflight(handle: ContextHandle) -> bytes:
+    return build_enrollment_policy(handle, preflight=True)
+
+
+def parse_policy_response(response: bytes) -> PolicyResult:
+    if (
+        type(response) is not bytes
+        or not 4 <= len(response) <= POLICY_RESPONSE_CAPACITY
+    ):
+        raise ACMProtocolError("policy response length is invalid")
+    raw_result = struct.unpack_from("<I", response)[0]
+    if raw_result not in (0, 1):
+        raise ACMProtocolError("policy result is not boolean")
+    requirement = response[4:]
+    if not requirement:
+        return PolicyResult(bool(raw_result), False, 0, None, None, None, None)
+    if len(requirement) < 16:
+        raise ACMProtocolError("policy requirement is shorter than its header")
+    req_type, state, flags, payload_length = struct.unpack_from(
+        "<IIII", requirement
+    )
+    if req_type not in SIMPLE_REQUIREMENT_TYPES:
+        raise ACMProtocolError("policy returned an unsupported requirement type")
+    if payload_length != len(requirement) - 16:
+        raise ACMProtocolError("policy requirement payload length is inconsistent")
+    return PolicyResult(
+        bool(raw_result),
+        True,
+        len(requirement),
+        req_type,
+        state,
+        flags,
+        payload_length,
+    )
 
 
 def validate_command(command: bytes) -> int:
@@ -92,7 +167,16 @@ def validate_command(command: bytes) -> int:
         OP_CONTEXT_CREATE: 12,
         OP_CONTEXT_CREATE_TRACKING: 12,
         OP_CONTEXT_DELETE: 24,
+        OP_VERIFY_POLICY: 51,
     }.get(opcode)
     if expected is None or len(command) != expected:
         raise ACMProtocolError("command opcode or length is not allowed")
+    if opcode == OP_VERIFY_POLICY:
+        fixed = command[24:]
+        if (
+            fixed[:18] != ENROLLMENT_POLICY + b"\x00"
+            or fixed[18] not in (0, 1)
+            or fixed[19:] != b"\x00" * 8
+        ):
+            raise ACMProtocolError("policy command is not the fixed enrollment policy")
     return opcode

@@ -36,11 +36,22 @@ ensure_config_default T2_TOUCHID_MACOS_USER_ID 501
 ensure_config_default T2_TOUCHID_SPECIAL_BAG -501
 ensure_config_default T2_TOUCHID_ENROLLED_FINGER right-index-finger
 ensure_config_default T2_TOUCHID_ENABLE_ACM_RESEARCH 0
+ensure_config_default T2_TOUCHID_AKS_PLATFORM_CDHASH ''
 chmod 0600 /etc/t2-touchid.conf
 
 acm_research=$(sed -n 's/^T2_TOUCHID_ENABLE_ACM_RESEARCH=//p' /etc/t2-touchid.conf | tail -n 1)
 if [[ $acm_research != 0 && $acm_research != 1 ]]; then
   echo "T2_TOUCHID_ENABLE_ACM_RESEARCH must be exactly 0 or 1." >&2
+  exit 2
+fi
+macos_user_id=$(sed -n 's/^T2_TOUCHID_MACOS_USER_ID=//p' /etc/t2-touchid.conf | tail -n 1)
+if [[ ! $macos_user_id =~ ^[0-9]+$ ]] || (( macos_user_id > 4294967295 )); then
+  echo "T2_TOUCHID_MACOS_USER_ID must be an unsigned 32-bit integer." >&2
+  exit 2
+fi
+aks_platform_cdhash=$(sed -n 's/^T2_TOUCHID_AKS_PLATFORM_CDHASH=//p' /etc/t2-touchid.conf | tail -n 1)
+if [[ -n $aks_platform_cdhash && ! $aks_platform_cdhash =~ ^[[:xdigit:]]{40}$ ]]; then
+  echo "T2_TOUCHID_AKS_PLATFORM_CDHASH must be empty or exactly 40 hexadecimal characters." >&2
   exit 2
 fi
 
@@ -51,6 +62,8 @@ install -o root -g root -m 0755 "$source_dir/src/t2-touchid-inventory.py" /usr/l
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-baseline.py" /usr/local/sbin/t2-touchid-baseline
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-preflight.py" /usr/local/sbin/t2-acm-preflight
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-lifecycle-test.py" /usr/local/sbin/t2-acm-lifecycle-test
+install -o root -g root -m 0755 "$source_dir/src/t2-acm-policy-preflight.py" /usr/local/sbin/t2-acm-policy-preflight
+install -o root -g root -m 0755 "$source_dir/src/t2-acm-authorize-test.py" /usr/local/sbin/t2-acm-authorize-test
 install -o root -g root -m 0644 "$source_dir/README.md" "$target_dir/README.md"
 install -o root -g root -m 0644 "$source_dir/ROADMAP.md" "$target_dir/ROADMAP.md"
 
@@ -79,7 +92,10 @@ install -o root -g root -m 0644 "$source_dir/systemd/system/"*.service /etc/syst
 install -d -o root -g root -m 0755 /etc/modprobe.d
 module_options='options t2_sep_transport register_ool=1'
 if [[ $acm_research == 1 ]]; then
-  module_options+=' register_acm=1'
+  module_options+=" register_acm=1 aks_platform_uid=$macos_user_id aks_platform_proc_uniqueid=1"
+  if [[ -n $aks_platform_cdhash ]]; then
+    module_options+=" aks_platform_cdhash=${aks_platform_cdhash,,}"
+  fi
 fi
 printf '%s\n' "$module_options" >/etc/modprobe.d/t2-sep-transport.conf
 chmod 0644 /etc/modprobe.d/t2-sep-transport.conf

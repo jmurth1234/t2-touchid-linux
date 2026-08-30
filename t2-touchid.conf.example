@@ -9,3 +9,6 @@ T2_TOUCHID_SPECIAL_BAG=-501
 T2_TOUCHID_ENROLLED_FINGER=right-index-finger
 # Research-only endpoint-10 registration. It does not enable enrollment.
 T2_TOUCHID_ENABLE_ACM_RESEARCH=0
+# Research-only 20-byte native caller identity, encoded as 40 hexadecimal digits.
+# Leave empty unless the enrollment research procedure explicitly supplies it.
+T2_TOUCHID_AKS_PLATFORM_CDHASH=

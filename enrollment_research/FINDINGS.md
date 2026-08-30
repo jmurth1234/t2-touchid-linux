@@ -2442,7 +2442,7 @@ operations on loaded handle `1` and special handle `-501` do not show that its
 configured value `1` has macOS session-API semantics; at that layer they are
 literal handles.
 
-The matching AppleKeyStore kext closes the remaining ambiguity about these
+The 24G830 AppleKeyStore kext closes the remaining ambiguity about these
 identity selectors. All four ultimately operate on one effective bag handle,
 not on every bag in a login session or on an alias namespace:
 
@@ -2838,7 +2838,7 @@ kernel/daemon translation, input validation, entitlement checks, and exact raw
 requests remain unrecovered, so these findings authorize no live call and no
 transport allow-list expansion.
 
-The matching x86_64 AppleKeyStore kext (SHA-256
+The 24G830 x86_64 AppleKeyStore kext (SHA-256
 `de5621c1bf6d266ac80cde3024f3d14a8a96be937a0d8beb52bbec767b829c8c`)
 closes part of that translation gap. Its generated IPC wrappers send:
 
@@ -2882,7 +2882,7 @@ by Catacomb validation.
 
 ### Exact AppleKeyStore user-client authorization gates
 
-The matching x86_64 `com.apple.driver.AppleKeyStore` kext also makes the host
+The 24G830 x86_64 `com.apple.driver.AppleKeyStore` kext also makes the host
 authorization boundary explicit. `AppleKeyStoreUserClient::initWithTask`
 records whether the client has the IOKit `root` privilege. Its `start` method
 then builds a capability bitmap from AMFI boolean entitlements. The recovered
@@ -3172,7 +3172,7 @@ host identity file/APFS compatibility record, not demonstrated destruction of
 the underlying SEP keybag or of BiometricKit templates. Those must be separate,
 explicitly inventoried operations in any future management design.
 
-### Matching macOS enrollment credential producer
+### Version-qualified macOS enrollment credential producer
 
 The Intel/T2 build identity inside the preserved software-update payload is
 macOS 15.7.9 build `24G830` (although the enclosing multi-platform asset was
@@ -3273,7 +3273,7 @@ library regenerates the seed while reconstructing." It is still static
 evidence only: whether the backend stores type 13 for the context, derives it
 deterministically, or creates it lazily on the first read remains unresolved.
 
-The available matching-macOS AppleCredentialManager kext cannot answer that
+The available 24G830 AppleCredentialManager kext cannot answer that
 bridgeOS backend question by analogy. Its `CoreStorage` implementation does
 show the general ACM design: typed slots carry caller permissions, maximum
 sizes, sensitivity flags, and overwrite policy, and a write-once slot rejects
@@ -3914,7 +3914,7 @@ without guessing from success/failure alone. That mapping by itself does
 `maxGlobalCredentialAge` remains a separate request input rather than a visible
 fixed timestamp field in the outer requirement header.
 
-The matching Intel AppleCredentialManager credential engine resolves that
+The 24G830 Intel AppleCredentialManager credential engine resolves that
 last policy-specific uncertainty. Its policy-name dispatcher compares the
 literal `TouchIdEnrollment` and takes a dedicated branch. That branch:
 
@@ -4113,7 +4113,7 @@ Linux must reproduce neither mechanism until that direction and ordering are
 observed.
 
 A captured-artifact-wide call-site audit sharpens this negative result. The
-command name or export appears in the matching macOS AppleCredentialManager
+command name or export appears in the 24G830 macOS AppleCredentialManager
 kext and AppleSEPManager, bridgeOS LocalAuthenticationCore, and bridgeOS
 `LASecureIOd`; disassembly shows these are copies/imports of the ACMLib
 serializer itself. `LASecureIOd` contains the complete argument validator and
@@ -4257,7 +4257,7 @@ byte is the Boolean response flag. A live Linux endpoint-10 test on the proven
 UID 501, and successfully deleted the returned context immediately afterward;
 the public tool reports only typed/Boolean outcomes and never the identifier or
 payload.
-The matching x86_64 AppleCredentialManager kext appends effective UID for exactly
+The 24G830 x86_64 AppleCredentialManager kext appends effective UID for exactly
 `1` and `0x24`, so the host client and kext agree. Command `0x34` belongs only to
 the newer bridgeOS client artifact and is not part of the target macOS ABI.
 `ACMContextAddCredentialWithScope` serializes the credential and invokes
@@ -4285,19 +4285,64 @@ remaining bytes begin a serialized ACM requirement and are decoded only when
 the caller requested that requirement. This removes any hypothetical daemon
 object or audit-token field from the endpoint-10 policy reply.
 
-The exact x86_64 AppleKeyStore kext also sharpens the password-binding side.
-`AppleKeyStore::verify_password(handle, mode, passwordData, contextData,
-withACM)` obtains the two OSData byte pointers and lengths, converts `withACM`
-to IPC flag bit `0x80`, and calls `ipc_verify_secret_v1`; no host-side context
-mutation and no replacement context blob are returned. On success it only
-processes the returned device-state word. Combined with the exact two-blob
-userspace packing, this means password verification binds/updates the existing
-ACM context inside the secure backend, referenced by the context data supplied
-to AppleKeyStore. There is no additional macOS daemon-resident credential
-object at this boundary. A Linux broker still has to reproduce the endpoint-10
-context lifecycle and endpoint-7 verify-secret call in the correct order, but
-the binaries no longer support treating unavailable Mach audit state as a wire
-protocol blocker.
+The password-binding boundary is now confirmed against the AppleKeyStore kext
+from the **running macOS 26.1 build 25B77**, rather than inferred only from the
+older 24G830 installer payload. The live kext has Mach-O UUID
+`014567BF-63F6-3391-A782-AF69FE030A04`; the executable extracted from the
+manifest-verified Boot Kernel Collection has SHA-256
+`af311e668b7480c699e7ba98a5402aa544e668e4211dcc51d806af445135e76c`.
+
+Its exact C++ symbol is
+`AppleKeyStore::verify_password(unsigned long long, int, OSData *, OSData *,
+bool, bool, bool)`. The generated operation-`0x21` wrapper serializes the first
+argument as the owning 64-bit AKS session and the second as the signed 32-bit
+keybag handle, followed by the password blob, ACM external-context blob, and
+an option qword. The server passes those first two values directly to
+`keybag_for_handle(session, handle)`, which compares the handle against each
+stored bag record and then accepts only a matching, wildcard, or zero owning
+session. For the proven runtime this is session `1` and special handle `-501`;
+reversing them makes lookup fail before the password or ACM context is used.
+
+The same exact server resolves the option-bit ambiguity. The three Boolean
+arguments map to bits `0x80`, `0x100`, and `0x200`. Exact
+`_fv_init_cred_from_secret` disassembly proves that bit `0x100` selects a
+serialized ACM credential decoder; when it is clear, the supplied bytes are
+copied as a plain secret. A subsequent x86-64 ABI audit corrected the Boolean
+call-site ordering: selector `0x2a` unconditionally supplies the third Boolean,
+therefore setting **`0x200`**, while its memento form adds the first Boolean for
+**`0x280`**. Its second Boolean is zero, so selector 42 does not set `0x100`.
+The separate `identity_verify` caller sets the second Boolean and therefore
+uses structured input with `0x100`. A Linux reproduction of selector 42 must
+use `0x200` (with `0x280` only as the memento comparison) and preserve the
+endpoint-10 context lifetime.
+
+Live tests on 2026-08-30 now cover the exact selector modes as well as the
+earlier negative controls. Plaintext `0x200` returns SEP status `-1` for `-3`,
+the `-501` system alias, and the positive runtime handle, using either the
+tracked command-`0x24` ACM context or the legacy command-`1` context. Memento
+`0x280` returns `-12` for the alias and positive handle and `-1` for `-3`.
+Changing the synthetic outer UID/process identity does not change those
+results. The `0x280` result is therefore explained by the selector's memento
+branch rather than by password failure.
+
+The running kext's `ipc_verify_secret_v1` implementation narrows `-1` further.
+It is returned before normal secret unwrap when `keybag_for_handle` cannot
+resolve the supplied owner/handle, or when the unlock helper fails at function
+level; a normal wrong plaintext password becomes status `-5`. The raw-secret
+initializer itself cannot produce `-1` for a non-empty valid request. The host
+kext's policy-operation-6 target is a zero-return stub followed by a backoff
+check, although the bridgeOS implementation may differ. Consequently the exact
+remaining boundary is pre-password keybag/policy lookup or dispatch identity,
+not password encoding and not the two-blob selector body.
+
+Native header generation stamps a 20-byte CodeDirectory hash after the process
+unique ID and UID in the 32-byte AKS platform field. Linux currently proves
+only the first two fields; its CDHash is zero. The transport therefore exposes
+a root-only, research-only `aks_platform_cdhash` module parameter accepting
+exactly 40 hexadecimal characters. The macOS evidence collector preserves the
+candidate LocalAuthentication/AKS caller binaries and their code-signing
+metadata. Testing the actual selector caller's CDHash is the next decisive
+diagnostic; unrelated daemon hashes must not be guessed into production.
 
 One framework helper recovers a generic passphrase credential envelope, but
 the matching ModuleACM dispatch now proves that it is **not** the enrollment
@@ -4521,7 +4566,7 @@ BiometricKit API pattern is also used by protected-configuration operations:
 credential-set key represents general operation authorization, not evidence
 that it is portable between users.
 
-The matching AppleCredentialManager engine now proves that the opaque
+The 24G830 AppleCredentialManager engine now proves that the opaque
 credential-set lifecycle supplies at least part of that missing binding. Its
 `_findValidCredential` rejects a candidate when the credential's stored
 session identifier does not equal the requested credential-set session
@@ -4629,7 +4674,7 @@ production, but does not prove it is the exact producer of the object stored in
 |---|---|---|
 | Serialized per-user cache, timeout, invalidation, explicit wiping | Reproducible and desirable | Local secret hygiene only |
 | Numeric UID carried separately with enrollment | Already protocol-visible | Selects target; does not itself authorize it |
-| Password input and keybag unlock | Existing endpoint-7 tooling covers unlock; the exact verify-secret ACM-binding contract is recovered but not implemented | Binds the password-validated keybag subject to the live ACM context when flag `0x80` is used |
+| Password input and keybag unlock | Existing endpoint-7 tooling covers unlock; a root-only verify-secret validation tool exists, but the complete ACM-binding contract remains under live validation | Selector 42 uses raw password bytes with `0x200` (`0x280` for memento); the separate `0x100` path expects an already-serialized ACM credential |
 | `LAContext` policy `1007` and externalization | Exact 24G830 endpoint-10 commands and serializers are recovered; no Linux implementation yet | Produces the demonstrated mode-0 credential-set reference after backend policy success |
 | `budd` service and private entitlement | Apple-only host IPC policy | Restricts sharing of an already-created context |
 | SEP subject binding and freshness | UID-bound context create, password/context binding, ten-minute credential selection, and enrollment-authority flag are recovered | Backend authorization is reproducible in protocol, subject to strict broker ownership |
@@ -4743,11 +4788,15 @@ the mandatory escape path throughout.
    the secret from prompt through verification. Its minimal recovered path is:
    create the ACM context for the protected mapped Apple UID; export its 16-byte
    reference; pass the target password and that reference through endpoint-7
-   verification with ACM flag `0x80`; evaluate policy
+   selector-42 verification as a plain secret with option qword `0x200`;
+   compare `0x280` only for memento behavior, while the separate structured-
+   credential path uses bit `0x100`;
+   evaluate policy
    `TouchIdEnrollment`/1007 through endpoint 10; re-export the authorized
    context reference and place it in BiometricKit mode 0; then destroy the
-   context and wipe host buffers on every exit. Exact 24G830
-   evidence has closed purpose, numeric-UID subject binding, command framing,
+   context and wipe host buffers on every exit. Exact 24G830 ACMLib evidence
+   plus the running 25B77 AppleKeyStore kext have closed purpose, numeric-UID
+   subject binding, command framing,
    host audit boundary, and default freshness; type-13 seed internals are not
    required by this active path. Exposure still waits for the privileged broker,
    strict context lifetime, archive/journal gates, and a controlled validation
@@ -4854,7 +4903,7 @@ approved disposable-finger hardware experiment.
 - Turn the now-recovered endpoint-10/ACM policy-1007 issuance sequence into a
   future read-only-capable broker design: create `0x24`/fallback `1` for the
   authenticated Apple numeric UID, export the 16-byte reference, bind it through
-  endpoint-7 verify-secret with flag `0x80`, retry command `3` for
+  endpoint-7 selector-42 verify-secret with raw-secret option `0x200`, retry command `3` for
   `TouchIdEnrollment`, and destroy on every failure or uncertain handoff. The
   remaining static uncertainty is the T2 biometric consumer's replay/one-shot
   semantics for the resulting mode-0 externalized credential set. A mode-1
@@ -4892,7 +4941,7 @@ plausible design to a proven result:
 | Domain | Strongest current evidence | Static-research disposition | Evidence still required |
 |---|---|---|---|
 | Existing-user enrollment wire protocol | Exact 24G830 command `0x03`, mode-0 authorization wrapper, continue/status/result events, exact target host frameworks | Host side complete enough for a protocol design | Controlled disposable-finger validation of final T2 acceptance, replay/one-shot behavior, and ambiguous completion |
-| Enrollment authorization producer | Exact UID-bound ACM create/export/destroy, endpoint-7 password binding flag `0x80`, policy-1007 command/reply, no Mach audit data crossing endpoint 10 | Protocol-feasible; type-13 and mode-1 internals are non-blocking | Privileged broker conformance tests, followed by the same controlled T2 validation |
+| Enrollment authorization producer | Exact UID-bound ACM create/export/destroy, endpoint-7 raw-versus-structured credential distinction, policy-1007 command/reply, no Mach audit data crossing endpoint 10 | Protocol-feasible in outline; live password-binding validation remains in progress | Privileged broker conformance tests, followed by the same controlled T2 validation |
 | Enrollment event flow | Exact envelope/status mappings, progress/continue range, terminal identity record, cancellation and conservative fprintd mappings | Static mapping complete for built-in enrollment; duplicate-specific reporting intentionally unavailable | Hardware traces only to validate timing/repetition behavior, not to invent unsupported result classes |
 | Single and per-user identity deletion | Exact `0x0d` target, Apple loop ordering, Catacomb-save failure windows, nil credential options | Protocol and non-atomic outcome model recovered | Future explicitly approved deletion test with before/after stable inventory; no static blocker remains |
 | Whole biometric-user removal | Exact `0x48` request and host cleanup ordering | Destructive command known, terminal proof incomplete; disabled | An explicit container-presence primitive or validated equivalent that distinguishes empty from absent |
@@ -4924,7 +4973,7 @@ static prose refinement is not progress toward the remaining unknowns.
 | Capability | Evidence status | Feasibility decision |
 |---|---|---|
 | Inventory existing SEP identities | Request/reply and user/UUID scope known | Safe candidate for read-only implementation |
-| Enroll for the currently provisioned Apple user | Start/continue/result and request structures known; the matching macOS password UI, `{UserId, Credential}` secure archive, temporary type-`-5` slot, entitled extraction, type-`-1` conversion, and cleanup are joined; exact 24G830 ACMLib and kexts now join UID-bound context create, externalization, endpoint-7 password binding with ACM flag `0x80`, command-3 `TouchIdEnrollment` evaluation, and endpoint-10 transport; BiometricSupport copies the resulting externalized credential set directly into mode 0 | Protocol-feasible without forging macOS audit state. A root/PolicyKit broker, strict context lifetime, final T2 replay/one-shot validation, durable save verification, and the recovery journal remain mandatory before exposure |
+| Enroll for the currently provisioned Apple user | Start/continue/result and request structures known; the version-qualified macOS password UI, `{UserId, Credential}` secure archive, temporary type-`-5` slot, entitled extraction, type-`-1` conversion, and cleanup are joined; 24G830 ACMLib plus the running 25B77 AppleKeyStore kext confirm UID-bound context create, externalization, endpoint-7 session/handle framing and its raw-versus-structured secret distinction, command-3 `TouchIdEnrollment` evaluation, and endpoint-10 transport; BiometricSupport copies the resulting externalized credential set directly into mode 0 | Protocol-feasible in outline without forging macOS audit state. Live password-binding/policy validation, a root/PolicyKit broker, strict context lifetime, final T2 replay/one-shot validation, durable save verification, and the recovery journal remain mandatory before exposure |
 | Delete one existing identity | Exact `userID + UUID` command known; standard Apple client sends nil options and relies on identity-management privilege; exact 24G830 Catacomb staging/promotion/recovery and typed archive schema are recovered | Technically feasible for Linux-local storage after a strict encoder, backup, independent read-back, explicit PolicyKit administration, and non-atomic failure reporting; APFS metadata is only a later macOS-resynchronization concern, and no enrollment credential ceremony is required |
 | Delete all prints of one Apple user | Exact 24G830 server loops SEP-remove plus host-object-remove for each target identity, aborts on the first command error, and saves Catacomb only once after the loop; neither a mid-loop failure nor final save failure reverses earlier SEP deletions | Feasible only as a separately confirmed, per-UUID journaled administrative batch with partial-completion reporting; never claim atomicity |
 | Rename/label a finger | Host identity metadata, exact keyed-archive graph, and Catacomb resave path known; standard Apple client sends nil options | Feasible for the Linux-local store after the strict encoder and explicit identity-management policy exist; label is not stored in the SEP template identity |
@@ -4960,13 +5009,21 @@ fingerprint setup.
   `fd37bb97e7c70d7362cb405a9896c495ba8b9744bd7ff79afd52d42ce7053abc`), used
   for the ACMLib policy serializer, result/requirement envelope, requirement
   allocator jump table, and semantic type mapping.
-- Local primary evidence: matching Intel AppleCredentialManager kext
+- Local primary evidence: 24G830 Intel AppleCredentialManager kext
   (`apple-artifacts/kexts/com.apple.driver.AppleCredentialManager`, SHA-256
   `34870e0c630c56a8092ee1e9b147c45d39b167437cd76d65b7025440d5d990f2`),
   used for the exact `TouchIdEnrollment` policy branch,
   `VerifyPolicyPasscodeOptional` requirement tree, credential-set authorization
   flag, credential-provider stubs, environment provider, and endpoint-10
   transport lifecycle.
+- Local primary evidence: AppleKeyStore extracted from the manifest-verified
+  Boot Kernel Collection collected from the running macOS 26.1 build 25B77
+  system (Mach-O UUID `014567BF-63F6-3391-A782-AF69FE030A04`, SHA-256
+  `af311e668b7480c699e7ba98a5402aa544e668e4211dcc51d806af445135e76c`),
+  used for the operation-`0x21` session/handle order, `keybag_for_handle`
+  ownership checks, and raw-versus-structured verify-secret option paths. The Apple
+  binary and full kernel collection are private local research artifacts and
+  are not redistributed by this repository.
 - Same-generation ModuleACM decompilation used to corroborate the preflight ->
   mechanism -> retry flow, policy-1007 parameter omission, and option-derived
   maximum-global-credential-age input:

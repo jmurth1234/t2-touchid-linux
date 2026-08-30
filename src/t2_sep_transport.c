@@ -15,6 +15,7 @@
 #include <linux/compat.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
+#include <linux/hex.h>
 #include <linux/io.h>
 #include <linux/ktime.h>
 #include <linux/miscdevice.h>
@@ -59,6 +60,8 @@ static_assert(sizeof(struct t2_acm_ioc_info) == 16);
 #define T2_SEP_AKS_V2_WIRE_SIZE     (sizeof(u32) + T2_SEP_AKS_HEADER_V2_SIZE)
 #define T2_SEP_AKS_CAP_REQ_SIZE     0x5c
 #define T2_SEP_AKS_MAX_BODY_SIZE    (T2_SEP_OOL_SIZE - T2_SEP_AKS_V2_WIRE_SIZE)
+#define T2_SEP_AKS_CDHASH_SIZE      20
+#define T2_SEP_AKS_CDHASH_HEX_SIZE  (T2_SEP_AKS_CDHASH_SIZE * 2)
 
 struct t2_sep_message {
 	u32 word[4];
@@ -103,6 +106,22 @@ module_param(register_acm, bool, 0400);
 MODULE_PARM_DESC(register_acm,
 	"Register separate endpoint-10 ACM OOL buffers (default: false)");
 
+static uint aks_platform_uid;
+module_param(aks_platform_uid, uint, 0600);
+MODULE_PARM_DESC(aks_platform_uid,
+	"Apple user UID stamped into verify-secret AKS headers (default: 0)");
+
+static ulong aks_platform_proc_uniqueid;
+module_param(aks_platform_proc_uniqueid, ulong, 0600);
+MODULE_PARM_DESC(aks_platform_proc_uniqueid,
+	"Synthetic process unique ID stamped into verify-secret AKS headers (default: 0)");
+
+static char aks_platform_cdhash[T2_SEP_AKS_CDHASH_HEX_SIZE + 1];
+module_param_string(aks_platform_cdhash, aks_platform_cdhash,
+		    sizeof(aks_platform_cdhash), 0600);
+MODULE_PARM_DESC(aks_platform_cdhash,
+	"Optional 40-hex-character caller CDHash stamped into verify-secret AKS headers");
+
 struct t2_aks_header_v1 {
 	u8 digest[16];
 	__le32 version;
@@ -120,6 +139,31 @@ struct t2_aks_header_v2 {
 } __packed;
 
 static_assert(sizeof(struct t2_aks_header_v2) == T2_SEP_AKS_HEADER_V2_SIZE);
+
+static int t2_aks_stamp_verify_platform_data(struct t2_aks_header_v2 *header)
+{
+	u8 cdhash[T2_SEP_AKS_CDHASH_SIZE];
+	size_t length;
+	int ret;
+
+	put_unaligned_le64(aks_platform_proc_uniqueid,
+			     header->v1.platform_data);
+	put_unaligned_le32(aks_platform_uid,
+			     header->v1.platform_data + sizeof(__le64));
+
+	length = strnlen(aks_platform_cdhash, sizeof(aks_platform_cdhash));
+	if (!length)
+		return 0;
+	if (length != T2_SEP_AKS_CDHASH_HEX_SIZE)
+		return -EINVAL;
+	ret = hex2bin(cdhash, aks_platform_cdhash, sizeof(cdhash));
+	if (ret)
+		return ret;
+	memcpy(header->v1.platform_data + sizeof(__le64) + sizeof(__le32),
+	       cdhash, sizeof(cdhash));
+	memzero_explicit(cdhash, sizeof(cdhash));
+	return 0;
+}
 
 static int t2_sep_wait_outbox(struct t2_sep_transport *sep)
 {
@@ -279,11 +323,46 @@ static bool t2_aks_operation_allowed(u8 operation)
 	case 0x04: /* change_lock_state */
 	case 0x0d: /* make_system_keybag */
 	case 0x19: /* get_device_state */
+	case 0x21: /* verify_secret_v1 with an ACM context */
 	case T2_SEP_AKS_GET_CAPABILITIES:
 		return true;
 	default:
 		return false;
 	}
+}
+
+static bool t2_aks_verify_acm_request_allowed(const u8 *request, size_t length)
+{
+	u32 password_length, padded_length, context_length;
+	s32 handle;
+	u64 session;
+
+	if (length < 52 || get_unaligned_le32(request) != 1)
+		return false;
+	/* verify_secret_v1 carries the owning AKS session, then the bag handle. */
+	session = get_unaligned_le64(request + 4);
+	handle = (s32)get_unaligned_le32(request + 12);
+	if (session != 1 || !handle)
+		return false;
+	password_length = get_unaligned_le32(request + 16);
+	if (!password_length || password_length > 128)
+		return false;
+	padded_length = ALIGN(password_length, 4);
+	if (length != 48 + padded_length)
+		return false;
+	if (memchr_inv(request + 20 + password_length, 0,
+		       padded_length - password_length))
+		return false;
+	context_length = get_unaligned_le32(request + 20 + padded_length);
+	if (context_length != 16)
+		return false;
+	/*
+	 * Current selector 42 supplies plaintext with bit 0x200 and optionally
+	 * adds the 0x80 memento bit.  Bit 0x100 selects Apple's structured
+	 * ACM-credential decoder and is intentionally rejected here.
+	 */
+	return get_unaligned_le64(request + 40 + padded_length) == 0x200 ||
+		get_unaligned_le64(request + 40 + padded_length) == 0x280;
 }
 
 static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
@@ -297,11 +376,16 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 	struct t2_sep_message reply;
 	size_t request_length;
 	u16 reply_length;
+	s8 reply_status;
 	u8 transaction;
 	unsigned int skipped = 0;
 	int ret;
 
 	if (!t2_aks_operation_allowed(operation))
+		return -EACCES;
+	if (operation == 0x21 &&
+	    !t2_aks_verify_acm_request_allowed(request_body,
+					       request_body_length))
 		return -EACCES;
 	if (request_body_length > T2_SEP_AKS_MAX_BODY_SIZE)
 		return -EMSGSIZE;
@@ -314,6 +398,11 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 	header->v1.version = cpu_to_le32(T2_SEP_AKS_HEADER_V2);
 	header->v1.usec_time = cpu_to_le64(ktime_get_ns() / NSEC_PER_USEC);
 	header->calendar_seconds = cpu_to_le64(ktime_get_real_seconds());
+	if (operation == 0x21) {
+		ret = t2_aks_stamp_verify_platform_data(header);
+		if (ret)
+			return ret;
+	}
 	if (request_body_length)
 		memcpy(sep->ool_in + T2_SEP_AKS_V2_WIRE_SIZE,
 		       request_body, request_body_length);
@@ -337,21 +426,38 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 		if (ret)
 			return ret;
 		if ((reply.word[0] & 0xff) == T2_SEP_AKS_ENDPOINT &&
-		    (((reply.word[0] >> 8) & 0x7f) == operation) &&
+		    (((reply.word[0] >> 8) & 0xff) == (operation | 0x80)) &&
 		    ((reply.word[0] >> 16) & 0xff) == transaction)
 			break;
 		if (++skipped == 32)
 			return -EOVERFLOW;
 	}
 
+	/* EP7 reply: endpoint, operation|response, transaction, signed status. */
+	reply_status = (s8)(reply.word[0] >> 24);
+	if (reply_status) {
+		dev_err(&sep->pdev->dev,
+			"AKS operation %#x returned SEP status %d (flags %#x)\n",
+			operation, reply_status, reply.word[1] & 0xffff);
+		return -EREMOTEIO;
+	}
 	reply_length = reply.word[1] >> 16;
 	if (reply_length < T2_SEP_AKS_V2_WIRE_SIZE ||
-	    reply_length > T2_SEP_OOL_SIZE)
+	    reply_length > T2_SEP_OOL_SIZE) {
+		dev_err(&sep->pdev->dev,
+			"AKS operation %#x returned invalid envelope length %u (mailbox info %#x)\n",
+			operation, reply_length, reply.word[1] & 0xffff);
 		return -EPROTO;
+	}
 	if (get_unaligned_le32(sep->ool_out) != T2_SEP_AKS_HEADER_V2_SIZE ||
 	    get_unaligned_le32(sep->ool_out + sizeof(__le32) + 0x10) !=
-	    T2_SEP_AKS_HEADER_V2)
+	    T2_SEP_AKS_HEADER_V2) {
+		dev_err(&sep->pdev->dev,
+			"AKS operation %#x returned invalid envelope metadata (size %#x version %#x)\n",
+			operation, get_unaligned_le32(sep->ool_out),
+			get_unaligned_le32(sep->ool_out + sizeof(__le32) + 0x10));
 		return -EPROTO;
+	}
 
 	{
 		u8 expected[16];
@@ -394,6 +500,9 @@ static long t2_aks_ioctl(struct file *file, unsigned int command,
 	if (exchange.request_length > T2_SEP_AKS_MAX_BODY_SIZE ||
 	    exchange.response_capacity > T2_SEP_AKS_MAX_BODY_SIZE)
 		return -EMSGSIZE;
+	if (exchange.operation == 0x21 &&
+	    (exchange.response_capacity != 12 || !exchange.response))
+		return -EACCES;
 	if (exchange.request_length) {
 		request = memdup_user(u64_to_user_ptr(exchange.request),
 				      exchange.request_length);
@@ -452,6 +561,11 @@ static bool t2_acm_command_allowed(const u8 *request, size_t length)
 		return length == 12; /* command header + appended effective UID */
 	case 0x02: /* context destroy */
 		return length == 24; /* command header + 16-byte context */
+	case 0x03: /* TouchIdEnrollment policy, empty parameter array */
+		return length == 51 &&
+			!memcmp(request + 24, "TouchIdEnrollment\0", 18) &&
+			request[42] <= 1 &&
+			!memchr_inv(request + 43, 0, 8);
 	default:
 		return false;
 	}
@@ -467,6 +581,8 @@ static bool t2_acm_response_buffer_valid(const u8 *request,
 		return capacity >= 21 && response;
 	case 0x02:
 		return capacity == 0;
+	case 0x03:
+		return capacity == 4096 && response;
 	default:
 		return false;
 	}

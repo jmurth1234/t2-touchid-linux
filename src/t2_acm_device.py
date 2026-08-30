@@ -7,6 +7,7 @@ import fcntl
 import os
 import struct
 from pathlib import Path
+from collections.abc import Callable
 
 import t2_acm_protocol as protocol
 
@@ -163,7 +164,9 @@ def lifecycle_test(device: ACMDevice, user_id: int) -> dict[str, object]:
             raise ACMDeviceError(
                 f"create response was invalid and cleanup failed: {cleanup_error}"
             ) from primary_error
-        raise ACMDeviceError(f"mandatory context cleanup failed: {cleanup_error}") from cleanup_error
+        raise ACMDeviceError(
+            f"mandatory context cleanup failed: {cleanup_error}"
+        ) from cleanup_error
     if primary_error is not None:
         raise ACMDeviceError(
             f"create response was invalid ({response_shape}); context was cleaned up"
@@ -177,4 +180,129 @@ def lifecycle_test(device: ACMDevice, user_id: int) -> dict[str, object]:
         "delete_succeeded": True,
         "context_identifier_redacted": True,
         "mutation_reconciled": True,
+    }
+
+
+def policy_preflight_test(device: ACMDevice, user_id: int) -> dict[str, object]:
+    """Observe policy 1007's requirement and guarantee context deletion."""
+    response = device.exchange(
+        protocol.build_create(user_id=user_id, tracking=True), 21
+    )
+    if len(response) < protocol.CONTEXT_SIZE:
+        raise ACMDeviceError(
+            "create response omitted the context required for mandatory cleanup"
+        )
+    cleanup_handle = protocol.ContextHandle(
+        response[: protocol.CONTEXT_SIZE], 0, True, False
+    )
+    result = None
+    primary_error: BaseException | None = None
+    try:
+        handle = protocol.parse_create_response(response, tracking=True)
+        policy_response = device.exchange(
+            protocol.build_enrollment_policy_preflight(handle),
+            protocol.POLICY_RESPONSE_CAPACITY,
+        )
+        result = protocol.parse_policy_response(policy_response)
+    except BaseException as error:
+        primary_error = error
+    try:
+        delete_response = device.exchange(protocol.build_delete(cleanup_handle), 0)
+        if delete_response:
+            raise ACMDeviceError("delete returned an unexpected response body")
+    except BaseException as cleanup_error:
+        if primary_error is not None:
+            raise ACMDeviceError(
+                f"policy preflight failed and mandatory cleanup failed: {cleanup_error}"
+            ) from primary_error
+        raise ACMDeviceError(f"mandatory context cleanup failed: {cleanup_error}") from cleanup_error
+    if primary_error is not None:
+        raise ACMDeviceError(
+            "policy preflight failed; context was cleaned up"
+        ) from primary_error
+    assert result is not None
+    return {
+        "schema_version": 1,
+        "policy": 1007,
+        "preflight_only": True,
+        "policy_satisfied": result.satisfied,
+        "requirement_present": result.requirement_present,
+        "requirement_length": result.requirement_length,
+        "requirement_type": result.requirement_type,
+        "requirement_state": result.requirement_state,
+        "requirement_flags": result.requirement_flags,
+        "requirement_payload_length": result.requirement_payload_length,
+        "context_identifier_redacted": True,
+        "delete_succeeded": True,
+        "mutation_reconciled": True,
+    }
+
+
+def authorization_test(
+    device: ACMDevice,
+    user_id: int,
+    password_binder: Callable[[bytes], None],
+    *,
+    tracking: bool = True,
+) -> dict[str, object]:
+    """Bind a password, evaluate policy 1007, and always destroy the context."""
+    response_capacity = 21 if tracking else 17
+    response = device.exchange(
+        protocol.build_create(user_id=user_id, tracking=tracking),
+        response_capacity,
+    )
+    if len(response) < protocol.CONTEXT_SIZE:
+        raise ACMDeviceError(
+            "create response omitted the context required for mandatory cleanup"
+        )
+    cleanup_handle = protocol.ContextHandle(
+        response[: protocol.CONTEXT_SIZE], 0, tracking, False
+    )
+    initial = final = None
+    primary_error: BaseException | None = None
+    try:
+        handle = protocol.parse_create_response(response, tracking=tracking)
+        initial = protocol.parse_policy_response(
+            device.exchange(
+                protocol.build_enrollment_policy(handle, preflight=True),
+                protocol.POLICY_RESPONSE_CAPACITY,
+            )
+        )
+        if initial.satisfied or initial.requirement_type != 1:
+            raise ACMDeviceError("initial policy state is not the passcode requirement")
+        password_binder(handle.context)
+        final = protocol.parse_policy_response(
+            device.exchange(
+                protocol.build_enrollment_policy(handle, preflight=False),
+                protocol.POLICY_RESPONSE_CAPACITY,
+            )
+        )
+        if not final.satisfied:
+            raise ACMDeviceError("policy 1007 remained unsatisfied after password binding")
+    except BaseException as error:
+        primary_error = error
+    try:
+        delete_response = device.exchange(protocol.build_delete(cleanup_handle), 0)
+        if delete_response:
+            raise ACMDeviceError("delete returned an unexpected response body")
+    except BaseException as cleanup_error:
+        if primary_error is not None:
+            raise ACMDeviceError(
+                f"authorization failed and mandatory cleanup failed: {cleanup_error}"
+            ) from primary_error
+        raise ACMDeviceError(f"mandatory context cleanup failed: {cleanup_error}") from cleanup_error
+    if primary_error is not None:
+        raise ACMDeviceError("authorization failed; context was cleaned up") from primary_error
+    assert initial is not None and final is not None
+    return {
+        "schema_version": 1,
+        "policy": 1007,
+        "initial_requirement_type": initial.requirement_type,
+        "context_create_tracking": tracking,
+        "password_bound": True,
+        "policy_satisfied": final.satisfied,
+        "context_identifier_redacted": True,
+        "delete_succeeded": True,
+        "mutation_reconciled": True,
+        "fingerprint_mutation_performed": False,
     }

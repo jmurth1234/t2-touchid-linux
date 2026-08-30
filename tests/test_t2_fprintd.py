@@ -152,10 +152,13 @@ class BackendRecoveryTests(unittest.IsolatedAsyncioTestCase):
             port_file = Path(directory) / "port"
             port_file.write_text("50001\n")
             old_port_file = os.environ.get("T2_TOUCHID_PORT_FILE")
+            old_linux_user = MODULE.LINUX_USER
             os.environ["T2_TOUCHID_PORT_FILE"] = str(port_file)
+            MODULE.LINUX_USER = "test-user"
             try:
                 backend = MODULE.T2Backend(Path(directory), 1)
             finally:
+                MODULE.LINUX_USER = old_linux_user
                 if old_port_file is None:
                     os.environ.pop("T2_TOUCHID_PORT_FILE", None)
                 else:

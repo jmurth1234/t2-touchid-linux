@@ -15,6 +15,13 @@ The recommended macOS entry point is
 [`scripts/collect-all-macos-evidence.sh`](scripts/collect-all-macos-evidence.sh),
 which produces one private archive for later offline analysis.
 
+For the narrower selector-42 caller-identity diagnostic, use
+[`scripts/collect-aks-caller-identities-macos.sh`](scripts/collect-aks-caller-identities-macos.sh).
+It copies only likely Apple system caller executables and their public
+code-signing metadata. It does not read a password, keybag, Catacomb, or
+fingerprint. Its output is still private research evidence because Apple
+binaries must not be committed or redistributed.
+
 After transferring an archive privately, inspect a Catacomb component on Linux
 without printing its UUIDs:
 
