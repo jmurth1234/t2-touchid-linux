@@ -403,6 +403,11 @@ def main() -> None:
         help="query the SEP identity-record count for the configured macOS user",
     )
     parser.add_argument(
+        "--stability-check",
+        action="store_true",
+        help="repeat requested inventory queries and report exact private equality",
+    )
+    parser.add_argument(
         "--catacomb-state",
         action="store_true",
         help="query SEP catacomb state metadata without returning its contents",
@@ -637,6 +642,22 @@ def main() -> None:
             result["identity_list_events"] = [
                 summarize_event(event) for event in identities_events
             ]
+            if args.stability_check:
+                repeated_reply, repeated_events = biometric_command(
+                    sock,
+                    0x42,
+                    data=struct.pack("<I", args.macos_user_id),
+                    output_capacity=20 * 10,
+                )
+                result["identity_inventory_repeat_equal"] = (
+                    repeated_reply == identities_reply
+                )
+                result["identity_list_repeat_reply"] = summarize_command_reply(
+                    repeated_reply
+                )
+                result["identity_list_repeat_events"] = [
+                    summarize_event(event) for event in repeated_events
+                ]
             operations.append("get identity count")
         if args.catacomb_state:
             catacomb_reply, catacomb_events = biometric_command(
@@ -660,6 +681,19 @@ def main() -> None:
             result["catacomb_state_events"] = [
                 summarize_event(event) for event in catacomb_events
             ]
+            if args.stability_check:
+                repeated_reply, repeated_events = biometric_command(
+                    sock, 0x3C, output_capacity=4096
+                )
+                result["catacomb_state_repeat_equal"] = (
+                    repeated_reply == catacomb_reply
+                )
+                result["catacomb_state_repeat_reply"] = summarize_command_reply(
+                    repeated_reply
+                )
+                result["catacomb_state_repeat_events"] = [
+                    summarize_event(event) for event in repeated_events
+                ]
             operations.append("get catacomb state")
         if args.sks_lock_state:
             sks_reply, sks_events = biometric_command(
@@ -676,6 +710,20 @@ def main() -> None:
             result["sks_lock_state_events"] = [
                 summarize_event(event) for event in sks_events
             ]
+            if args.stability_check:
+                repeated_reply, repeated_events = biometric_command(
+                    sock,
+                    0x27,
+                    data=struct.pack("<I", args.macos_user_id),
+                    output_capacity=4,
+                )
+                result["sks_lock_state_repeat_equal"] = repeated_reply == sks_reply
+                result["sks_lock_state_repeat_reply"] = summarize_command_reply(
+                    repeated_reply
+                )
+                result["sks_lock_state_repeat_events"] = [
+                    summarize_event(event) for event in repeated_events
+                ]
             operations.append("get SKS lock state")
         if args.load_catacomb_archive:
             if not args.initialize:

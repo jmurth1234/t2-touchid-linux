@@ -195,9 +195,11 @@ template UUIDs:
 sudo t2-touchid-inventory
 ```
 
-This read-only command also reports whether the Catacomb-state and secure-key-
-store lock-state queries succeeded. It is the inventory gate for future
-enrollment and deletion operations; it does not mutate biometric state.
+This read-only command performs two exact back-to-back collections and fails if
+the private identity records, Catacomb state, or secure-key-store lock state
+change between them. It exposes only the stable count and equality result—not
+identity UUIDs or hashes. It is the inventory gate for future enrollment and
+deletion operations; it does not mutate biometric state.
 
 This machine has no usable TPM, so the credential is encrypted with systemd's
 host key. It protects against casual/offline disclosure without the decrypted

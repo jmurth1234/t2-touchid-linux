@@ -23,6 +23,9 @@ class InventoryTests(unittest.TestCase):
                 "identity_record_count": 2,
                 "identity_record_bytes_valid": True,
                 "identity_user_field": "prefix",
+                "identity_inventory_repeat_equal": True,
+                "catacomb_state_repeat_equal": True,
+                "sks_lock_state_repeat_equal": True,
                 "catacomb_state_reply": reply(),
                 "catacomb_state_words": [1, 2, 3, 4],
                 "sks_lock_state_reply": reply(),
@@ -42,6 +45,9 @@ class InventoryTests(unittest.TestCase):
                     "identity_list_reply": reply(),
                     "identity_record_count": 1,
                     "identity_record_bytes_valid": False,
+                    "identity_inventory_repeat_equal": True,
+                    "catacomb_state_repeat_equal": True,
+                    "sks_lock_state_repeat_equal": True,
                 },
                 501,
             )
@@ -52,10 +58,28 @@ class InventoryTests(unittest.TestCase):
                 "identity_list_reply": reply(),
                 "identity_record_count": 0,
                 "identity_record_bytes_valid": True,
+                "identity_inventory_repeat_equal": True,
+                "catacomb_state_repeat_equal": True,
+                "sks_lock_state_repeat_equal": True,
             },
             501,
         )
         self.assertEqual(result["sep_identity_count"], 0)
+
+    def test_rejects_inventory_that_changes_between_collections(self):
+        with self.assertRaises(MODULE.InventoryError):
+            MODULE.summarize_probe(
+                {
+                    "identity_list_reply": reply(),
+                    "identity_record_count": 1,
+                    "identity_record_bytes_valid": True,
+                    "identity_user_field": "prefix",
+                    "identity_inventory_repeat_equal": False,
+                    "catacomb_state_repeat_equal": True,
+                    "sks_lock_state_repeat_equal": True,
+                },
+                501,
+            )
 
 
 if __name__ == "__main__":

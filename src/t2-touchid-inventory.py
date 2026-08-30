@@ -53,12 +53,20 @@ def summarize_probe(probe: Any, expected_uid: int) -> dict[str, Any]:
     user_field = probe.get("identity_user_field")
     if count and user_field != "prefix":
         raise InventoryError("SEP identity records do not match the expected layout")
+    for field, description in (
+        ("identity_inventory_repeat_equal", "identity inventory"),
+        ("catacomb_state_repeat_equal", "Catacomb state"),
+        ("sks_lock_state_repeat_equal", "SKS lock state"),
+    ):
+        if probe.get(field) is not True:
+            raise InventoryError(f"{description} changed during double collection")
 
     result: dict[str, Any] = {
         "schema_version": 1,
         "user_id": expected_uid,
         "sep_identity_count": count,
         "identity_records_valid": True,
+        "double_collection_equal": True,
         "identifiers_redacted": True,
     }
     catacomb = probe.get("catacomb_state_reply")
@@ -69,7 +77,7 @@ def summarize_probe(probe: Any, expected_uid: int) -> dict[str, Any]:
     sks = probe.get("sks_lock_state_reply")
     result["sks_lock_state_query_ok"] = successful_reply(sks)
     if successful_reply(sks) and isinstance(probe.get("sks_lock_state"), int):
-        result["sks_lock_state"] = probe["sks_lock_state"]
+        result["sks_lock_state_raw"] = probe["sks_lock_state"]
     return result
 
 
@@ -105,6 +113,7 @@ def main() -> int:
                 "--identity-list",
                 "--catacomb-state",
                 "--sks-lock-state",
+                "--stability-check",
             ],
             check=False,
             capture_output=True,
