@@ -24,6 +24,12 @@ class BaselineCommandTests(unittest.TestCase):
             (SOURCE / "t2_mutation_journal.py").resolve(),
         )
 
+    def test_public_summary_never_discloses_internal_operation_identifier(self):
+        result = MODULE.public_summary("enroll", 1)
+        self.assertTrue(result["identifiers_redacted"])
+        self.assertEqual(result["identity_count"], 1)
+        self.assertNotIn("operation_id", result)
+
     @patch.object(MODULE, "run_private_inventory", return_value={"stable": True})
     @patch.object(MODULE.subprocess, "run")
     def test_active_fprintd_is_warmed_before_locked_inventory(self, run, inventory):

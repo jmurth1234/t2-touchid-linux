@@ -50,6 +50,7 @@ evidence, not intent.
 - [x] Document the reproduced deep-S3 failure and failed live resets.
 - [x] Add a privacy-safe suspend diagnostic bundle.
 - [x] Prepare an upstream-ready t2bce report with exact reproduction evidence.
+- [x] Fail closed unless live enrollment holds a verified sleep inhibitor.
 - [ ] Validate any kernel fix or alternative sleep mode on the proven machine.
 
 ## 8. Security, tests, and releases

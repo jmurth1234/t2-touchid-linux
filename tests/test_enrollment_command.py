@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-2.0-only
 import importlib.util
 import io
+import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -43,6 +45,7 @@ class EnrollmentCommandTests(unittest.TestCase):
         status_only=False,
         post_reboot=False,
         enrollment_error=None,
+        cancel_before_dispatch=False,
     ):
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "operation.lock"
@@ -56,6 +59,22 @@ class EnrollmentCommandTests(unittest.TestCase):
                 "identifiers_redacted": True,
                 "mutation_performed": False,
             }
+
+            inhibitor = SimpleNamespace(poll=mock.Mock(return_value=None))
+
+            @contextmanager
+            def inhibit_sleep():
+                lifecycle.append("inhibit")
+                try:
+                    yield inhibitor
+                finally:
+                    lifecycle.append("uninhibit")
+
+            def warm():
+                lifecycle.append("warm")
+                if cancel_before_dispatch:
+                    signal.raise_signal(signal.SIGTERM)
+
             with (
                 mock.patch.object(sys, "argv", ["enroll", *arguments]),
                 mock.patch.object(MODULE.os, "geteuid", return_value=0),
@@ -88,14 +107,18 @@ class EnrollmentCommandTests(unittest.TestCase):
                 mock.patch.object(
                     MODULE,
                     "warm_sensor",
-                    side_effect=lambda: lifecycle.append("warm"),
+                    side_effect=warm,
                 ) as warm_sensor,
                 mock.patch.object(
                     MODULE.fcntl,
                     "flock",
                     side_effect=lambda *_args: lifecycle.append("lock"),
                 ),
-                mock.patch.object(MODULE, "require_no_unfinished_enrollment"),
+                mock.patch.multiple(
+                    MODULE,
+                    require_no_unfinished_enrollment=mock.DEFAULT,
+                    sleep_inhibitor=mock.DEFAULT,
+                ) as guards,
                 mock.patch.object(MODULE, "OPERATION_LOCK", lock),
                 mock.patch.object(
                     MODULE,
@@ -143,13 +166,17 @@ class EnrollmentCommandTests(unittest.TestCase):
                 redirect_stdout(output),
                 redirect_stderr(io.StringIO()),
             ):
+                guards["sleep_inhibitor"].side_effect = inhibit_sleep
                 status = MODULE.main()
-            self.assertEqual(status, 1 if enrollment_error is not None else 0)
+            self.assertEqual(
+                status,
+                1 if enrollment_error is not None or cancel_before_dispatch else 0,
+            )
             self.assertEqual(
                 preflight.called,
                 not live and not recovery and not status_only and not post_reboot,
             )
-            self.assertEqual(enrollment.called, live)
+            self.assertEqual(enrollment.called, live and not cancel_before_dispatch)
             self.assertEqual(reconcile.called, recovery)
             self.assertEqual(status_report.called, status_only)
             self.assertEqual(post_reboot_verification.called, post_reboot)
@@ -167,7 +194,9 @@ class EnrollmentCommandTests(unittest.TestCase):
                 self.assertEqual(lifecycle[:2], ["warm", "lock"])
             else:
                 self.assertEqual(lifecycle[:2], ["warm", "lock"])
-            if enrollment_error is not None:
+            if live:
+                self.assertEqual(lifecycle[2:], ["inhibit", "uninhibit"])
+            if enrollment_error is not None or cancel_before_dispatch:
                 notify.assert_called_once_with(
                     CONFIGURATION["linux_user"], "t2-touchid-failure.service"
                 )
@@ -222,6 +251,17 @@ class EnrollmentCommandTests(unittest.TestCase):
             ],
             live=True,
             enrollment_error=MODULE.EnrollmentCommandError("synthetic failure"),
+        )
+
+    def test_signal_before_dispatch_cancels_without_entering_enrollment(self):
+        self.invoke(
+            [
+                "--acknowledge-password-fallback-tested",
+                "--acknowledge-live-fingerprint-enrollment",
+                "--acknowledge-local-catacomb-mutation",
+            ],
+            live=True,
+            cancel_before_dispatch=True,
         )
 
     def test_recovery_needs_no_password_or_live_mutation_acknowledgement(self):
@@ -453,7 +493,7 @@ class EnrollmentCommandTests(unittest.TestCase):
                     {"private": "host"},
                     Path("/var/lib/t2-touchid/backups/" + "a" * 64 + ".tar.gz"),
                     "Left index finger",
-                    MODULE.Event(),
+                    MODULE.Event().is_set,
                 )
         binder_call = run.call_args_list[0]
         self.assertEqual(
@@ -466,6 +506,74 @@ class EnrollmentCommandTests(unittest.TestCase):
         self.assertEqual(seen["mapping_generation"], "d" * 64)
         self.assertEqual(finalizer.call_args.kwargs["catacomb_root"], MODULE.STORE_ROOT)
         self.assertTrue(output["persistence_ready"])
+        self.assertNotIn("operation_id", output)
+
+    def test_sleep_inhibitor_is_verified_and_dropped_by_closing_parent_pipe(self):
+        class Input:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        process = SimpleNamespace(
+            pid=4242,
+            stdin=Input(),
+            poll=mock.Mock(return_value=None),
+            wait=mock.Mock(return_value=0),
+            terminate=mock.Mock(),
+            kill=mock.Mock(),
+        )
+        listing = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps(
+                [
+                    {
+                        "pid": 4242,
+                        "who": "t2-touchid-enrollment",
+                        "what": "sleep",
+                        "mode": "block",
+                    }
+                ]
+            ).encode(),
+        )
+        with (
+            mock.patch.object(MODULE.subprocess, "Popen", return_value=process) as popen,
+            mock.patch.object(MODULE.subprocess, "run", return_value=listing),
+            MODULE.sleep_inhibitor() as active,
+        ):
+            self.assertIs(active, process)
+        self.assertTrue(process.stdin.closed)
+        process.wait.assert_called_once_with(timeout=2)
+        process.terminate.assert_not_called()
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        self.assertEqual(popen.call_args.kwargs["stdin"], subprocess.PIPE)
+
+    def test_sleep_inhibitor_failure_is_fail_closed_and_cleaned_up(self):
+        class Input:
+            def close(self):
+                return None
+
+        process = SimpleNamespace(
+            pid=4242,
+            stdin=Input(),
+            poll=mock.Mock(return_value=1),
+            wait=mock.Mock(return_value=1),
+            terminate=mock.Mock(),
+            kill=mock.Mock(),
+        )
+        with (
+            mock.patch.object(MODULE.subprocess, "Popen", return_value=process),
+            mock.patch.object(
+                MODULE, "_sleep_inhibitor_is_registered", return_value=False
+            ),
+            self.assertRaisesRegex(
+                MODULE.EnrollmentCommandError, "exited during setup"
+            ),
+        ):
+            with MODULE.sleep_inhibitor():
+                self.fail("unverified inhibitor must not enter the live scope")
+        process.wait.assert_called_once_with(timeout=2)
 
     def test_desktop_feedback_failure_cannot_abort_enrollment(self):
         with mock.patch.object(

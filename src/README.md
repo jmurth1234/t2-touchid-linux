@@ -234,7 +234,12 @@ blocks another enrollment so later mutations cannot invalidate its snapshot.
 The live branch additionally requires explicit live-fingerprint and local-store
 mutation acknowledgements, derives all security subjects from protected runtime
 state, retains one Bridge lease through E3, and provides cancellation/audio
-feedback. Progress and retry guidance is best-effort: a closed terminal or
+feedback. Immediately before live dispatch it acquires and verifies a block-mode
+systemd sleep inhibitor; failure to acquire it aborts without entering ACM or
+enrollment. The inhibitor is held by a parent-owned pipe, so normal exit or
+broker death releases it, while SIGINT, SIGTERM, and SIGHUP request the typed
+cancellation path. User-facing summaries omit internal operation and identity
+UUIDs. Progress and retry guidance is best-effort: a closed terminal or
 unavailable desktop notification service cannot alter the biometric outcome,
 and handled live-path errors still emit the terminal failure cue. Its preflight
 has passed on the target hardware. Five explicitly

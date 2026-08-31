@@ -15,9 +15,12 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
+from typing import Callable, Iterator
 
 
 INSTALLED_SOURCE = Path("/opt/t2-touchid/src")
@@ -51,10 +54,83 @@ MUTATION_ROOT = STATE_ROOT / "mutations"
 OPERATION_LOCK = Path("/run/t2-touchid/operation.lock")
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 AKS_TOOL = Path("/usr/local/sbin/t2-aks-tool")
+SYSTEMD_INHIBIT = Path("/usr/bin/systemd-inhibit")
+CAT = Path("/usr/bin/cat")
 
 
 class EnrollmentCommandError(RuntimeError):
     pass
+
+
+def _sleep_inhibitor_is_registered(process: subprocess.Popen[bytes]) -> bool:
+    if process.poll() is not None:
+        return False
+    completed = subprocess.run(
+        [str(SYSTEMD_INHIBIT), "--list", "--json=short"],
+        check=False,
+        capture_output=True,
+        timeout=2,
+    )
+    if completed.returncode:
+        return False
+    try:
+        records = json.loads(completed.stdout)
+    except (TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(records, list):
+        return False
+    return any(
+        isinstance(record, dict)
+        and record.get("pid") == process.pid
+        and record.get("who") == "t2-touchid-enrollment"
+        and record.get("what") == "sleep"
+        and record.get("mode") == "block"
+        for record in records
+    )
+
+
+@contextmanager
+def sleep_inhibitor() -> Iterator[subprocess.Popen[bytes]]:
+    """Block suspend for a live mutation and drop the block on parent death."""
+    process = subprocess.Popen(
+        [
+            str(SYSTEMD_INHIBIT),
+            "--what=sleep",
+            "--who=t2-touchid-enrollment",
+            "--why=Touch ID enrollment is active",
+            "--mode=block",
+            str(CAT),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        for _attempt in range(20):
+            if _sleep_inhibitor_is_registered(process):
+                break
+            if process.poll() is not None:
+                raise EnrollmentCommandError("sleep inhibitor exited during setup")
+            time.sleep(0.05)
+        else:
+            raise EnrollmentCommandError("sleep inhibitor could not be verified")
+        yield process
+    finally:
+        if process.stdin is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
 
 
 def _private_root_owned(path: Path, *, directory: bool) -> os.stat_result:
@@ -478,7 +554,7 @@ def run_enrollment(
     host_inventory: dict[str, object],
     backup: Path,
     identity_name: str,
-    cancellation: Event,
+    cancel_requested: Callable[[], bool],
 ) -> dict[str, object]:
     session, _positive_handle = keybag_runtime(configuration["special_bag"])
     operation_id = str(uuid.uuid4())
@@ -533,7 +609,7 @@ def run_enrollment(
             password_fallback_verified=True,
             password_binder=bind_password,
             finalizer=finalizer,
-            cancel_requested=cancellation.is_set,
+            cancel_requested=cancel_requested,
             on_feedback=feedback,
         )
     successful = (
@@ -548,7 +624,6 @@ def run_enrollment(
     )
     return {
         "schema_version": 1,
-        "operation_id": operation_id,
         "outcome": result.outcome,
         "policy_satisfied": result.policy_satisfied,
         "persistence_ready": result.persistence_ready,
@@ -605,7 +680,13 @@ def main() -> int:
 
     cancellation = Event()
     configuration: dict[str, object] | None = None
-    previous_sigint = signal.signal(signal.SIGINT, lambda _signum, _frame: cancellation.set())
+    handled_signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    previous_handlers = {
+        handled: signal.signal(
+            handled, lambda _signum, _frame: cancellation.set()
+        )
+        for handled in handled_signals
+    }
     try:
         configuration = runtime_configuration()
         _private_root_owned(STATE_ROOT, directory=True)
@@ -657,13 +738,19 @@ def main() -> int:
                     result = run_outcome_unknown_reconciliation(configuration, store)
                 else:
                     require_no_unfinished_enrollment()
-                    result = run_enrollment(
-                        configuration,
-                        host_inventory,
-                        backup,
-                        args.identity_name,
-                        cancellation,
-                    )
+                    with sleep_inhibitor() as inhibitor:
+                        if cancellation.is_set():
+                            raise EnrollmentCommandError(
+                                "enrollment was cancelled before dispatch"
+                            )
+                        result = run_enrollment(
+                            configuration,
+                            host_inventory,
+                            backup,
+                            args.identity_name,
+                            lambda: cancellation.is_set()
+                            or inhibitor.poll() is not None,
+                        )
                 result["local_store_provisioned"] = not store_preexisting
         finally:
             os.close(lock_descriptor)
@@ -687,7 +774,8 @@ def main() -> int:
         print(f"t2-touchid-enroll-test: {error}", file=sys.stderr)
         return 1
     finally:
-        signal.signal(signal.SIGINT, previous_sigint)
+        for handled, previous in previous_handlers.items():
+            signal.signal(handled, previous)
     print(json.dumps(result, indent=2, sort_keys=True))
     if live_enrollment and result.get("enrollment_succeeded") is not True:
         return 1

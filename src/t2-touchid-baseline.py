@@ -38,6 +38,19 @@ class BaselineCommandError(RuntimeError):
     pass
 
 
+def public_summary(operation_kind: str, identity_count: int) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "operation_kind": operation_kind,
+        "identity_count": identity_count,
+        "baseline_reconciled": True,
+        "same_connection_enrollment_ready": False,
+        "journal_created": True,
+        "identifiers_redacted": True,
+        "mutation_performed": False,
+    }
+
+
 def assignments(path: Path) -> dict[str, str]:
     values = {}
     for line in path.read_text().splitlines():
@@ -244,17 +257,9 @@ def main() -> int:
         )
         print(
             json.dumps(
-                {
-                    "schema_version": 1,
-                    "operation_id": operation_id,
-                    "operation_kind": args.operation_kind,
-                    "identity_count": len(baseline["identity_records"]),
-                    "baseline_reconciled": True,
-                    "same_connection_enrollment_ready": False,
-                    "journal_created": True,
-                    "identifiers_redacted": True,
-                    "mutation_performed": False,
-                },
+                public_summary(
+                    args.operation_kind, len(baseline["identity_records"])
+                ),
                 indent=2,
                 sort_keys=True,
             )
