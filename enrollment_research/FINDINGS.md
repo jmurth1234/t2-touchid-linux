@@ -5276,6 +5276,17 @@ no UI feedback, sends no continue, and leaves enrollment active. All other
 unexpected types/versions still freeze, now with a controlled numeric diagnostic
 so no raw event or biometric payload is disclosed.
 
+The fifth approved attempt crossed that boundary and froze on version-1
+`0xe3ff800a`; fresh stable reconciliation again proved no identity or Catacomb
+delta. This is the matching daemon's already recovered SKS lock-state branch.
+It requires version 1 and at least six payload bytes, reads a 32-bit Apple user
+ID and 16-bit state, and routes the event only to analytics and structured
+logging. The enrollment reducer now mirrors that exact minimum boundary and
+requires the event's user to equal the operation's pinned Apple user before
+ignoring it as deduplicated telemetry. It emits no feedback, sends no continue,
+and cannot complete enrollment. A short, wrong-version, or cross-user record
+still freezes the operation.
+
 The incident also closed a recovery gap. The broker now blocks new live
 enrollment while any mutation journal is unfinished. Its dedicated recovery
 mode can close exactly one outcome-unknown attempt only on a different Bridge

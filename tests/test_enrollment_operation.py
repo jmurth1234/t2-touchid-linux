@@ -77,6 +77,13 @@ class EnrollmentOperationTests(unittest.TestCase):
         result_payload = (501).to_bytes(4, "little") + identity_uuid + bytes(20)
         transport = FakeTransport(
             [
+                raw_event(
+                    8,
+                    protocol.SERVICE_SKS_LOCK_STATE,
+                    1,
+                    0,
+                    protocol.SKS_LOCK_STATE_PAYLOAD.pack(501, 0x228),
+                ),
                 raw_event(9, protocol.SERVICE_STATISTICS, 1, 0, bytes(28)),
                 raw_event(10, protocol.SERVICE_STATUS, 1, 263),
                 raw_event(

@@ -257,6 +257,14 @@ so the reducer now deduplicates and ignores only that proven telemetry type.
 Every other unexpected envelope/version remains fail-closed, and its numeric
 type/version is included in the controlled diagnostic for the next boundary.
 
+The fifth approved run crossed statistics handling and froze on version-1
+`0xe3ff800a`; stable reconciliation again proved no persistent delta. Exact
+matching-daemon code identifies this as an SKS lock-state notification, accepts
+at least six payload bytes (32-bit Apple user ID plus 16-bit state), and sends it
+only to analytics/logging. The reducer now ignores that telemetry only after
+validating its version, minimum shape, and equality to the operation's pinned
+Apple user. It never emits enrollment feedback or sends continue for this type.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,

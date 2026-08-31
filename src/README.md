@@ -223,7 +223,7 @@ local store, sensor readiness, operation lock, same-connection E0, and capacity.
 The live branch additionally requires explicit live-fingerprint and local-store
 mutation acknowledgements, derives all security subjects from protected runtime
 state, retains one Bridge lease through E3, and provides cancellation/audio
-feedback. Its preflight has passed on the target hardware. Four explicitly
+feedback. Its preflight has passed on the target hardware. Five explicitly
 approved live runs reached password-bound E1, then conservatively stopped
 outcome-unknown while the adapter learned the real Bridge reply/event variants;
 fresh stable read-back after each proved no identity or Catacomb delta. The
@@ -242,9 +242,13 @@ corrected common parser and stopped on another service envelope. The exact
 non-mutating control already proves type `0xe3ff8004` statistics share this
 stream during normal operations, so the reducer now ignores only version-1
 statistics without feedback or state advancement; all other non-enrollment
-types remain fail-closed and are reported numerically. Live enrollment refuses
-to start while an earlier mutation journal remains unfinished. Any next live
-attempt remains explicitly operator-gated.
+types remained fail-closed and are reported numerically. The fifth run then
+exposed version-1 `0xe3ff800a`. Exact matching-daemon disassembly requires at
+least a 32-bit user ID plus 16-bit SKS state and routes the record only to
+analytics/logging. The reducer now ignores it only after validating that shape
+and the operation's pinned Apple user; it sends no feedback or continue. Live
+enrollment refuses to start while an earlier mutation journal remains
+unfinished. Any next live attempt remains explicitly operator-gated.
 
 The typed journal also defines `E4_POST_REBOOT_VERIFIED` for a successful
 identity. It is accepted only after E3, on both a different Linux boot UUID and

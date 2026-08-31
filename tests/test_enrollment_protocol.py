@@ -174,6 +174,59 @@ class EnrollmentProtocolTests(unittest.TestCase):
                         event(1, enrollment.SERVICE_STATISTICS, version, 0),
                     )
 
+    def test_sks_lock_state_telemetry_is_validated_and_ignored(self):
+        machine = self.machine()
+        payload = enrollment.SKS_LOCK_STATE_PAYLOAD.pack(501, 0x228)
+        transition = self.accept(
+            machine,
+            event(1, enrollment.SERVICE_SKS_LOCK_STATE, 1, 0, payload),
+        )
+        self.assertEqual(
+            transition.action, enrollment.EnrollmentAction.IGNORE_TELEMETRY
+        )
+        self.assertFalse(transition.continue_required)
+        self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
+
+        # The matching daemon requires at least six bytes and ignores trailing
+        # fields, so the reducer mirrors that recovered boundary.
+        trailing = self.machine()
+        accepted = self.accept(
+            trailing,
+            event(
+                1,
+                enrollment.SERVICE_SKS_LOCK_STATE,
+                1,
+                0,
+                payload + b"future",
+            ),
+        )
+        self.assertEqual(
+            accepted.action, enrollment.EnrollmentAction.IGNORE_TELEMETRY
+        )
+
+    def test_sks_lock_state_telemetry_rejects_wrong_shape_or_user(self):
+        cases = (
+            event(1, enrollment.SERVICE_SKS_LOCK_STATE, 0, 0, bytes(6)),
+            event(1, enrollment.SERVICE_SKS_LOCK_STATE, 2, 0, bytes(6)),
+            event(1, enrollment.SERVICE_SKS_LOCK_STATE, 1, 0, bytes(5)),
+            event(
+                1,
+                enrollment.SERVICE_SKS_LOCK_STATE,
+                1,
+                0,
+                enrollment.SKS_LOCK_STATE_PAYLOAD.pack(502, 0),
+            ),
+        )
+        for value in cases:
+            with self.subTest(version=value.version, length=len(value.payload)):
+                machine = self.machine()
+                with self.assertRaisesRegex(
+                    enrollment.EnrollmentProtocolError,
+                    "invalid SKS lock-state telemetry event",
+                ):
+                    self.accept(machine, value)
+                self.assertEqual(machine.state, enrollment.EnrollmentState.FROZEN)
+
     def test_terminal_failures_remain_distinct_and_67_is_generic(self):
         cases = {
             66: (enrollment.EnrollmentAction.CANCELLED, enrollment.EnrollmentState.CANCELLED),

@@ -21,9 +21,11 @@ BRIDGE_SERVICE_STATUS = 0xE3FF8000
 SERVICE_STATUS = 0xE3FF8001
 SERVICE_ENROLLMENT_RESULT = 0xE3FF8003
 SERVICE_STATISTICS = 0xE3FF8004
+SERVICE_SKS_LOCK_STATE = 0xE3FF800A
 SERVICE_ACCESSORY_AUTHORIZATION = 0xE3FF800E
 SERVICE_HEADER = struct.Struct("<QIIQ")
 STATUS_PAYLOAD_HEADER = struct.Struct("<I4xQ")
+SKS_LOCK_STATE_PAYLOAD = struct.Struct("<IH")
 AUTH_DATA_SIZE = 40
 ACM_EXTERNAL_FORM_SIZE = 16
 BUILTIN_GROUPS = frozenset((bytes(20), struct.pack("<I16x", 1)))
@@ -239,6 +241,21 @@ def validate_status_payload(event: ServiceEvent) -> None:
         raise EnrollmentProtocolError("status payload length is inconsistent")
 
 
+def validate_sks_lock_state_payload(
+    event: ServiceEvent, *, expected_user_id: int
+) -> None:
+    """Validate matching-daemon SKS telemetry without retaining its state."""
+    if event.version != 1:
+        raise EnrollmentProtocolError("unsupported SKS lock-state event version")
+    if len(event.payload) < SKS_LOCK_STATE_PAYLOAD.size:
+        raise EnrollmentProtocolError("SKS lock-state payload is truncated")
+    user_id, _lock_state = SKS_LOCK_STATE_PAYLOAD.unpack_from(event.payload)
+    if user_id != expected_user_id:
+        raise EnrollmentProtocolError(
+            "SKS lock-state event belongs to another Apple user"
+        )
+
+
 class EnrollmentStateMachine:
     """Conservative one-operation enrollment event reducer."""
 
@@ -309,6 +326,22 @@ class EnrollmentStateMachine:
         # these on the same callback stream during a normal match, and they do
         # not advance, complete, or select an enrollment identity.
         if event.envelope_type == SERVICE_STATISTICS and event.version == 1:
+            return EnrollmentTransition(EnrollmentAction.IGNORE_TELEMETRY, self.state)
+        # Matching macOS accepts a version-1 record containing at least a
+        # uint32 Apple user ID and uint16 SKS state, then only updates analytics
+        # and logs. It neither advances nor terminates enrollment. Bind even
+        # this ambient telemetry to the operation's pinned Apple user before
+        # ignoring it; malformed or cross-user records remain fail-closed.
+        if event.envelope_type == SERVICE_SKS_LOCK_STATE:
+            try:
+                validate_sks_lock_state_payload(
+                    event, expected_user_id=self.expected_user_id
+                )
+            except EnrollmentProtocolError as error:
+                self.state = EnrollmentState.FROZEN
+                raise EnrollmentProtocolError(
+                    "invalid SKS lock-state telemetry event"
+                ) from error
             return EnrollmentTransition(EnrollmentAction.IGNORE_TELEMETRY, self.state)
         if event.envelope_type != SERVICE_STATUS or event.version != 1:
             self._freeze(
