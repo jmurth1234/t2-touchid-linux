@@ -140,6 +140,18 @@ unbounded sizes, length drift, immutable complete buffers, and unexpected
 confirm output. They do not interpret the still-opaque v2 descriptor and do
 not open BridgeXPC or expose a command.
 
+`t2_catacomb_bridge.py` is the next bounded composition layer. A future broker
+must inject an already-open exclusive Bridge lease; this module creates no
+socket and has no CLI. It pins one canonical connection-generation UUID,
+requires an exact two-item `[status, data]` reply with no service events, and
+drives only `idle -> prepared -> completed -> confirmed`. A disconnect,
+generation change, malformed reply, capacity violation, nonzero command status,
+or unexpected event permanently poisons the adapter, so an ambiguous component
+cannot be retried. The complete blob is converted immediately to a wipeable
+`bytearray`. Integration tests compose this adapter with the typed persistence
+journal and crash-safe host store; malformed complete output becomes durable
+`CATACOMB_PERSISTENCE_OUTCOME_UNKNOWN`.
+
 `t2_enrollment_reconciliation.py` is the pure E3 classifier. It accepts only a
 stable same-generation SEP inventory and a strict host Catacomb read-back,
 requires the mapping, account, bag, existing identities, entity numbers,

@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import t2_catacomb_codec as codec
+import t2_catacomb_bridge as bridge
 import t2_catacomb_store as store_module
 import t2_enrollment_journal as enrollment
 import t2_enrollment_persistence_operation as operation
@@ -35,6 +36,28 @@ class FakeTransport:
     def confirm(self, descriptor):
         self.calls.append(("confirm", descriptor))
         return 5 if self.fail_confirm else 0
+
+
+class FakeBridgeLease:
+    def __init__(self, connection_generation, replies=None):
+        self.connection_generation = connection_generation
+        self.calls = []
+        if replies is None:
+            replies = [
+                ([0, (32).to_bytes(4, "little")], []),
+                ([0, b"LTFC" + b"U" * 28], []),
+                ([0, b""], []),
+                ([0, (32).to_bytes(4, "little")], []),
+                ([0, b"LTFC" + b"M" * 28], []),
+                ([0, b""], []),
+            ]
+        self.replies = iter(replies)
+
+    def biometric_command(
+        self, command, *, version, value, data, output_capacity
+    ):
+        self.calls.append((command, version, value, data, output_capacity))
+        return next(self.replies)
 
 
 class CrashAfterCommitStore:
@@ -153,6 +176,65 @@ class PersistenceOperationTests(unittest.TestCase):
         self.assertTrue(all(not any(value) for value in self.encoded_buffers))
         self.assertFalse((self.root / "prepare").exists())
         self.assertFalse((self.root / "commit").exists())
+
+    def test_operation_composes_with_generation_pinned_bridge_adapter(self):
+        generation = baseline()["connection_generation"]
+        lease = FakeBridgeLease(generation)
+        transport = bridge.CatacombBridgeTransport(
+            lease,
+            protocol_version=2,
+            connection_generation=generation,
+        )
+        result = operation.run(
+            self.journal,
+            self.operation_id,
+            batches=self.specs,
+            transport=transport,
+            encoder=self.encode,
+            store=store_module.CatacombStore(self.root, 501),
+            readback=self.readback,
+        )
+        self.assertEqual(result.phase, enrollment.EnrollmentPhase.PERSISTENCE_READY)
+        self.assertEqual(transport.state, bridge.TransactionState.IDLE)
+        self.assertEqual(
+            [call[0] for call in lease.calls],
+            [0x3D, 0x3E, 0x3F, 0x3D, 0x3E, 0x3F],
+        )
+        self.assertEqual(
+            [call[4] for call in lease.calls], [4, 32, 0, 4, 32, 0]
+        )
+        self.assertTrue(all(not any(value) for value in self.encoded_buffers))
+
+    def test_malformed_bridge_complete_freezes_persistence_as_unknown(self):
+        generation = baseline()["connection_generation"]
+        lease = FakeBridgeLease(
+            generation,
+            [
+                ([0, (32).to_bytes(4, "little")], []),
+                ([0, b"LTFC" + b"X" * 27], []),
+            ],
+        )
+        transport = bridge.CatacombBridgeTransport(
+            lease,
+            protocol_version=2,
+            connection_generation=generation,
+        )
+        with self.assertRaisesRegex(
+            operation.PersistenceOperationError, "reconciliation"
+        ):
+            operation.run(
+                self.journal,
+                self.operation_id,
+                batches=self.specs,
+                transport=transport,
+                encoder=self.encode,
+                store=store_module.CatacombStore(self.root, 501),
+                readback=self.readback,
+            )
+        history = enrollment.read(self.journal)
+        self.assertEqual(history.phase, enrollment.EnrollmentPhase.OUTCOME_UNKNOWN)
+        self.assertEqual(transport.state, bridge.TransactionState.POISONED)
+        self.assertEqual([call[0] for call in lease.calls], [0x3D, 0x3E])
 
     def test_failed_early_confirm_freezes_and_preserves_staged_evidence(self):
         transport = FakeTransport(fail_confirm=True)

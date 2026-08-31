@@ -2684,6 +2684,19 @@ must come from an independent stable inventory/read-back; it is not present in
 the confirm reply. The public pure codec encodes this boundary without parsing
 the still-opaque internal fields of the 24-byte v2 descriptor.
 
+The matching `bkremoted` method
+`performCommand:input:output:capacity:` also fixes the surrounding Bridge
+contract. It submits a four-object command array, requires a two-object reply,
+requires the first object to be a numeric status, and accepts the second only
+as byte data or the bridge nil sentinel. Output is returned to the caller only
+on successful status and when an output pointer was supplied. The new pure
+Bridge adapter therefore requires exact `[status, data]` normalization, no
+interleaved service event, the pinned connection generation before and after
+dispatch, and the command's recovered capacity. It opens no connection itself.
+Once dispatch may have occurred, any deviation poisons that adapter instance
+and is propagated to the typed journal as outcome-unknown; retry on the same
+generation is forbidden.
+
 Thus an enrollment/commit sequence is not governed merely by whichever Linux
 user happens to be current when an event arrives. The SEP state machine and
 each persistence phase retain or restate an explicit biometric user/component.

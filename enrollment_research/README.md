@@ -89,6 +89,15 @@ non-sending codec for opaque 4-byte v1 and 24-byte v2 component descriptors.
 The final SEP component hash is therefore evidence from independent stable
 read-back, not a value invented from the confirm reply.
 
+The hardware-free `t2_catacomb_bridge.py` adapter now joins that codec to the
+already-recovered Bridge command boundary through dependency injection. It
+requires one exclusive, generation-pinned lease and exact event-free Bridge
+replies, enforces one-way prepare/complete/confirm state, and poisons itself
+after any possibly dispatched ambiguity. It intentionally contains no socket,
+connection discovery, authorization callback, or user-facing route. Tests show
+that its malformed/disconnected path also freezes the outer persistence journal
+as outcome-unknown rather than retrying a component.
+
 The pure E3 reconciliation layer is executable too. Given already-collected
 host and same-connection SEP snapshots, it rejects mapping or binding drift,
 removed or multiple identities, changed existing entity numbers, component
