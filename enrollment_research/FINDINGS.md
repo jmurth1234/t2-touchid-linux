@@ -2086,6 +2086,17 @@ bind, unlock, relock, or unload a bag. Those runtime steps must independently
 reconcile the protected mapping with live AKS and Catacomb state before any
 fprintd or mutation route can select a second user.
 
+The transport-free `t2_user_readiness.py` layer now makes the runtime decision
+table executable without exposing those operations. It accepts only a validated
+mapping, independently supplied current Linux-account/keybag/Catacomb evidence,
+and a structurally complete alias observation. Exact alias `-AppleUID`, live bag
+UUID, persistent bindings, explicit capability, and known-safe SKS state are all
+required for `ready`. Alias absence is distinguished from collision; lock and
+before-first-unlock are distinguished from lockout; Catacomb corruption,
+binding drift, and unknown SKS bits enter quarantine. Its output is redacted and
+contains no handle or UUID. It cannot load, bind, unlock, relock, unload, or
+retry anything, so an observation failure cannot accidentally become mutation.
+
 ## Read-only inventory transaction specification
 
 The matching binary exposes enough non-mutating primitives to discover existing

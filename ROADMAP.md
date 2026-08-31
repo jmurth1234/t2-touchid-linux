@@ -76,6 +76,8 @@ evidence, not intent.
 - [x] Promote the live-proven enrollment broker behind a stable subcommand UX.
 - [x] Add a private, versioned multi-user mapping schema with one-to-one Apple
       authority and explicit per-target capabilities.
+- [x] Add a transport-free per-user binding/alias/lock-state readiness
+      classifier with explicit quarantine and password-bootstrap outcomes.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
       verification on the proven machine.
 - [ ] Implement Linux-native enrollment/unenrollment policy for multiple users.

@@ -100,6 +100,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
 - `src/t2-fprintd.py`: verification-only fprintd facade.
 - `src/t2_user_mapping.py`: non-exposed, fail-closed schema for mapping Linux
   accounts to already-provisioned Apple users and explicit capabilities.
+- `src/t2_user_readiness.py`: pure classifier for per-user binding, alias, and
+  lock-state evidence; it emits no AKS operation.
 - `systemd/`: system and audible-feedback units.
 - `pam/`: clamshell-safe Omarchy PAM templates.
 - `tools/macos/`: private export helpers; outputs must never be committed.
@@ -306,6 +308,14 @@ Apple authority across Linux accounts and derives the special alias as
 `-AppleUID`; callers cannot supply an alias. No command consumes this mapping
 yet, because per-user bag activation, relocking, and runtime reconciliation
 must be implemented and proven first.
+
+The accompanying pure readiness classifier already defines the fail-closed
+outcomes for that future runtime: absent aliases require activation and fresh
+read-back; alias/bag collisions, Catacomb corruption, binding drift, and unknown
+lock-state bits quarantine the mapping; lockout and first-unlock states require
+the appropriate password recovery/bootstrap path. Only a fully reconciled
+alias with the expected bag and known-safe lock state is match-ready. This is a
+tested policy model, not a command that loads or unlocks another user's bag.
 
 Rename one current identity label (this does not alter its fingerprint
 template or fprintd's compatibility-slot name):

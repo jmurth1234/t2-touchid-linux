@@ -68,6 +68,16 @@ resolver checks only target mapping and capability. Authenticated-caller and
 delegation policy remain a separate required boundary, so this module is not
 yet connected to fprintd or any live broker.
 
+`t2_user_readiness.py` is the next pure runtime boundary. Given a validated
+mapping plus independently collected Linux-account/keybag/Catacomb and live
+alias evidence, it returns one redacted typed decision. Exact binding and known
+safe SKS state are required for `ready`; an absent alias requests activation,
+device-lock/first-unlock requests password bootstrap, lockout requests recovery,
+and binding collisions, Catacomb corruption, or unknown state bits quarantine
+the mapping. The classifier deliberately has no transport and cannot perform
+the requested next step. This keeps future observation/recovery logic separate
+from AKS mutation and prevents an error return from becoming an implicit retry.
+
 The `t2-touchid-manage` rename path resolves one slot only after that
 reconciliation gate,
 proves its strict archive rewrite changes only the selected label, and binds an
