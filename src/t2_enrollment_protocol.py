@@ -32,7 +32,7 @@ ACM_EXTERNAL_FORM_SIZE = 16
 BUILTIN_GROUPS = frozenset((bytes(20), struct.pack("<I16x", 1)))
 MAX_EVENT_PAYLOAD = 1024 * 1024
 MAX_EVENT_FINGERPRINTS = 64
-EXACT_NOOP_PHASE_STATUSES = frozenset((55, 72, 90))
+EXACT_NOOP_PHASE_STATUSES = frozenset((55, 72, 90, 95))
 
 
 class EnrollmentProtocolError(ValueError):
@@ -402,10 +402,10 @@ class EnrollmentStateMachine:
             )
         if status == 93:
             return EnrollmentTransition(EnrollmentAction.DIRTY_SENSOR, self.state)
-        # Exact macOS 15.7 / 24G830 BiometricKit forwards statuses 55, 72, and
-        # 90 through BKEnrollTouchIDOperation and BKEnrollOperation without a
-        # capture error, progress update, terminal result, or enrollContinue.
-        # The generic BKOperation jump-table sends all three directly to its
+        # Exact macOS 15.7 / 24G830 BiometricKit forwards statuses 55, 72, 90,
+        # and 95 through BKEnrollTouchIDOperation and BKEnrollOperation without
+        # a capture error, progress update, terminal result, or enrollContinue.
+        # The generic BKOperation handler sends all four directly to its
         # common return path. Preserve only these recovered no-ops while
         # retaining fail-closed handling for every other unknown status.
         if status in EXACT_NOOP_PHASE_STATUSES:

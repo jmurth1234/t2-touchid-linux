@@ -156,7 +156,7 @@ class EnrollmentProtocolTests(unittest.TestCase):
         machine = self.machine()
         sequence = 0
         for version in (1, 2):
-            for status in (55, 72, 90):
+            for status in (55, 72, 90, 95):
                 sequence += 1
                 with self.subTest(version=version, status=status):
                     phase = self.accept(

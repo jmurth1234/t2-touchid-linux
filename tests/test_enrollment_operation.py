@@ -93,15 +93,16 @@ class EnrollmentOperationTests(unittest.TestCase):
                 raw_event(12, protocol.SERVICE_STATUS, 2, 72),
                 raw_event(13, protocol.SERVICE_STATUS, 2, 64),
                 raw_event(14, protocol.SERVICE_STATUS, 2, 90),
+                raw_event(15, protocol.SERVICE_STATUS, 2, 95),
                 raw_event(
-                    15,
+                    16,
                     protocol.SERVICE_STATUS,
                     2,
                     263,
                     protocol.STATUS_PAYLOAD_HEADER.pack(263, 4) + bytes(4),
                 ),
                 raw_event(
-                    16,
+                    17,
                     protocol.SERVICE_ENROLLMENT_RESULT,
                     2,
                     0,

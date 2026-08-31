@@ -367,6 +367,13 @@ lower status after contact. Matching host dispatch removes the envelope version
 before the same BiometricKit handler, so version 2 is now allowed to reach only
 the already recovered ordinal switch; every unknown ordinal still fails closed.
 
+The next approved run reached status 95 after contact. Stable recovery again
+proved no persistent delta, and an immediate second invocation was correctly
+blocked by the unfinished-operation gate. In exact 24G830 BiometricKit, 95
+bypasses Touch ID capture handling, enrollment progress/terminal handling, and
+the generic special cases before returning without a callback or command. It is
+now an explicit silent phase no-op for either supported envelope version.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,
