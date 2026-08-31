@@ -5160,6 +5160,17 @@ process boundaries.
   uncertainty is the final biometric consumer's acceptance and replay/one-shot
   semantics for the mode-0 externalized credential set. A mode-1 producer is
   optional historical/API research, not a blocker for this path.
+
+The first non-live integration step is now executable. A generation-pinned
+Bridge enrollment adapter accepts only an injected exclusive lease, issues the
+exact `0x03`/`0x0e`/`0x0c` start/continue/cancel sequence, queues only validated
+five-item service callbacks, and poisons itself on connection drift, malformed
+reply/event data, disconnect, or a rejected active-operation command. An
+integration test drives the typed E1/E2 operation through progress, continue,
+and a provisional identity using that adapter on one canonical generation. No
+socket constructor or live enrollment command is exposed; the remaining host
+integration is the one-owner lease that collects E0 and then runs authorization,
+enrollment, persistence, and cleanup without changing connections.
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.
 - Treat producer-side decomposition of generic enrollment failure 67 as

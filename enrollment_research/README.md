@@ -148,11 +148,13 @@ Apple UID. This proves authorization production, but it neither performs nor
 exposes enrollment and is not a general ACM command interface.
 
 The recovered enrollment framing and asynchronous event matrix are now encoded
-in a pure, non-sending protocol module. It accepts only the broker's 16-byte
-mode-0 ACM external form, wipes its request buffer, deduplicates and sequences
-events within one connection/operation generation, never treats progress as
-success, and stops at `SEP-identity-observed`. It is deliberately not wired to
-BridgeXPC, fprintd enrollment, or Catacomb mutation.
+in a pure protocol module and a generation-pinned injected Bridge adapter. They
+accept only the broker's 16-byte mode-0 ACM external form, wipe the request
+buffer, emit only exact start/continue/cancel commands, validate and sequence
+service events within one connection/operation generation, never treat progress
+as success, and stop at `SEP-identity-observed`. The adapter permanently poisons
+itself after an ambiguous dispatch or receive. It has no live socket producer,
+fprintd enrollment route, or Catacomb mutation command.
 
 The proven machine's copied macOS archive now passes the executable fixture
 check for the user, master, and bio-lockout components: original strict schemas,

@@ -115,6 +115,16 @@ into `ENROLL_OUTCOME_UNKNOWN`. It must run inside the
 reconciliation-required failure. No BridgeXPC implementation or command-line
 entry point is supplied, so this still cannot start enrollment on hardware.
 
+`t2_enrollment_bridge.py` supplies the first concrete boundary beneath that
+operation core without opening a socket. It accepts only an already-open,
+exclusive Bridge lease whose canonical connection-generation UUID matches E0;
+emits exact start `0x03`, continue `0x0e`, and cancel `0x0c` commands; validates
+and queues the recovered five-item service callbacks; and requires empty
+command output. A generation change, malformed reply/event, disconnect, or
+nonzero active-operation reply permanently poisons the adapter. It composes
+with the journaled enrollment core in tests, but no live lease, baseline-to-
+authorization coordinator, or enrollment CLI is exposed.
+
 `t2_enrollment_persistence_journal.py` makes the recovered persistence ordering
 mandatory after a provisional identity. An immutable plan contains exactly a
 user-then-master primary batch and, optionally, one separate bio-lockout batch.
