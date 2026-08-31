@@ -262,7 +262,8 @@ static int unlock_keybag(int fd, const char *session_text,
 	got = read(tty, secret, sizeof(secret) - 1);
 	if (!password_stdin) {
 		tcsetattr(tty, TCSAFLUSH, &old_term);
-		(void)write(tty, "\n", 1);
+		if (write(tty, "\n", 1) != 1)
+			perror("write newline");
 	}
 	if (got <= 0) {
 		fprintf(stderr, "failed to read password\n");
@@ -374,7 +375,8 @@ static int read_password_input(char secret[129], size_t *length_out,
 	got = read(input, secret, 128);
 	if (!password_stdin) {
 		(void)tcsetattr(input, TCSAFLUSH, &old_term);
-		(void)write(input, "\n", 1);
+		if (write(input, "\n", 1) != 1)
+			perror("write newline");
 	}
 	if (got <= 0) {
 		fprintf(stderr, "failed to read password\n");
