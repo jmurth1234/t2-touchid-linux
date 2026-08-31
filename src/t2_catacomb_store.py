@@ -238,6 +238,10 @@ class CatacombStore:
     def cross_commit_boundary(self, expected: dict[str, str], hook: FailureHook | None = None) -> None:
         self._validate_prepare(expected)
         os.rename(self.root / "prepare", self.root / "commit")
+        # The directory rename is the irreversible boundary.  Persist that
+        # boundary before any old root component can be unlinked, so recovery
+        # can never mistake a committed transaction for discardable prepare.
+        self._sync_directory(self.root)
         if hook:
             hook("prepare_renamed_to_commit")
         self._roll_forward(expected, hook)
@@ -255,6 +259,11 @@ class CatacombStore:
                 if hook:
                     hook(f"root_unlinked:{name}")
             os.rename(source, destination)
+            # This rename crosses directories.  Persist both the removal from
+            # commit/ and the replacement in the root before reporting the
+            # component as promoted or advancing to the next component.
+            self._sync_directory(commit)
+            self._sync_directory(self.root)
             if hook:
                 hook(f"component_promoted:{name}")
         commit.rmdir()
@@ -272,6 +281,7 @@ class CatacombStore:
                 (prepare / name).unlink()
                 if hook:
                     hook(f"prepare_unlinked:{name}")
+            self._sync_directory(prepare)
             prepare.rmdir()
             self._sync_directory(self.root)
             action = "prepare-discarded"

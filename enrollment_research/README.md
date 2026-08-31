@@ -80,6 +80,11 @@ transport and temporary host-store interfaces, wipes its secure and encoded
 buffers, and freezes post-dispatch transport, codec, host-store, journal, or
 read-back ambiguity as outcome-unknown. Concrete generation-pinned Catacomb and
 bio-lockout adapters are composed only by the explicitly gated broker.
+The Linux-local store now also rehearses a real process exit at the durable
+`prepare/` to `commit/` boundary. It fsyncs that root-directory rename before
+any old component is removed, and fsyncs both directories after each subsequent
+cross-directory promotion. Reopening the store after the child exits proves the
+validated `commit/` transaction rolls forward to one complete new generation.
 
 The matching daemon disassembly also fixes the reply contract precisely:
 prepare `0x3d` returns exactly one 32-bit expected secure-blob length, complete
@@ -117,6 +122,12 @@ opens a fresh Bridge generation, and appends a distinct no-change E3 milestone
 only when the stable host/SEP snapshot still equals E0. It refuses automatic
 recovery if a new identity or any persistent delta is visible, and the live
 path refuses a new operation while an earlier journal is unfinished.
+After a successful mutation, the Linux-local Catacomb—not the older copied
+macOS archive—is the current host baseline for a later enrollment. The archive
+remains the immutable recovery reference; opening advanced local state requires
+strict decoding, unchanged account/keybag bindings, and equality with a fresh
+stable SEP identity inventory. This prevents both accidental rollback to the
+backup and false rejection of a legitimate second enrollment.
 
 E4 post-reboot verification is both a typed journal gate and a read-only broker
 mode, `--verify-post-reboot`. A successful enrollment can cross it only on a

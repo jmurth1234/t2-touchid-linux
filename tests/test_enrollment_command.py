@@ -95,10 +95,10 @@ class EnrollmentCommandTests(unittest.TestCase):
                     MODULE, "select_backup", return_value=backup
                 ) as select_backup,
                 mock.patch.object(
-                    MODULE.t2_catacomb_local,
-                    "provision_from_backup",
-                    return_value=({}, object()),
-                ) as provision,
+                    MODULE,
+                    "open_current_or_provision",
+                    return_value=({}, object(), False),
+                ) as current_store,
                 mock.patch.object(
                     MODULE.t2_catacomb_store,
                     "CatacombStore",
@@ -183,16 +183,17 @@ class EnrollmentCommandTests(unittest.TestCase):
             if status_only:
                 select_backup.assert_not_called()
                 warm_sensor.assert_not_called()
-                provision.assert_not_called()
+                current_store.assert_not_called()
                 self.assertEqual(lifecycle, ["lock"])
             elif post_reboot:
                 select_backup.assert_not_called()
-                provision.assert_not_called()
+                current_store.assert_not_called()
                 open_store.assert_called_once_with(
                     store_root, CONFIGURATION["apple_uid"]
                 )
                 self.assertEqual(lifecycle[:2], ["warm", "lock"])
             else:
+                current_store.assert_called_once_with(backup, CONFIGURATION)
                 self.assertEqual(lifecycle[:2], ["warm", "lock"])
             if live:
                 self.assertEqual(lifecycle[2:], ["inhibit", "uninhibit"])
@@ -401,6 +402,99 @@ class EnrollmentCommandTests(unittest.TestCase):
         self.assertNotIn("private-identity", repr(result))
         self.assertNotIn("private-operation", repr(result))
         self.assertEqual(append.call_args.kwargs["linux_boot_uuid"], boot_uuid)
+
+    def test_existing_advanced_local_store_becomes_current_baseline(self):
+        backup_host = {
+            "account_uuid": "account",
+            "bag_uuid": "bag",
+            "host_components": [{"name": "private-metadata"}],
+            "archive_sha256": "a" * 64,
+        }
+        current = {
+            "account_uuid": "account",
+            "bag_uuid": "bag",
+            "identity_records": [{"new": "identity"}],
+        }
+        store = object()
+        with (
+            mock.patch.object(MODULE.os.path, "lexists", return_value=True),
+            mock.patch.object(
+                MODULE.t2_catacomb_local,
+                "read_backup_components",
+                return_value=(backup_host, {"private": b"backup"}),
+            ),
+            mock.patch.object(
+                MODULE.t2_catacomb_store, "CatacombStore", return_value=store
+            ),
+            mock.patch.object(
+                MODULE.t2_enrollment_finalizer,
+                "read_local_host_snapshot",
+                return_value=current,
+            ) as read_current,
+        ):
+            host, opened, provisioned = MODULE.open_current_or_provision(
+                Path("/private/backup.tar.gz"), CONFIGURATION
+            )
+        self.assertIs(opened, store)
+        self.assertFalse(provisioned)
+        self.assertEqual(host["identity_records"], [{"new": "identity"}])
+        self.assertEqual(host["archive_sha256"], "a" * 64)
+        read_current.assert_called_once_with(
+            store,
+            {
+                "apple_uid": 501,
+                "host_components": [{"name": "private-metadata"}],
+            },
+        )
+
+    def test_existing_local_store_rejects_account_or_keybag_binding_drift(self):
+        backup_host = {
+            "account_uuid": "account",
+            "bag_uuid": "bag",
+            "host_components": [],
+            "archive_sha256": "a" * 64,
+        }
+        with (
+            mock.patch.object(MODULE.os.path, "lexists", return_value=True),
+            mock.patch.object(
+                MODULE.t2_catacomb_local,
+                "read_backup_components",
+                return_value=(backup_host, {}),
+            ),
+            mock.patch.object(MODULE.t2_catacomb_store, "CatacombStore"),
+            mock.patch.object(
+                MODULE.t2_enrollment_finalizer,
+                "read_local_host_snapshot",
+                return_value={"account_uuid": "changed", "bag_uuid": "bag"},
+            ),
+            self.assertRaisesRegex(MODULE.EnrollmentCommandError, "binding"),
+        ):
+            MODULE.open_current_or_provision(
+                Path("/private/backup.tar.gz"), CONFIGURATION
+            )
+
+    def test_missing_local_store_is_provisioned_from_recovery_backup(self):
+        store = object()
+        host = {"private": "baseline"}
+        with (
+            mock.patch.object(MODULE.os.path, "lexists", return_value=False),
+            mock.patch.object(
+                MODULE.t2_catacomb_local,
+                "provision_from_backup",
+                return_value=(host, store),
+            ) as provision,
+        ):
+            opened_host, opened_store, provisioned = (
+                MODULE.open_current_or_provision(
+                    Path("/private/backup.tar.gz"), CONFIGURATION
+                )
+            )
+        self.assertIs(opened_host, host)
+        self.assertIs(opened_store, store)
+        self.assertTrue(provisioned)
+        provision.assert_called_once_with(
+            Path("/private/backup.tar.gz"), MODULE.STORE_ROOT, 501
+        )
 
     def test_unfinished_journal_blocks_a_new_live_operation(self):
         with tempfile.TemporaryDirectory() as directory:

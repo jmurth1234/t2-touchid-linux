@@ -315,6 +315,42 @@ def _build_preflight_baseline(
     )
 
 
+def open_current_or_provision(
+    backup: Path, configuration: dict[str, object]
+) -> tuple[dict[str, object], t2_catacomb_store.CatacombStore, bool]:
+    """Open the authoritative local generation or provision its first copy."""
+    apple_user_id = configuration["apple_uid"]
+    if not os.path.lexists(STORE_ROOT):
+        host, store = t2_catacomb_local.provision_from_backup(
+            backup, STORE_ROOT, apple_user_id
+        )
+        return host, store, True
+
+    backup_host, _backup_components = t2_catacomb_local.read_backup_components(
+        backup, apple_user_id
+    )
+    store = t2_catacomb_store.CatacombStore(STORE_ROOT, apple_user_id)
+    current = t2_enrollment_finalizer.read_local_host_snapshot(
+        store,
+        {
+            "apple_uid": apple_user_id,
+            "host_components": backup_host["host_components"],
+        },
+    )
+    if (
+        current["account_uuid"] != backup_host["account_uuid"]
+        or current["bag_uuid"] != backup_host["bag_uuid"]
+    ):
+        raise EnrollmentCommandError(
+            "local Catacomb account or keybag binding differs from its backup"
+        )
+    # The original archive remains the immutable recovery anchor.  Its
+    # component contents are not the current baseline after a successful
+    # enrollment; the independently decoded local store above is.
+    current["archive_sha256"] = backup_host["archive_sha256"]
+    return current, store, False
+
+
 def run_preflight(
     configuration: dict[str, object], host_inventory: dict[str, object], backup: Path
 ) -> dict[str, object]:
@@ -728,9 +764,8 @@ def main() -> int:
                     raise EnrollmentCommandError(
                         "protected Catacomb backup selection was skipped"
                     )
-                store_preexisting = os.path.lexists(STORE_ROOT)
-                host_inventory, store = t2_catacomb_local.provision_from_backup(
-                    backup, STORE_ROOT, configuration["apple_uid"]
+                host_inventory, store, store_provisioned = open_current_or_provision(
+                    backup, configuration
                 )
                 if args.preflight_only:
                     result = run_preflight(configuration, host_inventory, backup)
@@ -751,7 +786,7 @@ def main() -> int:
                             lambda: cancellation.is_set()
                             or inhibitor.poll() is not None,
                         )
-                result["local_store_provisioned"] = not store_preexisting
+                result["local_store_provisioned"] = store_provisioned
         finally:
             os.close(lock_descriptor)
     except (

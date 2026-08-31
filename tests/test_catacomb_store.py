@@ -107,6 +107,61 @@ class CatacombStoreTests(unittest.TestCase):
         self.assertEqual(self.store.recover(hashes), "commit-rolled-forward")
         self.assert_root_is(self.new)
 
+    def test_commit_boundary_is_directory_synced_before_observation(self):
+        hashes = self.store.stage(self.new)
+        synced = []
+        original_sync = self.store._sync_directory
+
+        def record_sync(path):
+            original_sync(path)
+            synced.append(path.name)
+
+        def observe(event):
+            if event == "prepare_renamed_to_commit":
+                self.assertEqual(synced[-1], "catacomb")
+
+        self.store._sync_directory = record_sync
+        self.store.cross_commit_boundary(hashes, observe)
+        self.assert_root_is(self.new)
+
+    def test_each_cross_directory_promotion_is_synced_before_observation(self):
+        hashes = self.store.stage(self.new)
+        synced = []
+        original_sync = self.store._sync_directory
+
+        def record_sync(path):
+            original_sync(path)
+            synced.append(path.name)
+
+        def observe(event):
+            if event.startswith("component_promoted:"):
+                self.assertEqual(synced[-2:], ["commit", "catacomb"])
+
+        self.store._sync_directory = record_sync
+        self.store.cross_commit_boundary(hashes, observe)
+        self.assert_root_is(self.new)
+
+    def test_process_exit_at_durable_commit_boundary_rolls_forward(self):
+        hashes = self.store.stage(self.new)
+        child = os.fork()
+        if child == 0:
+            try:
+                self.store.cross_commit_boundary(
+                    hashes,
+                    lambda event: os._exit(73)
+                    if event == "prepare_renamed_to_commit"
+                    else None,
+                )
+            except BaseException:
+                os._exit(74)
+            os._exit(75)
+        _pid, status = os.waitpid(child, 0)
+        self.assertTrue(os.WIFEXITED(status))
+        self.assertEqual(os.WEXITSTATUS(status), 73)
+        recovered = store_module.CatacombStore(self.root, 501)
+        self.assertEqual(recovered.recover(hashes), "commit-rolled-forward")
+        self.assert_root_is(self.new)
+
     def test_crash_after_root_unlink_rolls_forward(self):
         hashes = self.store.stage(self.new)
 
@@ -144,6 +199,20 @@ class CatacombStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(store_module.CatacombStoreError, "does not match"):
             self.store.recover(expected)
         self.assertTrue((self.root / "prepare").exists())
+        self.assert_root_is(self.old)
+
+    def test_prepare_discard_syncs_removed_entries_before_directory_removal(self):
+        hashes = self.store.stage(self.new)
+        synced = []
+        original_sync = self.store._sync_directory
+
+        def record_sync(path):
+            original_sync(path)
+            synced.append(path.name)
+
+        self.store._sync_directory = record_sync
+        self.assertEqual(self.store.recover(hashes), "prepare-discarded")
+        self.assertEqual(synced[-2:], ["prepare", "catacomb"])
         self.assert_root_is(self.old)
 
     def test_unexpected_prepare_entry_stops_recovery_without_changes(self):

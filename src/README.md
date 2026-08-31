@@ -169,6 +169,13 @@ before the final SEP confirm, and secure/archive bytearrays are wiped on every
 exit. A transport, codec, store, journal, or read-back ambiguity after SEP
 dispatch becomes `CATACOMB_PERSISTENCE_OUTCOME_UNKNOWN`. Tests use only fake
 transport and temporary Catacomb copies; no live adapter or command exists.
+The Linux-local store makes its recovery direction durable with stricter fsync
+ordering than the minimum host sequence: it syncs the root immediately after
+`prepare/` becomes `commit/`, then syncs both the source `commit/` directory and
+the destination root after every cross-directory component promotion. A real
+forked child exits at the commit boundary in the test suite; a fresh store
+instance proves that recovery rolls the transaction forward to the complete new
+generation.
 
 `t2_catacomb_protocol.py` captures the exact non-sending command boundary
 recovered from the matching daemon: prepare `0x3d` returns one 32-bit expected
@@ -222,6 +229,13 @@ enrollment is exposed only through a privileged, explicitly acknowledged broker.
 `t2-touchid-enroll-test.py` is that experimental broker. `--preflight-only`
 cannot enter ACM or enrollment; it verifies the sole protected backup, private
 local store, sensor readiness, operation lock, same-connection E0, and capacity.
+The original macOS archive remains an immutable recovery anchor, not a frozen
+copy of current state: after a successful mutation, later preflight/enrollment
+decodes the complete local Catacomb as the current host baseline, requires its
+account and keybag bindings to remain equal to the protected backup, and then
+requires that current identity set to equal stable SEP inventory. This permits
+subsequent enrollments without accepting binding drift or overwriting advanced
+state with the older archive.
 `--status-only` does not warm hardware or provision the store; under the same
 operation lock it reports only redacted unfinished-phase counts, whether live
 enrollment is blocked, whether exactly one outcome-unknown journal is a
