@@ -303,6 +303,8 @@ def classify(
             )
 
     snapshot_model = {
+        "account_uuid": host["account_uuid"],
+        "bag_uuid": host["bag_uuid"],
         "identity_records": sorted(live_after),
         "catacomb": {"uuid": catacomb["uuid"], "hash": catacomb["hash"]},
         "host_components": [after_components[name] for name in sorted(after_components)],

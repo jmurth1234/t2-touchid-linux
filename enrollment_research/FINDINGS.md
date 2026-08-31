@@ -1266,6 +1266,16 @@ then subjected to the success rules. This is not live E3 completion: the
 classifier does not collect snapshots, commit Catacombs, manufacture an
 attestation, or connect to BridgeXPC.
 
+`E4_POST_REBOOT_VERIFIED` is now enforced as a final typed journal state for a
+successfully reconciled identity. It requires both a different Linux boot UUID
+and a different Bridge connection generation, while the exact E3 snapshot
+digest, protected mapping, account UUID, bag UUID, identity UUID, and protocol
+remain unchanged. The snapshot digest itself includes the account and bag
+bindings. Double collection, host/SEP identity equality, binding preservation,
+and keybag runtime revalidation must all be literal true. Generic failures have
+no identity and cannot reach E4. This is an offline validation rule only; no
+collector, compactor, reboot action, or mapping-publication action is supplied.
+
 ### Single and batched deletion milestones
 
 Deletion starts from the same reconciled baseline plus an immutable target UUID

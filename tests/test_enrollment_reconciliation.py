@@ -127,6 +127,8 @@ class EnrollmentReconciliationTests(unittest.TestCase):
             component["name"]: component for component in host["host_components"]
         }
         model = {
+            "account_uuid": host["account_uuid"],
+            "bag_uuid": host["bag_uuid"],
             "identity_records": identity_records,
             "catacomb": {
                 "uuid": live["catacomb"]["uuid"],
@@ -158,6 +160,63 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                 mapping_generation=baseline()["mapping_generation"],
             )
         self.assertEqual(result.phase, enrollment_journal.EnrollmentPhase.RECONCILED)
+
+    def test_e4_requires_new_boot_and_exact_e3_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id, identity_uuid = self.create_terminal(
+                directory, identity=True
+            )
+            host, live = self.snapshots(success=True)
+            self.persist(path, operation_id, host, live)
+            reconciled = reconciliation.append_reconciled(
+                path,
+                operation_id,
+                host=host,
+                live=live,
+                mapping_generation=baseline()["mapping_generation"],
+            )
+            evidence = {
+                "linux_boot_uuid": str(uuid.UUID(int=20)),
+                "connection_generation": str(uuid.UUID(int=21)),
+                "bridge_boot_uuid": None,
+                "protocol_version": 2,
+                "mapping_generation": baseline()["mapping_generation"],
+                "account_uuid": baseline()["account_uuid"],
+                "bag_uuid": baseline()["bag_uuid"],
+                "identity_uuid": identity_uuid,
+                "snapshot_sha256": reconciled.reconciled_snapshot_sha256,
+                "double_collection_equal": True,
+                "host_sep_identity_equal": True,
+                "bindings_preserved": True,
+                "keybag_runtime_revalidated": True,
+            }
+            with self.assertRaisesRegex(
+                enrollment_journal.EnrollmentJournalError, "boot"
+            ):
+                enrollment_journal.append_checked(
+                    path,
+                    operation_id,
+                    "E4_POST_REBOOT_VERIFIED",
+                    {
+                        **evidence,
+                        "linux_boot_uuid": baseline()["linux_boot_uuid"],
+                    },
+                )
+            with self.assertRaisesRegex(
+                enrollment_journal.EnrollmentJournalError, "differs"
+            ):
+                enrollment_journal.append_checked(
+                    path,
+                    operation_id,
+                    "E4_POST_REBOOT_VERIFIED",
+                    {**evidence, "snapshot_sha256": "f" * 64},
+                )
+            result = enrollment_journal.append_checked(
+                path, operation_id, "E4_POST_REBOOT_VERIFIED", evidence
+            )
+        self.assertEqual(
+            result.phase, enrollment_journal.EnrollmentPhase.POST_REBOOT_VERIFIED
+        )
 
     def test_identity_reconciliation_requires_completed_persistence_journal(self):
         with tempfile.TemporaryDirectory() as directory:

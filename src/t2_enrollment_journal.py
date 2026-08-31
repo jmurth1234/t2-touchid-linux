@@ -32,6 +32,7 @@ class EnrollmentPhase(Enum):
     PERSISTING = "persisting"
     PERSISTENCE_READY = "persistence-ready"
     RECONCILED = "reconciled"
+    POST_REBOOT_VERIFIED = "post-reboot-verified"
     OUTCOME_UNKNOWN = "outcome-unknown"
 
 
@@ -47,6 +48,8 @@ class EnrollmentHistory:
     terminal_identity_uuid: str | None
     terminal_status: int | None
     persistence: persistence_journal.PersistenceHistory
+    reconciled_snapshot_sha256: str | None
+    post_reboot_linux_boot_uuid: str | None
 
 
 def _exact(value: Any, keys: set[str], field: str) -> dict[str, Any]:
@@ -114,6 +117,8 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
     terminal_identity_uuid: str | None = None
     terminal_status: int | None = None
     persistence = persistence_journal.PersistenceTracker(baseline)
+    reconciled_snapshot_sha256: str | None = None
+    post_reboot_linux_boot_uuid: str | None = None
 
     for record in records[1:]:
         if record.get("operation_id") != operation_id:
@@ -401,7 +406,74 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
                     raise EnrollmentJournalError(
                         "failure reconciliation observed an unexpected identity"
                     )
+            reconciled_snapshot_sha256 = evidence["snapshot_sha256"]
             phase = EnrollmentPhase.RECONCILED
+            continue
+
+        if milestone == "E4_POST_REBOOT_VERIFIED":
+            if (
+                phase is not EnrollmentPhase.RECONCILED
+                or terminal_identity_uuid is None
+            ):
+                raise EnrollmentJournalError("E4 verification is out of order")
+            evidence = _exact(
+                evidence,
+                {
+                    "linux_boot_uuid",
+                    "connection_generation",
+                    "bridge_boot_uuid",
+                    "protocol_version",
+                    "mapping_generation",
+                    "account_uuid",
+                    "bag_uuid",
+                    "identity_uuid",
+                    "snapshot_sha256",
+                    "double_collection_equal",
+                    "host_sep_identity_equal",
+                    "bindings_preserved",
+                    "keybag_runtime_revalidated",
+                },
+                milestone,
+            )
+            for field in (
+                "linux_boot_uuid",
+                "connection_generation",
+                "account_uuid",
+                "bag_uuid",
+                "identity_uuid",
+            ):
+                _uuid(evidence[field], field)
+            if evidence["bridge_boot_uuid"] is not None:
+                _uuid(evidence["bridge_boot_uuid"], "bridge_boot_uuid")
+            _sha256(evidence["mapping_generation"], "mapping_generation")
+            _sha256(evidence["snapshot_sha256"], "snapshot_sha256")
+            if (
+                evidence["linux_boot_uuid"] == baseline["linux_boot_uuid"]
+                or evidence["connection_generation"]
+                == baseline["connection_generation"]
+            ):
+                raise EnrollmentJournalError(
+                    "E4 did not cross a boot and connection boundary"
+                )
+            if (
+                evidence["protocol_version"] != baseline["protocol_version"]
+                or evidence["mapping_generation"] != baseline["mapping_generation"]
+                or evidence["account_uuid"] != baseline["account_uuid"]
+                or evidence["bag_uuid"] != baseline["bag_uuid"]
+                or evidence["identity_uuid"] != terminal_identity_uuid
+                or evidence["snapshot_sha256"] != reconciled_snapshot_sha256
+            ):
+                raise EnrollmentJournalError("E4 state differs from reconciled E3")
+            for field in (
+                "double_collection_equal",
+                "host_sep_identity_equal",
+                "bindings_preserved",
+                "keybag_runtime_revalidated",
+            ):
+                if evidence[field] is not True:
+                    raise EnrollmentJournalError(f"E4 field {field} is not true")
+            post_reboot_linux_boot_uuid = evidence["linux_boot_uuid"]
+            phase = EnrollmentPhase.POST_REBOOT_VERIFIED
             continue
 
         if milestone == "ENROLL_OUTCOME_UNKNOWN":
@@ -456,6 +528,8 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
         terminal_identity_uuid,
         terminal_status,
         persistence.snapshot(),
+        reconciled_snapshot_sha256,
+        post_reboot_linux_boot_uuid,
     )
 
 

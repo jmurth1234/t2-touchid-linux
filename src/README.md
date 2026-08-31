@@ -142,6 +142,14 @@ a new UUID despite that failure, the journal first promotes it to a provisional
 E2 identity. These modules perform no I/O and no persistence themselves, and
 there is still no live producer for the persistence milestones.
 
+The typed journal also defines `E4_POST_REBOOT_VERIFIED` for a successful
+identity. It is accepted only after E3, on both a different Linux boot UUID and
+a different Bridge connection generation, with an exact match to the E3
+snapshot digest (which includes account and bag bindings), protected mapping,
+identity UUID, and protocol. Double collection, host/SEP equality, binding
+checks, and keybag runtime revalidation must all be literal true. No collector
+or automatic reboot is attached to this gate.
+
 The v2 platform field formerly labelled `uid` is the caller's macOS audit
 session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent
 64-bit field is the macOS process-unique ID, not a PID. Both are research-only,

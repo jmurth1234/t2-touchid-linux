@@ -93,6 +93,13 @@ as provisional E2 success before attempting E3. This is a pure classifier: no
 snapshot collector, Catacomb writer, Bridge adapter, or hardware enrollment
 command has been added.
 
+E4 post-reboot verification is now a typed journal gate, not a live command. A
+successful enrollment can cross it only on a genuinely new Linux boot and
+Bridge connection while reproducing the E3 snapshot, mapping, account/bag,
+identity, protocol, host/SEP equality, and keybag-ready state. Failed enrollment
+transactions cannot manufacture E4, and this repository does not trigger the
+required reboot.
+
 ## Current boundary
 
 Existing, already-provisioned Apple users appear protocol-feasible for
