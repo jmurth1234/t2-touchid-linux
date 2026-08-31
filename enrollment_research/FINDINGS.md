@@ -5508,6 +5508,15 @@ The fprintd compatibility device still lists one logical finger name because
 that slot represents “any built-in identity for the configured Apple user”; it
 is not a hardware identity count.
 
+The installed `t2-touchid-identities` read-only management inventory now joins
+the strict committed user Catacomb to a fresh stable SEP double-read under the
+exclusive operation lock. It requires exact equality among local, per-user,
+and global built-in identity sets and an extant SEP Catacomb, then emits only
+current-list slot numbers and local labels. The proven machine reports two
+reconciled slots. UUIDs and entity numbers remain internal so a future rename
+or single-delete command can resolve a slot to an immutable target only after
+acquiring the lock and recollecting the baseline.
+
 The normal live path now handles the observed terminal discrepancy without a
 manual recovery command. A structurally valid result with a mismatched embedded
 owner is journaled only as a redacted terminal witness: its UUID and owner value

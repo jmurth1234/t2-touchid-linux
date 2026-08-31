@@ -53,6 +53,11 @@ stage-isolation diagnostic has passed on the proven machine with SEP status
 zero and the expected 12-byte response, proving password/keybag verification
 before ACM attachment. It does not enroll, delete, or evaluate an ACM policy.
 
+`t2-touchid-identities` is the privacy-safe identity-management inventory. It
+joins the strict committed user Catacomb with a stable live per-user/global SEP
+inventory under the operation lock and emits only numbered slots and local
+labels. It fails closed on any local/live divergence and never exposes UUIDs.
+
 The installed wrapper selects the known positive runtime keybag and requires a
 narrow acknowledgement for this non-ACM path:
 

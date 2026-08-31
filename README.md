@@ -224,6 +224,20 @@ enrollment count. Use `sep_identity_count` from `t2-touchid-inventory` for the
 truthful hardware identity count. Multiple enrolled fingers can therefore all
 match while fprintd continues to list one logical slot.
 
+List the reconciled local labels as numbered management slots:
+
+```sh
+sudo t2-touchid-identities
+```
+
+This command holds the same exclusive operation lock used by enrollment,
+strictly decodes the committed local Catacomb, performs a fresh stable SEP
+double-read, and requires exact equality between the local, configured-user,
+and global built-in identity sets. It prints only current-list slot numbers and
+labels; UUIDs, entities, Catacomb identifiers, and biometric data remain
+redacted. A slot number is valid only for that reconciled invocation and is the
+intended future selector for rename and single-print deletion.
+
 This read-only command performs two exact back-to-back collections and fails if
 the private global/per-user identity records, capacity replies, Catacomb
 UUID/hash/state, or secure-key-store lock state change between them. It also
