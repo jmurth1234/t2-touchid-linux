@@ -58,6 +58,14 @@ joins the strict committed user Catacomb with a stable live per-user/global SEP
 inventory under the operation lock and emits only numbered slots and local
 labels. It fails closed on any local/live divergence and never exposes UUIDs.
 
+The non-CLI rename path resolves one slot only after that reconciliation gate,
+proves its strict archive rewrite changes only the selected label, and binds an
+operation-fresh SEP secure envelope. Its typed journal permits exactly one user
+Catacomb component and records prepare, complete, host-stage, commit, confirm,
+read-back, and post-reboot phases. Every post-dispatch fault becomes
+outcome-unknown; the code is intentionally not exposed as a command until its
+local prepare/commit recovery broker is complete.
+
 The installed wrapper selects the known positive runtime keybag and requires a
 narrow acknowledgement for this non-ACM path:
 

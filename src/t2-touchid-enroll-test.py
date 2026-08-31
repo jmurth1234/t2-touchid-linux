@@ -416,7 +416,18 @@ def enrollment_journals() -> list[
                 "mutation journal directory contains an unexpected entry"
             )
         _private_root_owned(entry, directory=False)
-        found.append((entry, t2_enrollment_journal.read(entry)))
+        records = t2_mutation_journal.read(entry)
+        if not records:
+            raise EnrollmentCommandError("mutation journal is empty")
+        evidence = records[0].get("evidence")
+        if not isinstance(evidence, dict):
+            raise EnrollmentCommandError("mutation journal has no typed baseline")
+        operation_kind = evidence.get("operation_kind")
+        if operation_kind != "enroll":
+            # Other typed mutation brokers own their own state machines and
+            # recovery actions. Enrollment must neither parse nor mutate them.
+            continue
+        found.append((entry, t2_enrollment_journal.validate_history(records)))
     return found
 
 

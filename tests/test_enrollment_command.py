@@ -849,11 +849,40 @@ class EnrollmentCommandTests(unittest.TestCase):
                 mock.patch.object(MODULE, "MUTATION_ROOT", root),
                 mock.patch.object(MODULE, "_private_root_owned"),
                 mock.patch.object(
-                    MODULE.t2_enrollment_journal, "read", return_value=history
+                    MODULE.t2_mutation_journal,
+                    "read",
+                    return_value=[{"evidence": {"operation_kind": "enroll"}}],
+                ),
+                mock.patch.object(
+                    MODULE.t2_enrollment_journal,
+                    "validate_history",
+                    return_value=history,
                 ),
                 self.assertRaisesRegex(MODULE.EnrollmentCommandError, "unfinished"),
             ):
                 MODULE.require_no_unfinished_enrollment()
+
+    def test_non_enrollment_journal_is_routed_to_its_own_broker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            journal = root / "00000000-0000-0000-0000-000000000001.jsonl"
+            journal.touch()
+            with (
+                mock.patch.object(MODULE, "MUTATION_ROOT", root),
+                mock.patch.object(MODULE, "_private_root_owned"),
+                mock.patch.object(
+                    MODULE.t2_mutation_journal,
+                    "read",
+                    return_value=[
+                        {"evidence": {"operation_kind": "delete-one"}}
+                    ],
+                ),
+                mock.patch.object(
+                    MODULE.t2_enrollment_journal, "validate_history"
+                ) as validate,
+            ):
+                self.assertEqual(MODULE.enrollment_journals(), [])
+            validate.assert_not_called()
 
     def test_invalid_identity_name_is_rejected_before_runtime_setup(self):
         arguments = [

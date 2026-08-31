@@ -89,8 +89,13 @@ def _allowed_names(apple_uid: int) -> set[str]:
 class PersistenceTracker:
     """Reconstruct and validate one immutable multi-batch save sequence."""
 
-    def __init__(self, baseline: dict[str, Any]) -> None:
+    def __init__(
+        self, baseline: dict[str, Any], *, plan_kind: str = "enrollment"
+    ) -> None:
+        if plan_kind not in {"enrollment", "identity-metadata"}:
+            raise PersistenceJournalError("unsupported Catacomb persistence plan kind")
         self._baseline = baseline
+        self._plan_kind = plan_kind
         self._connection_generation = baseline["connection_generation"]
         self.phase = PersistencePhase.NOT_STARTED
         self.batches: tuple[tuple[tuple[str, str], ...], ...] = ()
@@ -253,7 +258,16 @@ class PersistenceTracker:
                     "master Catacomb must be last in its batch"
                 )
             normalized.append(tuple(normalized_batch))
-        if allow_biolockout_only:
+        if self._plan_kind == "identity-metadata":
+            if allow_biolockout_only or (
+                len(normalized) != 1
+                or [name for name, _digest in normalized[0]]
+                != [f'user_{self._baseline["apple_uid"]:08x}.cat']
+            ):
+                raise PersistenceJournalError(
+                    "identity metadata persistence must contain only its user Catacomb"
+                )
+        elif allow_biolockout_only:
             if (
                 len(normalized) != 1
                 or [name for name, _digest in normalized[0]]
@@ -268,11 +282,15 @@ class PersistenceTracker:
             )
         user_name = f'user_{self._baseline["apple_uid"]:08x}.cat'
         primary_names = [name for name, _digest in normalized[0]]
-        if not allow_biolockout_only and primary_names != [user_name, "master.cat"]:
+        if (
+            self._plan_kind == "enrollment"
+            and not allow_biolockout_only
+            and primary_names != [user_name, "master.cat"]
+        ):
             raise PersistenceJournalError(
                 "primary enrollment batch must contain user then master Catacomb"
             )
-        if not allow_biolockout_only and (
+        if self._plan_kind == "enrollment" and not allow_biolockout_only and (
             len(normalized) != 2
             or [name for name, _digest in normalized[1]] != ["biolockout.cat"]
         ):
