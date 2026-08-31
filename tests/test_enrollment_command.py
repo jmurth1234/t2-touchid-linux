@@ -44,6 +44,7 @@ class EnrollmentCommandTests(unittest.TestCase):
         recovery=False,
         status_only=False,
         post_reboot=False,
+        local_recovery=False,
         enrollment_error=None,
         cancel_before_dispatch=False,
     ):
@@ -153,20 +154,30 @@ class EnrollmentCommandTests(unittest.TestCase):
                         "unfinished_count": 0,
                     },
                 ) as status_report,
-                mock.patch.object(
+                mock.patch.multiple(
                     MODULE,
-                    "run_post_reboot_verification",
-                    return_value={
-                        **result,
-                        "post_reboot_verified": True,
-                        "fingerprint_mutation_performed": False,
-                    },
-                ) as post_reboot_verification,
+                    run_post_reboot_verification=mock.DEFAULT,
+                    run_local_transaction_recovery=mock.DEFAULT,
+                ) as recovery_modes,
                 mock.patch.object(MODULE, "notify_user") as notify,
                 redirect_stdout(output),
                 redirect_stderr(io.StringIO()),
             ):
                 guards["sleep_inhibitor"].side_effect = inhibit_sleep
+                post_reboot_verification = recovery_modes[
+                    "run_post_reboot_verification"
+                ]
+                post_reboot_verification.return_value = {
+                    **result,
+                    "post_reboot_verified": True,
+                    "fingerprint_mutation_performed": False,
+                }
+                recover_local = recovery_modes["run_local_transaction_recovery"]
+                recover_local.return_value = {
+                    **result,
+                    "local_transaction_recovered": True,
+                    "outcome_unknown": True,
+                }
                 status = MODULE.main()
             self.assertEqual(
                 status,
@@ -174,12 +185,17 @@ class EnrollmentCommandTests(unittest.TestCase):
             )
             self.assertEqual(
                 preflight.called,
-                not live and not recovery and not status_only and not post_reboot,
+                not live
+                and not recovery
+                and not status_only
+                and not post_reboot
+                and not local_recovery,
             )
             self.assertEqual(enrollment.called, live and not cancel_before_dispatch)
             self.assertEqual(reconcile.called, recovery)
             self.assertEqual(status_report.called, status_only)
             self.assertEqual(post_reboot_verification.called, post_reboot)
+            self.assertEqual(recover_local.called, local_recovery)
             if status_only:
                 select_backup.assert_not_called()
                 warm_sensor.assert_not_called()
@@ -192,6 +208,14 @@ class EnrollmentCommandTests(unittest.TestCase):
                     store_root, CONFIGURATION["apple_uid"]
                 )
                 self.assertEqual(lifecycle[:2], ["warm", "lock"])
+            elif local_recovery:
+                select_backup.assert_not_called()
+                warm_sensor.assert_not_called()
+                current_store.assert_not_called()
+                open_store.assert_called_once_with(
+                    store_root, CONFIGURATION["apple_uid"]
+                )
+                self.assertEqual(lifecycle, ["lock"])
             else:
                 current_store.assert_called_once_with(backup, CONFIGURATION)
                 self.assertEqual(lifecycle[:2], ["warm", "lock"])
@@ -283,6 +307,13 @@ class EnrollmentCommandTests(unittest.TestCase):
         self.assertIn('"post_reboot_verified": true', output)
         self.assertIn('"fingerprint_mutation_performed": false', output)
 
+    def test_local_transaction_recovery_needs_no_live_acknowledgement(self):
+        output = self.invoke(
+            ["--recover-local-transaction"], local_recovery=True
+        )
+        self.assertIn('"local_transaction_recovered": true', output)
+        self.assertIn('"outcome_unknown": true', output)
+
     def test_status_redacts_journal_identity_and_reports_recovery_eligibility(self):
         histories = [
             (
@@ -298,6 +329,70 @@ class EnrollmentCommandTests(unittest.TestCase):
         self.assertEqual(result["unfinished_phases"], {"outcome-unknown": 1})
         self.assertTrue(result["automatic_no_change_recovery_candidate"])
         self.assertNotIn("identifier-one", repr(result))
+
+    def test_status_reports_only_redacted_local_transaction_eligibility(self):
+        persistence = SimpleNamespace(
+            batch_index=0,
+            batches=((('user_000001f5.cat', "1" * 64),),),
+            staged_files=(("user_000001f5.cat", "7" * 64),),
+            phase=(
+                MODULE.t2_enrollment_persistence_journal.PersistencePhase.HOST_STAGED
+            ),
+        )
+        history = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.PERSISTING,
+            terminal_identity_uuid=None,
+            persistence=persistence,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store_root = Path(directory)
+            (store_root / "prepare").mkdir()
+            with (
+                mock.patch.object(MODULE, "STORE_ROOT", store_root),
+                mock.patch.object(
+                    MODULE,
+                    "enrollment_journals",
+                    return_value=[
+                        (Path("/private/private-journal-name.jsonl"), history)
+                    ],
+                ),
+            ):
+                result = MODULE.enrollment_status()
+        self.assertTrue(result["local_transaction_pending"])
+        self.assertTrue(result["local_transaction_recovery_candidate"])
+        self.assertTrue(result["live_enrollment_blocked"])
+        self.assertFalse(result["automatic_no_change_recovery_candidate"])
+        self.assertNotIn("private-journal-name", repr(result))
+
+    def test_status_rejects_a_local_transaction_with_the_wrong_replay_direction(self):
+        persistence = SimpleNamespace(
+            batch_index=0,
+            batches=((('user_000001f5.cat', "1" * 64),),),
+            staged_files=(("user_000001f5.cat", "7" * 64),),
+            phase=(
+                MODULE.t2_enrollment_persistence_journal.PersistencePhase.HOST_STAGED
+            ),
+        )
+        history = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN,
+            outcome_unknown_stage="local-commit-rolled-forward",
+            terminal_identity_uuid=None,
+            persistence=persistence,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store_root = Path(directory)
+            (store_root / "prepare").mkdir()
+            with (
+                mock.patch.object(MODULE, "STORE_ROOT", store_root),
+                mock.patch.object(
+                    MODULE,
+                    "enrollment_journals",
+                    return_value=[(Path("/private/journal.jsonl"), history)],
+                ),
+            ):
+                result = MODULE.enrollment_status()
+        self.assertTrue(result["local_transaction_pending"])
+        self.assertFalse(result["local_transaction_recovery_candidate"])
 
     def test_pending_e4_blocks_another_live_enrollment(self):
         pending = SimpleNamespace(
@@ -495,6 +590,228 @@ class EnrollmentCommandTests(unittest.TestCase):
         provision.assert_called_once_with(
             Path("/private/backup.tar.gz"), MODULE.STORE_ROOT, 501
         )
+
+    def test_prepare_recovery_discards_only_the_journal_bound_batch(self):
+        lifecycle = []
+        persistence = SimpleNamespace(
+            batch_index=0,
+            batches=((('user_000001f5.cat', "1" * 64), ('master.cat', "2" * 64)),),
+            staged_files=(("user_000001f5.cat", "7" * 64),),
+            phase=MODULE.t2_enrollment_persistence_journal.PersistencePhase.HOST_STAGED,
+        )
+        history = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.PERSISTING,
+            baseline={
+                "apple_uid": 501,
+                "mapping_generation": "d" * 64,
+                "connection_generation": "00000000-0000-0000-0000-000000000004",
+            },
+            persistence=persistence,
+            operation_id="private-operation",
+        )
+        store = SimpleNamespace(
+            discard_prepare=mock.Mock(
+                side_effect=lambda *_args: lifecycle.append("store")
+            ),
+            recover=mock.Mock(),
+        )
+        terminal = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+        )
+
+        def exists(path):
+            return path.name == "prepare"
+
+        with (
+            mock.patch.object(
+                MODULE,
+                "unfinished_enrollment_journals",
+                return_value=[(Path("/private/journal"), history)],
+            ),
+            mock.patch.object(MODULE.os.path, "lexists", side_effect=exists),
+            mock.patch.object(
+                MODULE.t2_enrollment_journal,
+                "append_checked",
+                side_effect=lambda *_args: (
+                    lifecycle.append("journal") or terminal
+                ),
+            ) as append,
+        ):
+            result = MODULE.run_local_transaction_recovery(CONFIGURATION, store)
+        store.discard_prepare.assert_called_once_with(
+            {"user_000001f5.cat", "master.cat"},
+            {"user_000001f5.cat": "7" * 64},
+        )
+        store.recover.assert_not_called()
+        self.assertEqual(result["recovery_action"], "prepare-discarded")
+        self.assertNotIn("private-operation", repr(result))
+        self.assertEqual(
+            append.call_args.args[2], "ENROLL_OUTCOME_UNKNOWN"
+        )
+        self.assertEqual(lifecycle, ["journal", "store"])
+
+    def test_commit_recovery_requires_and_rolls_forward_a_complete_batch(self):
+        lifecycle = []
+        phases = MODULE.t2_enrollment_persistence_journal.PersistencePhase
+        commit_intent = phases.BATCH_COMMIT_INTENT
+        persistence = SimpleNamespace(
+            batch_index=0,
+            batches=((('user_000001f5.cat', "1" * 64), ('master.cat', "2" * 64)),),
+            staged_files=(
+                ("master.cat", "8" * 64),
+                ("user_000001f5.cat", "7" * 64),
+            ),
+            phase=commit_intent,
+        )
+        history = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.PERSISTING,
+            baseline={
+                "apple_uid": 501,
+                "mapping_generation": "d" * 64,
+                "connection_generation": "00000000-0000-0000-0000-000000000004",
+            },
+            persistence=persistence,
+            operation_id="private-operation",
+        )
+        store = SimpleNamespace(
+            discard_prepare=mock.Mock(),
+            recover=mock.Mock(
+                side_effect=lambda *_args: (
+                    lifecycle.append("store") or "commit-rolled-forward"
+                )
+            ),
+        )
+        terminal = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+        )
+
+        def exists(path):
+            return path.name == "commit"
+
+        with (
+            mock.patch.object(
+                MODULE,
+                "unfinished_enrollment_journals",
+                return_value=[(Path("/private/journal"), history)],
+            ),
+            mock.patch.object(MODULE.os.path, "lexists", side_effect=exists),
+            mock.patch.object(
+                MODULE.t2_enrollment_journal,
+                "append_checked",
+                side_effect=lambda *_args: (
+                    lifecycle.append("journal") or terminal
+                ),
+            ),
+        ):
+            result = MODULE.run_local_transaction_recovery(CONFIGURATION, store)
+        store.recover.assert_called_once_with(
+            {"master.cat": "8" * 64, "user_000001f5.cat": "7" * 64}
+        )
+        self.assertEqual(result["recovery_action"], "commit-rolled-forward")
+        self.assertEqual(lifecycle, ["journal", "store"])
+
+    def test_local_recovery_replays_after_the_outcome_marker_is_durable(self):
+        persistence = SimpleNamespace(
+            batch_index=0,
+            batches=((('user_000001f5.cat', "1" * 64),),),
+            staged_files=(("user_000001f5.cat", "7" * 64),),
+            phase=(
+                MODULE.t2_enrollment_persistence_journal.PersistencePhase.HOST_STAGED
+            ),
+        )
+        history = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN,
+            outcome_unknown_stage="local-prepare-discarded",
+            baseline={
+                "apple_uid": 501,
+                "mapping_generation": "d" * 64,
+                "connection_generation": "00000000-0000-0000-0000-000000000004",
+            },
+            persistence=persistence,
+            operation_id="private-operation",
+        )
+        store = SimpleNamespace(discard_prepare=mock.Mock(), recover=mock.Mock())
+
+        with (
+            mock.patch.object(
+                MODULE,
+                "unfinished_enrollment_journals",
+                return_value=[(Path("/private/journal"), history)],
+            ),
+            mock.patch.object(
+                MODULE.os.path,
+                "lexists",
+                side_effect=lambda path: path.name == "prepare",
+            ),
+            mock.patch.object(
+                MODULE.t2_enrollment_journal, "append_checked"
+            ) as append,
+        ):
+            result = MODULE.run_local_transaction_recovery(CONFIGURATION, store)
+        append.assert_not_called()
+        store.discard_prepare.assert_called_once()
+        self.assertEqual(result["recovery_action"], "prepare-discarded")
+
+    def test_incomplete_commit_recovery_refuses_before_journal_or_store_mutation(self):
+        persistence = SimpleNamespace(
+            batch_index=0,
+            batches=(
+                (
+                    ('user_000001f5.cat', "1" * 64),
+                    ('master.cat', "2" * 64),
+                ),
+            ),
+            staged_files=(("user_000001f5.cat", "7" * 64),),
+            phase=(
+                MODULE.t2_enrollment_persistence_journal.PersistencePhase.HOST_STAGED
+            ),
+        )
+        history = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.PERSISTING,
+            baseline={
+                "apple_uid": 501,
+                "mapping_generation": "d" * 64,
+                "connection_generation": "00000000-0000-0000-0000-000000000004",
+            },
+            persistence=persistence,
+            operation_id="private-operation",
+        )
+        store = SimpleNamespace(discard_prepare=mock.Mock(), recover=mock.Mock())
+        with (
+            mock.patch.object(
+                MODULE,
+                "unfinished_enrollment_journals",
+                return_value=[(Path("/private/journal"), history)],
+            ),
+            mock.patch.object(
+                MODULE.os.path,
+                "lexists",
+                side_effect=lambda path: path.name == "commit",
+            ),
+            mock.patch.object(
+                MODULE.t2_enrollment_journal, "append_checked"
+            ) as append,
+            self.assertRaisesRegex(
+                MODULE.EnrollmentCommandError, "complete journaled host batch"
+            ),
+        ):
+            MODULE.run_local_transaction_recovery(CONFIGURATION, store)
+        append.assert_not_called()
+        store.discard_prepare.assert_not_called()
+        store.recover.assert_not_called()
+
+    def test_orphaned_local_transaction_blocks_live_enrollment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store_root = Path(directory)
+            (store_root / "prepare").mkdir()
+            with (
+                mock.patch.object(MODULE, "STORE_ROOT", store_root),
+                mock.patch.object(MODULE, "enrollment_journals", return_value=[]),
+                self.assertRaisesRegex(
+                    MODULE.EnrollmentCommandError, "pending local transaction"
+                ),
+            ):
+                MODULE.require_no_unfinished_enrollment()
 
     def test_unfinished_journal_blocks_a_new_live_operation(self):
         with tempfile.TemporaryDirectory() as directory:

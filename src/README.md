@@ -175,7 +175,10 @@ ordering than the minimum host sequence: it syncs the root immediately after
 the destination root after every cross-directory component promotion. A real
 forked child exits at the commit boundary in the test suite; a fresh store
 instance proves that recovery rolls the transaction forward to the complete new
-generation.
+generation. An interrupted partial `prepare/` is rollback-only and may be
+discarded only when every present component is schema-valid and belongs to the
+journaled batch; a `commit/` can roll forward only when the journal contains a
+validated digest for every planned component and a durable batch-commit intent.
 
 `t2_catacomb_protocol.py` captures the exact non-sending command boundary
 recovered from the matching daemon: prepare `0x3d` returns one 32-bit expected
@@ -239,12 +242,20 @@ state with the older archive.
 `--status-only` does not warm hardware or provision the store; under the same
 operation lock it reports only redacted unfinished-phase counts, whether live
 enrollment is blocked, whether exactly one outcome-unknown journal is a
-candidate for no-change recovery, and whether one successful E3 awaits E4.
+candidate for no-change recovery, whether a local Catacomb transaction is
+pending and recoverable, and whether one successful E3 awaits E4.
 Recovery now refuses any mixed set of unfinished journals. The read-only
 `--verify-post-reboot` mode opens the existing mutated Catacomb without selecting
 or restoring the original backup, collects stable host/SEP state on the new
 boot, and appends E4 only when the exact E3 digest is reproduced. A pending E4
 blocks another enrollment so later mutations cannot invalidate its snapshot.
+The non-live `--recover-local-transaction` mode handles exactly one journal-bound
+interruption in the persistence phase. It durably records an outcome-unknown
+direction before touching files, then either discards a validated partial
+`prepare/` or rolls a complete `commit/` forward. Re-running it after a process
+crash continues the already-recorded direction rather than creating a second
+transition. The resulting ambiguous biometric outcome must then pass the normal
+fresh-generation `--reconcile-outcome-unknown` proof before another live run.
 The live branch additionally requires explicit live-fingerprint and local-store
 mutation acknowledgements, derives all security subjects from protected runtime
 state, retains one Bridge lease through E3, and provides cancellation/audio

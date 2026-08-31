@@ -50,6 +50,7 @@ class EnrollmentHistory:
     persistence: persistence_journal.PersistenceHistory
     reconciled_snapshot_sha256: str | None
     post_reboot_linux_boot_uuid: str | None
+    outcome_unknown_stage: str | None
 
 
 def _exact(value: Any, keys: set[str], field: str) -> dict[str, Any]:
@@ -119,6 +120,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
     persistence = persistence_journal.PersistenceTracker(baseline)
     reconciled_snapshot_sha256: str | None = None
     post_reboot_linux_boot_uuid: str | None = None
+    outcome_unknown_stage: str | None = None
 
     for record in records[1:]:
         if record.get("operation_id") != operation_id:
@@ -565,6 +567,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
                 EnrollmentPhase.CONTINUE_INTENT,
                 EnrollmentPhase.CANCEL_INTENT,
                 EnrollmentPhase.CANCEL_REQUESTED,
+                EnrollmentPhase.PERSISTING,
             ):
                 raise EnrollmentJournalError("outcome-unknown marker is out of order")
             evidence = _exact(
@@ -573,25 +576,40 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
                 milestone,
             )
             _same_generation(evidence, baseline)
-            if evidence["stage"] not in {
-                "start",
-                "active",
-                "continue",
-                "cancel",
-                "terminal",
-            }:
-                raise EnrollmentJournalError("outcome-unknown stage is invalid")
-            if (
-                not isinstance(evidence["reason"], str)
-                or evidence["reason"] not in {
+            persistence_interruption = phase is EnrollmentPhase.PERSISTING
+            stage_options = (
+                {
+                    "local-prepare-discarded",
+                    "local-commit-rolled-forward",
+                }
+                if persistence_interruption
+                else {"start", "active", "continue", "cancel", "terminal"}
+            )
+            reason_options = (
+                {"process-interrupted"}
+                if persistence_interruption
+                else {
                     "transport-error",
                     "connection-lost",
                     "journal-error",
                     "protocol-error",
                 }
+            )
+            stage_valid = (
+                isinstance(evidence["stage"], str)
+                and evidence["stage"] in stage_options
+            )
+            reason_valid = (
+                isinstance(evidence["reason"], str)
+                and evidence["reason"] in reason_options
+            )
+            if (
+                not stage_valid
+                or not reason_valid
                 or evidence["mutation_possible"] is not True
             ):
                 raise EnrollmentJournalError("outcome-unknown evidence is invalid")
+            outcome_unknown_stage = evidence["stage"]
             phase = EnrollmentPhase.OUTCOME_UNKNOWN
             continue
 
@@ -612,6 +630,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
         persistence.snapshot(),
         reconciled_snapshot_sha256,
         post_reboot_linux_boot_uuid,
+        outcome_unknown_stage,
     )
 
 

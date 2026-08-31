@@ -42,6 +42,7 @@ class PersistenceHistory:
     batches: tuple[tuple[tuple[str, str], ...], ...]
     batch_index: int | None
     component_index: int | None
+    staged_files: tuple[tuple[str, str], ...]
     reconciliation_snapshot_sha256: str | None
     sep_host_generation_equal: bool
     independent_archive_readback: bool
@@ -105,6 +106,7 @@ class PersistenceTracker:
             self.batches,
             self.batch_index,
             self.component_index,
+            tuple(sorted(self._staged.items())),
             self.reconciliation_snapshot_sha256,
             self.sep_host_generation_equal,
             self.independent_archive_readback,

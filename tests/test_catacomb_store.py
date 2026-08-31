@@ -188,7 +188,7 @@ class CatacombStoreTests(unittest.TestCase):
         self.assertEqual(self.store.recover(hashes), "commit-rolled-forward")
         self.assert_root_is(self.new)
 
-    def test_partial_prepare_is_preserved_when_it_cannot_match_journal(self):
+    def test_partial_prepare_is_validated_and_discarded(self):
         def crash(event):
             if event.startswith("component_written:"):
                 raise InjectedCrash(event)
@@ -196,8 +196,30 @@ class CatacombStoreTests(unittest.TestCase):
         with self.assertRaises(InjectedCrash):
             self.store.stage(self.new, crash)
         expected = {name: store_module.sha256(data) for name, data in self.new.items()}
-        with self.assertRaisesRegex(store_module.CatacombStoreError, "does not match"):
-            self.store.recover(expected)
+        self.assertEqual(self.store.recover(expected), "prepare-discarded")
+        self.assertFalse((self.root / "prepare").exists())
+        self.assert_root_is(self.old)
+
+    def test_unjournaled_but_schema_valid_partial_prepare_can_be_discarded(self):
+        expected_names = set(self.new)
+        self.store.begin_stage(expected_names)
+        self.store.stage_component(
+            "master.cat", self.new["master.cat"], expected_names
+        )
+        self.store.discard_prepare(expected_names, {})
+        self.assertFalse((self.root / "prepare").exists())
+        self.assert_root_is(self.old)
+
+    def test_partial_prepare_hash_mismatch_is_preserved(self):
+        expected_names = set(self.new)
+        self.store.begin_stage(expected_names)
+        self.store.stage_component(
+            "master.cat", self.new["master.cat"], expected_names
+        )
+        with self.assertRaisesRegex(store_module.CatacombStoreError, "hash mismatch"):
+            self.store.discard_prepare(
+                expected_names, {"master.cat": "0" * 64}
+            )
         self.assertTrue((self.root / "prepare").exists())
         self.assert_root_is(self.old)
 

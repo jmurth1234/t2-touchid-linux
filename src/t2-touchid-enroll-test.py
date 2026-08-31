@@ -38,6 +38,7 @@ import t2_catacomb_store
 import t2_enrollment_coordinator
 import t2_enrollment_finalizer
 import t2_enrollment_journal
+import t2_enrollment_persistence_journal
 import t2_enrollment_protocol
 import t2_enrollment_reconciliation
 import t2_mutation_journal
@@ -441,13 +442,20 @@ def require_no_unfinished_enrollment() -> None:
         and history.terminal_identity_uuid is not None
         for _path, history in journals
     )
-    if unfinished or pending_post_reboot:
+    local_transaction_pending = os.path.lexists(
+        STORE_ROOT / "prepare"
+    ) or os.path.lexists(STORE_ROOT / "commit")
+    if unfinished or pending_post_reboot or local_transaction_pending:
         raise EnrollmentCommandError(
-            "an earlier enrollment is unfinished or awaiting post-reboot verification"
+            "an earlier enrollment is unfinished, has a pending local transaction, "
+            "or awaits post-reboot verification"
         )
 
 
 def enrollment_status() -> dict[str, object]:
+    commit_intent = (
+        t2_enrollment_persistence_journal.PersistencePhase.BATCH_COMMIT_INTENT
+    )
     journals = enrollment_journals()
     unfinished = [item for item in journals if item[1].phase in UNFINISHED_PHASES]
     pending_post_reboot = [
@@ -460,11 +468,51 @@ def enrollment_status() -> dict[str, object]:
     for _path, history in unfinished:
         name = history.phase.value
         phases[name] = phases.get(name, 0) + 1
+    prepare_pending = os.path.lexists(STORE_ROOT / "prepare")
+    commit_pending = os.path.lexists(STORE_ROOT / "commit")
+    local_transaction_pending = prepare_pending or commit_pending
     recovery_available = (
         len(unfinished) == 1
         and unfinished[0][1].phase
         is t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+        and not local_transaction_pending
     )
+    local_recovery_candidate = False
+    if prepare_pending != commit_pending and len(unfinished) == 1:
+        history = unfinished[0][1]
+        recovery_stage = (
+            "local-prepare-discarded"
+            if prepare_pending
+            else "local-commit-rolled-forward"
+        )
+        phase_allows_recovery = (
+            history.phase is t2_enrollment_journal.EnrollmentPhase.PERSISTING
+            or (
+                history.phase
+                is t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+                and history.outcome_unknown_stage == recovery_stage
+            )
+        )
+        persistence = history.persistence
+        batch_index = persistence.batch_index
+        if (
+            phase_allows_recovery
+            and batch_index is not None
+            and 0 <= batch_index < len(persistence.batches)
+        ):
+            expected_names = {
+                name for name, _descriptor in persistence.batches[batch_index]
+            }
+            staged_names = {name for name, _digest in persistence.staged_files}
+            local_recovery_candidate = (
+                bool(expected_names) and staged_names <= expected_names
+            )
+            if commit_pending:
+                local_recovery_candidate = (
+                    local_recovery_candidate
+                    and staged_names == expected_names
+                    and persistence.phase is commit_intent
+                )
     return {
         "schema_version": 1,
         "status_only": True,
@@ -472,8 +520,12 @@ def enrollment_status() -> dict[str, object]:
         "unfinished_phases": dict(sorted(phases.items())),
         "post_reboot_pending_count": len(pending_post_reboot),
         "post_reboot_verification_candidate": len(pending_post_reboot) == 1,
-        "live_enrollment_blocked": bool(unfinished or pending_post_reboot),
+        "live_enrollment_blocked": bool(
+            unfinished or pending_post_reboot or local_transaction_pending
+        ),
         "automatic_no_change_recovery_candidate": recovery_available,
+        "local_transaction_pending": local_transaction_pending,
+        "local_transaction_recovery_candidate": local_recovery_candidate,
         "identifiers_redacted": True,
         "mutation_performed": False,
     }
@@ -526,6 +578,103 @@ def run_outcome_unknown_reconciliation(
         "outcome_unknown_reconciled": True,
         "identity_count": len(live["per_user_identity_records"]),
         "persistent_identity_delta": False,
+        "identifiers_redacted": True,
+        "fingerprint_mutation_performed": False,
+    }
+
+
+def run_local_transaction_recovery(
+    configuration: dict[str, object], store: t2_catacomb_store.CatacombStore
+) -> dict[str, object]:
+    commit_intent = (
+        t2_enrollment_persistence_journal.PersistencePhase.BATCH_COMMIT_INTENT
+    )
+    unfinished = unfinished_enrollment_journals()
+    if (
+        len(unfinished) != 1
+        or unfinished[0][1].phase
+        not in {
+            t2_enrollment_journal.EnrollmentPhase.PERSISTING,
+            t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN,
+        }
+    ):
+        raise EnrollmentCommandError(
+            "local transaction recovery requires exactly one persisting enrollment"
+        )
+    journal_path, history = unfinished[0]
+    if (
+        history.baseline["apple_uid"] != configuration["apple_uid"]
+        or history.baseline["mapping_generation"]
+        != configuration["mapping_generation"]
+    ):
+        raise EnrollmentCommandError(
+            "persisting enrollment belongs to another protected mapping"
+        )
+    prepare_pending = os.path.lexists(STORE_ROOT / "prepare")
+    commit_pending = os.path.lexists(STORE_ROOT / "commit")
+    if prepare_pending == commit_pending:
+        raise EnrollmentCommandError(
+            "local recovery requires exactly one prepare or commit transaction"
+        )
+    persistence = history.persistence
+    if (
+        persistence.batch_index is None
+        or not 0 <= persistence.batch_index < len(persistence.batches)
+    ):
+        raise EnrollmentCommandError("persisting journal has no current Catacomb batch")
+    expected_names = {
+        name for name, _descriptor in persistence.batches[persistence.batch_index]
+    }
+    expected_hashes = dict(persistence.staged_files)
+    if not expected_names or not set(expected_hashes) <= expected_names:
+        raise EnrollmentCommandError("persisting journal staged set is inconsistent")
+
+    if prepare_pending:
+        recovery_stage = "local-prepare-discarded"
+    else:
+        if (
+            set(expected_hashes) != expected_names
+            or persistence.phase is not commit_intent
+        ):
+            raise EnrollmentCommandError(
+                "commit recovery lacks a complete journaled host batch"
+            )
+        recovery_stage = "local-commit-rolled-forward"
+
+    if history.phase is t2_enrollment_journal.EnrollmentPhase.PERSISTING:
+        recovered = t2_enrollment_journal.append_checked(
+            journal_path,
+            history.operation_id,
+            "ENROLL_OUTCOME_UNKNOWN",
+            {
+                "connection_generation": history.baseline["connection_generation"],
+                "stage": recovery_stage,
+                "reason": "process-interrupted",
+                "mutation_possible": True,
+            },
+        )
+    else:
+        if history.outcome_unknown_stage != recovery_stage:
+            raise EnrollmentCommandError(
+                "local transaction differs from its journaled recovery direction"
+            )
+        recovered = history
+    if recovered.phase is not t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN:
+        raise EnrollmentCommandError("local recovery did not preserve ambiguity")
+
+    if prepare_pending:
+        store.discard_prepare(expected_names, expected_hashes)
+    elif store.recover(expected_hashes) != "commit-rolled-forward":
+        raise EnrollmentCommandError("commit transaction did not roll forward")
+    return {
+        "schema_version": 1,
+        "local_transaction_recovered": True,
+        "recovery_action": (
+            "prepare-discarded"
+            if prepare_pending
+            else "commit-rolled-forward"
+        ),
+        "outcome_unknown": True,
         "identifiers_redacted": True,
         "fingerprint_mutation_performed": False,
     }
@@ -676,6 +825,7 @@ def main() -> int:
     mode.add_argument("--reconcile-outcome-unknown", action="store_true")
     mode.add_argument("--status-only", action="store_true")
     mode.add_argument("--verify-post-reboot", action="store_true")
+    mode.add_argument("--recover-local-transaction", action="store_true")
     parser.add_argument("--identity-name", default="Linux enrolled finger")
     parser.add_argument(
         "--acknowledge-password-fallback-tested", action="store_true"
@@ -693,6 +843,7 @@ def main() -> int:
         not args.reconcile_outcome_unknown
         and not args.status_only
         and not args.verify_post_reboot
+        and not args.recover_local_transaction
         and not args.acknowledge_password_fallback_tested
     ):
         parser.error("password-fallback acknowledgement is required")
@@ -701,6 +852,7 @@ def main() -> int:
         and not args.reconcile_outcome_unknown
         and not args.status_only
         and not args.verify_post_reboot
+        and not args.recover_local_transaction
     )
     if live_enrollment and not (
         args.acknowledge_live_fingerprint_enrollment
@@ -728,7 +880,7 @@ def main() -> int:
         _private_root_owned(STATE_ROOT, directory=True)
         _private_root_owned(MUTATION_ROOT, directory=True)
         backup: Path | None = None
-        if not args.status_only:
+        if not args.status_only and not args.recover_local_transaction:
             if not args.verify_post_reboot:
                 backup = select_backup()
             # The readiness service takes OPERATION_LOCK itself, so this must
@@ -749,6 +901,16 @@ def main() -> int:
             fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if args.status_only:
                 result = enrollment_status()
+            elif args.recover_local_transaction:
+                if not os.path.lexists(STORE_ROOT):
+                    raise EnrollmentCommandError(
+                        "local transaction recovery requires the existing Catacomb"
+                    )
+                store = t2_catacomb_store.CatacombStore(
+                    STORE_ROOT, configuration["apple_uid"]
+                )
+                result = run_local_transaction_recovery(configuration, store)
+                result["local_store_provisioned"] = False
             elif args.verify_post_reboot:
                 if not os.path.lexists(STORE_ROOT):
                     raise EnrollmentCommandError(

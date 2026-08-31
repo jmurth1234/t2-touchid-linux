@@ -250,9 +250,22 @@ summaries omit the internal operation UUID as well as biometric identifiers.
 The read-only `--status-only` mode takes the operation lock but skips sensor
 warm-up and store provisioning. It emits only unfinished phase counts and a
 no-change recovery-candidate boolean, plus the count/eligibility of pending E4
-verification, never journal paths, operation IDs, or identity UUIDs.
+verification and booleans for a pending/recoverable local Catacomb transaction,
+never journal paths, operation IDs, or identity UUIDs.
 Automatic recovery requires that this be the sole unfinished journal; a mixed
 unfinished set is rejected before Bridge is opened.
+
+An additional non-live `--recover-local-transaction` mode closes the host-file
+crash window without opening BridgeXPC or asking for a password or fingerprint.
+It accepts exactly one persistence journal with exactly one `prepare/` or
+`commit/` directory. Before changing files it durably marks the enrollment
+outcome unknown and records the one permitted recovery direction. A partial
+prepare is discarded only when all present files are valid members of the
+journaled batch; a commit is rolled forward only when all planned file digests
+and the batch-commit intent are durable. The mode is replay-safe if interrupted
+again. After local recovery, ordinary fresh-generation outcome reconciliation
+must prove whether the SEP identity set and committed Catacomb changed before
+another live enrollment is permitted.
 
 The non-mutating hardware preflight passed on 2026-08-31 and created the private
 Linux-local store from the sole hash-named root backup. It verified the backup,

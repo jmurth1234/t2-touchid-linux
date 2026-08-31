@@ -217,6 +217,74 @@ class EnrollmentPersistenceJournalTests(unittest.TestCase):
         self.assertTrue(result.persistence.sep_host_generation_equal)
         self.assertTrue(result.persistence.independent_archive_readback)
 
+    def test_interrupted_persistence_exposes_only_staged_digests_for_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create_identity(directory)
+            generation = baseline()["connection_generation"]
+            user = component_ref(0, 0, "user_000001f5.cat", "1" * 64)
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_PERSISTENCE_PLAN",
+                {
+                    "connection_generation": generation,
+                    "batches": [
+                        [
+                            {"name": "user_000001f5.cat", "descriptor_sha256": "1" * 64},
+                            {"name": "master.cat", "descriptor_sha256": "2" * 64},
+                        ],
+                        [
+                            {"name": "biolockout.cat", "descriptor_sha256": "3" * 64}
+                        ],
+                    ],
+                },
+            )
+            enrollment.append_checked(path, operation_id, "CATACOMB_PREPARE_INTENT", user)
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_PREPARED",
+                {**user, "status": 0, "expected_blob_length": 32},
+            )
+            enrollment.append_checked(path, operation_id, "CATACOMB_COMPLETE_INTENT", user)
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_SECURE_BLOB_CAPTURED",
+                {
+                    **user,
+                    "status": 0,
+                    "blob_length": 32,
+                    "secure_blob_sha256": "4" * 64,
+                },
+            )
+            history = enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_HOST_STAGED",
+                {
+                    **user,
+                    "secure_blob_sha256": "4" * 64,
+                    "final_file_sha256": "7" * 64,
+                },
+            )
+            self.assertEqual(
+                history.persistence.staged_files,
+                (("user_000001f5.cat", "7" * 64),),
+            )
+            recovered = enrollment.append_checked(
+                path,
+                operation_id,
+                "ENROLL_OUTCOME_UNKNOWN",
+                {
+                    "connection_generation": generation,
+                    "stage": "local-prepare-discarded",
+                    "reason": "process-interrupted",
+                    "mutation_possible": True,
+                },
+            )
+        self.assertEqual(recovered.phase, enrollment.EnrollmentPhase.OUTCOME_UNKNOWN)
+
     def test_separate_biolockout_batch_reaches_persistence_ready(self):
         with tempfile.TemporaryDirectory() as directory:
             path, operation_id = self.create_identity(directory)

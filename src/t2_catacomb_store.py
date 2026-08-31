@@ -214,7 +214,8 @@ class CatacombStore:
     def _validate_prepare(self, expected: dict[str, str]) -> None:
         path = self.root / "prepare"
         names = self._directory_entries(path)
-        if names != set(expected) or not names <= self.allowed_names:
+        expected_names = set(expected)
+        if not expected_names <= self.allowed_names or names != expected_names:
             raise CatacombStoreError("prepare component set does not match journal")
         for name in sorted(names):
             data = self._read_regular(path / name)
@@ -234,6 +235,42 @@ class CatacombStore:
                 raise CatacombStoreError(f"committed hash mismatch for {name}")
             validate_component(name, data, self.apple_uid)
         return remaining
+
+    def discard_prepare(
+        self,
+        expected_names: set[str],
+        expected_hashes: dict[str, str],
+        hook: FailureHook | None = None,
+    ) -> None:
+        """Discard only a journal-bound, schema-valid rollback-only prepare."""
+        if (
+            not expected_names
+            or not expected_names <= self.allowed_names
+            or not set(expected_hashes) <= expected_names
+        ):
+            raise CatacombStoreError("prepare recovery expectation is invalid")
+        prepare = self.root / "prepare"
+        names = self._directory_entries(prepare)
+        if not names <= expected_names:
+            raise CatacombStoreError("prepare component set does not match journal")
+        for name in sorted(names):
+            data = self._read_regular(prepare / name)
+            expected_hash = expected_hashes.get(name)
+            if expected_hash is not None and sha256(data) != expected_hash:
+                raise CatacombStoreError(f"prepare hash mismatch for {name}")
+            try:
+                validate_component(name, data, self.apple_uid)
+            except CatacombCodecError as error:
+                raise CatacombStoreError(
+                    f"invalid prepared {name}: {error}"
+                ) from error
+        for name in sorted(names):
+            (prepare / name).unlink()
+            if hook:
+                hook(f"prepare_unlinked:{name}")
+        self._sync_directory(prepare)
+        prepare.rmdir()
+        self._sync_directory(self.root)
 
     def cross_commit_boundary(self, expected: dict[str, str], hook: FailureHook | None = None) -> None:
         self._validate_prepare(expected)
@@ -276,14 +313,7 @@ class CatacombStore:
         commit = self.root / "commit"
         action = "clean"
         if os.path.lexists(prepare):
-            self._validate_prepare(expected)
-            for name in sorted(expected):
-                (prepare / name).unlink()
-                if hook:
-                    hook(f"prepare_unlinked:{name}")
-            self._sync_directory(prepare)
-            prepare.rmdir()
-            self._sync_directory(self.root)
+            self.discard_prepare(set(expected), expected, hook)
             action = "prepare-discarded"
         if os.path.lexists(commit):
             self._roll_forward(expected, hook)
