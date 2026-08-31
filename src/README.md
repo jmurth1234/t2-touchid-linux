@@ -224,9 +224,13 @@ cannot enter ACM or enrollment; it verifies the sole protected backup, private
 local store, sensor readiness, operation lock, same-connection E0, and capacity.
 `--status-only` does not warm hardware or provision the store; under the same
 operation lock it reports only redacted unfinished-phase counts, whether live
-enrollment is blocked, and whether exactly one outcome-unknown journal is a
-candidate for no-change recovery. Recovery now refuses any mixed set of
-unfinished journals.
+enrollment is blocked, whether exactly one outcome-unknown journal is a
+candidate for no-change recovery, and whether one successful E3 awaits E4.
+Recovery now refuses any mixed set of unfinished journals. The read-only
+`--verify-post-reboot` mode opens the existing mutated Catacomb without selecting
+or restoring the original backup, collects stable host/SEP state on the new
+boot, and appends E4 only when the exact E3 digest is reproduced. A pending E4
+blocks another enrollment so later mutations cannot invalidate its snapshot.
 The live branch additionally requires explicit live-fingerprint and local-store
 mutation acknowledgements, derives all security subjects from protected runtime
 state, retains one Bridge lease through E3, and provides cancellation/audio
@@ -258,9 +262,12 @@ exposed version-1 `0xe3ff800a`. Exact matching-daemon disassembly requires at
 least a 32-bit user ID plus 16-bit SKS state. Depending on the state bits, the
 daemon can synchronize the template list, save the bio-lockout record, cancel
 a tokenless unlock match, notify observers, and emit analytics. None of those
-callbacks is an enrollment transition, so the reducer validates the shape and
-pinned Apple user and delegates the required host persistence to the finalizer
-without sending feedback or continue. Live enrollment refuses to start while
+callbacks is an enrollment transition. A later live run proved its embedded
+user can differ from the active enrollment user, matching the daemon's behavior
+of routing the ambient record by its own user field. The reducer therefore
+validates the exact version and minimum shape but never lets the event select an
+identity, send feedback, or send continue; the finalizer owns persistence for
+the enrolled user. Live enrollment refuses to start while
 an earlier mutation journal remains unfinished. Any next live attempt remains
 explicitly operator-gated.
 
@@ -269,8 +276,8 @@ identity. It is accepted only after E3, on both a different Linux boot UUID and
 a different Bridge connection generation, with an exact match to the E3
 snapshot digest (which includes account and bag bindings), protected mapping,
 identity UUID, and protocol. Double collection, host/SEP equality, binding
-checks, and keybag runtime revalidation must all be literal true. No collector
-or automatic reboot is attached to this gate.
+checks, and keybag runtime revalidation must all be literal true. The broker
+supplies the collector but never initiates the required reboot.
 
 The v2 platform field formerly labelled `uid` is the caller's macOS audit
 session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent

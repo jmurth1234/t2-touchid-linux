@@ -221,18 +221,11 @@ class EnrollmentProtocolTests(unittest.TestCase):
             accepted.action, enrollment.EnrollmentAction.IGNORE_AUXILIARY
         )
 
-    def test_sks_lock_state_auxiliary_event_rejects_wrong_shape_or_user(self):
+    def test_sks_lock_state_auxiliary_event_rejects_wrong_shape(self):
         cases = (
             event(1, enrollment.SERVICE_SKS_LOCK_STATE, 0, 0, bytes(6)),
             event(1, enrollment.SERVICE_SKS_LOCK_STATE, 2, 0, bytes(6)),
             event(1, enrollment.SERVICE_SKS_LOCK_STATE, 1, 0, bytes(5)),
-            event(
-                1,
-                enrollment.SERVICE_SKS_LOCK_STATE,
-                1,
-                0,
-                enrollment.SKS_LOCK_STATE_PAYLOAD.pack(502, 0),
-            ),
         )
         for value in cases:
             with self.subTest(version=value.version, length=len(value.payload)):
@@ -243,6 +236,23 @@ class EnrollmentProtocolTests(unittest.TestCase):
                 ):
                     self.accept(machine, value)
                 self.assertEqual(machine.state, enrollment.EnrollmentState.FROZEN)
+
+    def test_sks_lock_state_auxiliary_event_is_not_bound_to_active_user(self):
+        machine = self.machine()
+        transition = self.accept(
+            machine,
+            event(
+                1,
+                enrollment.SERVICE_SKS_LOCK_STATE,
+                1,
+                0,
+                enrollment.SKS_LOCK_STATE_PAYLOAD.pack(502, 0),
+            ),
+        )
+        self.assertEqual(
+            transition.action, enrollment.EnrollmentAction.IGNORE_AUXILIARY
+        )
+        self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
 
     def test_terminal_failures_remain_distinct_and_67_is_generic(self):
         cases = {

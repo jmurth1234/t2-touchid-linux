@@ -47,7 +47,10 @@ from t2_enrollment_protocol import parse_service_event
 
 
 def summarize_event(
-    payload: object, enrolled_identity_records: tuple[bytes, ...] = ()
+    payload: object,
+    enrolled_identity_records: tuple[bytes, ...] = (),
+    *,
+    expected_user_id: int | None = None,
 ) -> dict:
     if isinstance(payload, list) and len(payload) == 5 and payload[0] == 9:
         data = payload[2]
@@ -120,6 +123,15 @@ def summarize_event(
                     ]
             elif embedded_type == 0xE3FF8004:
                 summary["event_kind"] = "statistics"
+            elif embedded_type == 0xE3FF800A:
+                # Keep live protocol diagnostics useful without emitting the
+                # Apple user ID, SKS state, or opaque trailing bytes.
+                summary["event_kind"] = "sks_lock_state"
+                summary["event_data_length"] = len(event_data)
+                if expected_user_id is not None and len(event_data) >= 4:
+                    summary["user_id_matches_configured"] = (
+                        struct.unpack_from("<I", event_data)[0] == expected_user_id
+                    )
             else:
                 summary["event_kind"] = "other"
         return summary
@@ -1208,7 +1220,9 @@ def main() -> None:
                         if (
                             args.stop_on_match_result
                             and summarize_event(
-                                envelope[3], enrolled_identity_records
+                                envelope[3],
+                                enrolled_identity_records,
+                                expected_user_id=args.macos_user_id,
                             ).get("event_kind")
                             == "match_result"
                         ):
@@ -1224,7 +1238,11 @@ def main() -> None:
             else:
                 result["match_rejected"] = True
             result["match_events"] = [
-                summarize_event(event, enrolled_identity_records)
+                summarize_event(
+                    event,
+                    enrolled_identity_records,
+                    expected_user_id=args.macos_user_id,
+                )
                 for event in events
             ]
             operations.append("timed match" + (" + cancel" if match_started else " (rejected)"))

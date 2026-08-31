@@ -252,6 +252,67 @@ class EnrollmentReconciliationTests(unittest.TestCase):
             result.phase, enrollment_journal.EnrollmentPhase.POST_REBOOT_VERIFIED
         )
 
+    def test_live_e4_classifier_recomputes_exact_e3_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id, _identity_uuid = self.create_terminal(
+                directory, identity=True
+            )
+            host, live = self.snapshots(success=True)
+            self.persist(path, operation_id, host, live)
+            reconciliation.append_reconciled(
+                path,
+                operation_id,
+                host=host,
+                live=live,
+                mapping_generation=baseline()["mapping_generation"],
+            )
+            live["connection_generation"] = str(uuid.UUID(int=21))
+            result = reconciliation.append_post_reboot_verified(
+                path,
+                operation_id,
+                host=host,
+                live=live,
+                linux_boot_uuid=str(uuid.UUID(int=20)),
+                mapping_generation=baseline()["mapping_generation"],
+                keybag_runtime_revalidated=True,
+            )
+        self.assertEqual(
+            result.phase, enrollment_journal.EnrollmentPhase.POST_REBOOT_VERIFIED
+        )
+
+    def test_live_e4_classifier_rejects_same_boot_or_snapshot_drift(self):
+        for drift in ("same-boot", "component"):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as directory:
+                path, operation_id, _identity_uuid = self.create_terminal(
+                    directory, identity=True
+                )
+                host, live = self.snapshots(success=True)
+                self.persist(path, operation_id, host, live)
+                reconciliation.append_reconciled(
+                    path,
+                    operation_id,
+                    host=host,
+                    live=live,
+                    mapping_generation=baseline()["mapping_generation"],
+                )
+                live["connection_generation"] = str(uuid.UUID(int=21))
+                boot = str(uuid.UUID(int=20))
+                if drift == "same-boot":
+                    boot = baseline()["linux_boot_uuid"]
+                else:
+                    host["host_components"][0]["sha256"] = "e" * 64
+                with self.assertRaises(
+                    reconciliation.EnrollmentReconciliationError
+                ):
+                    reconciliation.classify_post_reboot(
+                        enrollment_journal.read(path),
+                        host=host,
+                        live=live,
+                        linux_boot_uuid=boot,
+                        mapping_generation=baseline()["mapping_generation"],
+                        keybag_runtime_revalidated=True,
+                    )
+
     def test_identity_reconciliation_requires_completed_persistence_journal(self):
         with tempfile.TemporaryDirectory() as directory:
             path, _operation_id, _identity_uuid = self.create_terminal(

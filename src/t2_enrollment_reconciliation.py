@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -437,4 +437,114 @@ def append_reconciled(
     )
     return enrollment_journal.append_checked(
         path, operation_id, milestone, plan.evidence
+    )
+
+
+def classify_post_reboot(
+    history: enrollment_journal.EnrollmentHistory,
+    *,
+    host: dict[str, Any],
+    live: dict[str, Any],
+    linux_boot_uuid: str,
+    mapping_generation: str,
+    keybag_runtime_revalidated: bool,
+) -> dict[str, Any]:
+    """Build strict E4 evidence from a fresh boot and live generation."""
+    if (
+        history.phase is not enrollment_journal.EnrollmentPhase.RECONCILED
+        or history.terminal_identity_uuid is None
+        or history.reconciled_snapshot_sha256 is None
+    ):
+        raise EnrollmentReconciliationError(
+            "post-reboot verification requires one reconciled identity"
+        )
+    try:
+        mutation_journal.require_uuid(linux_boot_uuid, "Linux boot UUID")
+    except mutation_journal.JournalError as error:
+        raise EnrollmentReconciliationError(str(error)) from error
+    if linux_boot_uuid == history.baseline["linux_boot_uuid"]:
+        raise EnrollmentReconciliationError(
+            "post-reboot verification is still on the enrollment boot"
+        )
+    connection_generation = live.get("connection_generation")
+    try:
+        mutation_journal.require_uuid(
+            connection_generation, "post-reboot connection generation"
+        )
+    except mutation_journal.JournalError as error:
+        raise EnrollmentReconciliationError(str(error)) from error
+    if connection_generation == history.baseline["connection_generation"]:
+        raise EnrollmentReconciliationError(
+            "post-reboot verification reused the enrollment connection"
+        )
+    if keybag_runtime_revalidated is not True:
+        raise EnrollmentReconciliationError(
+            "post-reboot keybag runtime was not revalidated"
+        )
+
+    # Re-run the complete E3 classifier against the fresh connection without
+    # weakening any identity, component, capacity, binding, or digest check.
+    # Only the expected connection generation changes; the original enrollment
+    # baseline remains authoritative for every durable field.
+    current_baseline = dict(history.baseline)
+    current_baseline["connection_generation"] = connection_generation
+    current_history = replace(
+        history,
+        phase=enrollment_journal.EnrollmentPhase.PERSISTENCE_READY,
+        baseline=current_baseline,
+    )
+    plan = classify(
+        current_history,
+        host=host,
+        live=live,
+        mapping_generation=mapping_generation,
+    )
+    evidence = plan.evidence
+    if (
+        evidence is None
+        or plan.readback_identity_uuid is not None
+        or evidence["identity_uuid"] != history.terminal_identity_uuid
+        or evidence["snapshot_sha256"] != history.reconciled_snapshot_sha256
+    ):
+        raise EnrollmentReconciliationError(
+            "post-reboot state differs from reconciled E3"
+        )
+    return {
+        "linux_boot_uuid": linux_boot_uuid,
+        "connection_generation": connection_generation,
+        "bridge_boot_uuid": live.get("bridge_boot_uuid"),
+        "protocol_version": live.get("biometric_protocol_version"),
+        "mapping_generation": mapping_generation,
+        "account_uuid": host.get("account_uuid"),
+        "bag_uuid": host.get("bag_uuid"),
+        "identity_uuid": history.terminal_identity_uuid,
+        "snapshot_sha256": evidence["snapshot_sha256"],
+        "double_collection_equal": live.get("double_collection_equal"),
+        "host_sep_identity_equal": evidence["host_sep_identity_equal"],
+        "bindings_preserved": evidence["bindings_preserved"],
+        "keybag_runtime_revalidated": True,
+    }
+
+
+def append_post_reboot_verified(
+    path: Path,
+    operation_id: str,
+    *,
+    host: dict[str, Any],
+    live: dict[str, Any],
+    linux_boot_uuid: str,
+    mapping_generation: str,
+    keybag_runtime_revalidated: bool,
+) -> enrollment_journal.EnrollmentHistory:
+    history = enrollment_journal.read(path)
+    evidence = classify_post_reboot(
+        history,
+        host=host,
+        live=live,
+        linux_boot_uuid=linux_boot_uuid,
+        mapping_generation=mapping_generation,
+        keybag_runtime_revalidated=keybag_runtime_revalidated,
+    )
+    return enrollment_journal.append_checked(
+        path, operation_id, "E4_POST_REBOOT_VERIFIED", evidence
     )

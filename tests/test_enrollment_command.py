@@ -41,11 +41,14 @@ class EnrollmentCommandTests(unittest.TestCase):
         live=False,
         recovery=False,
         status_only=False,
+        post_reboot=False,
         enrollment_error=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "operation.lock"
             backup = Path(directory) / ("a" * 64 + ".tar.gz")
+            store_root = Path(directory) / "catacomb"
+            store_root.mkdir(mode=0o700)
             output = io.StringIO()
             lifecycle = []
             result = {
@@ -59,7 +62,11 @@ class EnrollmentCommandTests(unittest.TestCase):
                 mock.patch.object(
                     MODULE, "runtime_configuration", return_value=CONFIGURATION
                 ),
-                mock.patch.object(MODULE, "_private_root_owned"),
+                mock.patch.multiple(
+                    MODULE,
+                    _private_root_owned=mock.DEFAULT,
+                    STORE_ROOT=store_root,
+                ),
                 mock.patch.object(
                     MODULE.os,
                     "fstat",
@@ -73,6 +80,11 @@ class EnrollmentCommandTests(unittest.TestCase):
                     "provision_from_backup",
                     return_value=({}, object()),
                 ) as provision,
+                mock.patch.object(
+                    MODULE.t2_catacomb_store,
+                    "CatacombStore",
+                    return_value=object(),
+                ) as open_store,
                 mock.patch.object(
                     MODULE,
                     "warm_sensor",
@@ -118,6 +130,15 @@ class EnrollmentCommandTests(unittest.TestCase):
                         "unfinished_count": 0,
                     },
                 ) as status_report,
+                mock.patch.object(
+                    MODULE,
+                    "run_post_reboot_verification",
+                    return_value={
+                        **result,
+                        "post_reboot_verified": True,
+                        "fingerprint_mutation_performed": False,
+                    },
+                ) as post_reboot_verification,
                 mock.patch.object(MODULE, "notify_user") as notify,
                 redirect_stdout(output),
                 redirect_stderr(io.StringIO()),
@@ -125,16 +146,25 @@ class EnrollmentCommandTests(unittest.TestCase):
                 status = MODULE.main()
             self.assertEqual(status, 1 if enrollment_error is not None else 0)
             self.assertEqual(
-                preflight.called, not live and not recovery and not status_only
+                preflight.called,
+                not live and not recovery and not status_only and not post_reboot,
             )
             self.assertEqual(enrollment.called, live)
             self.assertEqual(reconcile.called, recovery)
             self.assertEqual(status_report.called, status_only)
+            self.assertEqual(post_reboot_verification.called, post_reboot)
             if status_only:
                 select_backup.assert_not_called()
                 warm_sensor.assert_not_called()
                 provision.assert_not_called()
                 self.assertEqual(lifecycle, ["lock"])
+            elif post_reboot:
+                select_backup.assert_not_called()
+                provision.assert_not_called()
+                open_store.assert_called_once_with(
+                    store_root, CONFIGURATION["apple_uid"]
+                )
+                self.assertEqual(lifecycle[:2], ["warm", "lock"])
             else:
                 self.assertEqual(lifecycle[:2], ["warm", "lock"])
             if enrollment_error is not None:
@@ -207,6 +237,11 @@ class EnrollmentCommandTests(unittest.TestCase):
         self.assertIn('"status_only": true', output)
         self.assertIn('"unfinished_count": 0', output)
 
+    def test_post_reboot_verification_needs_no_mutation_acknowledgement(self):
+        output = self.invoke(["--verify-post-reboot"], post_reboot=True)
+        self.assertIn('"post_reboot_verified": true', output)
+        self.assertIn('"fingerprint_mutation_performed": false', output)
+
     def test_status_redacts_journal_identity_and_reports_recovery_eligibility(self):
         histories = [
             (
@@ -216,14 +251,29 @@ class EnrollmentCommandTests(unittest.TestCase):
                 ),
             )
         ]
-        with mock.patch.object(
-            MODULE, "unfinished_enrollment_journals", return_value=histories
-        ):
+        with mock.patch.object(MODULE, "enrollment_journals", return_value=histories):
             result = MODULE.enrollment_status()
         self.assertEqual(result["unfinished_count"], 1)
         self.assertEqual(result["unfinished_phases"], {"outcome-unknown": 1})
         self.assertTrue(result["automatic_no_change_recovery_candidate"])
         self.assertNotIn("identifier-one", repr(result))
+
+    def test_pending_e4_blocks_another_live_enrollment(self):
+        pending = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.RECONCILED,
+            terminal_identity_uuid="private-identity",
+        )
+        with mock.patch.object(
+            MODULE, "enrollment_journals", return_value=[(Path("private"), pending)]
+        ):
+            result = MODULE.enrollment_status()
+            self.assertEqual(result["post_reboot_pending_count"], 1)
+            self.assertTrue(result["post_reboot_verification_candidate"])
+            self.assertTrue(result["live_enrollment_blocked"])
+            with self.assertRaisesRegex(
+                MODULE.EnrollmentCommandError, "post-reboot verification"
+            ):
+                MODULE.require_no_unfinished_enrollment()
 
     def test_recovery_rejects_mixed_unfinished_journals(self):
         histories = [
@@ -247,6 +297,70 @@ class EnrollmentCommandTests(unittest.TestCase):
             self.assertRaisesRegex(MODULE.EnrollmentCommandError, "exactly one"),
         ):
             MODULE.run_outcome_unknown_reconciliation(CONFIGURATION, object())
+
+    def test_post_reboot_verifier_composes_fresh_readback_without_identity_output(self):
+        class Context:
+            def __init__(self, value):
+                self.value = value
+
+            def __enter__(self):
+                return self.value
+
+            def __exit__(self, *_args):
+                return None
+
+        history = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.RECONCILED,
+            terminal_identity_uuid="private-identity",
+            baseline={"apple_uid": 501, "mapping_generation": "d" * 64},
+            operation_id="private-operation",
+        )
+        live = {"per_user_identity_records": [{"private": True}]}
+        verified = SimpleNamespace(
+            phase=MODULE.t2_enrollment_journal.EnrollmentPhase.POST_REBOOT_VERIFIED
+        )
+        lease = object()
+        boot_uuid = "00000000-0000-0000-0000-000000000003"
+        with tempfile.TemporaryDirectory() as directory:
+            boot = Path(directory) / "boot_id"
+            boot.write_text(f"{boot_uuid}\n")
+            with (
+                mock.patch.object(
+                    MODULE,
+                    "enrollment_journals",
+                    return_value=[(Path("/private/journal"), history)],
+                ),
+                mock.patch.object(MODULE, "keybag_runtime", return_value=(1, 9)),
+                mock.patch.object(MODULE, "_port", return_value=55555),
+                mock.patch.object(MODULE, "BOOT_ID", boot),
+                mock.patch.object(
+                    MODULE.t2_bridge_connection.BridgeConnectionLease,
+                    "connect",
+                    return_value=Context(lease),
+                ),
+                mock.patch.object(
+                    MODULE.t2_bridge_inventory,
+                    "collect_stable_private_inventory",
+                    return_value=live,
+                ),
+                mock.patch.object(
+                    MODULE.t2_enrollment_finalizer,
+                    "read_local_host_snapshot",
+                    return_value={"private": "host"},
+                ),
+                mock.patch.object(
+                    MODULE.t2_enrollment_reconciliation,
+                    "append_post_reboot_verified",
+                    return_value=verified,
+                ) as append,
+            ):
+                result = MODULE.run_post_reboot_verification(
+                    CONFIGURATION, object()
+                )
+        self.assertTrue(result["post_reboot_verified"])
+        self.assertNotIn("private-identity", repr(result))
+        self.assertNotIn("private-operation", repr(result))
+        self.assertEqual(append.call_args.kwargs["linux_boot_uuid"], boot_uuid)
 
     def test_unfinished_journal_blocks_a_new_live_operation(self):
         with tempfile.TemporaryDirectory() as directory:

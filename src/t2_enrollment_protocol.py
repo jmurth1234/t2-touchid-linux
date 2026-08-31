@@ -243,19 +243,17 @@ def validate_status_payload(event: ServiceEvent) -> None:
         raise EnrollmentProtocolError("status payload length is inconsistent")
 
 
-def validate_sks_lock_state_payload(
-    event: ServiceEvent, *, expected_user_id: int
-) -> None:
-    """Validate an SKS host-side event without retaining its lock state."""
+def validate_sks_lock_state_payload(event: ServiceEvent) -> None:
+    """Validate an SKS host-side event without retaining its user or state."""
     if event.version != 1:
         raise EnrollmentProtocolError("unsupported SKS lock-state event version")
     if len(event.payload) < SKS_LOCK_STATE_PAYLOAD.size:
         raise EnrollmentProtocolError("SKS lock-state payload is truncated")
-    user_id, _lock_state = SKS_LOCK_STATE_PAYLOAD.unpack_from(event.payload)
-    if user_id != expected_user_id:
-        raise EnrollmentProtocolError(
-            "SKS lock-state event belongs to another Apple user"
-        )
+    # The exact daemon deliberately routes this auxiliary notification using
+    # the user ID carried by the event; it does not bind that ID to the active
+    # biometric operation. Decode only to prove the recovered field layout.
+    # Neither value is allowed to select or advance an enrollment identity.
+    SKS_LOCK_STATE_PAYLOAD.unpack_from(event.payload)
 
 
 class EnrollmentStateMachine:
@@ -335,14 +333,13 @@ class EnrollmentStateMachine:
         # uint32 Apple user ID and uint16 SKS state. It can synchronize the
         # template list, save the bio-lockout record, cancel a tokenless unlock
         # match, notify observers, and log. None of those side effects advances
-        # or terminates enrollment. Bind the event to the operation's pinned
-        # Apple user and leave persistence to the finalizer; malformed or
-        # cross-user records remain fail-closed.
+        # or terminates enrollment. The daemon routes this ambient notification
+        # by the user ID inside the record, which may differ from the active
+        # operation. Leave persistence to the finalizer; malformed records
+        # remain fail-closed and this event can never select an identity.
         if event.envelope_type == SERVICE_SKS_LOCK_STATE:
             try:
-                validate_sks_lock_state_payload(
-                    event, expected_user_id=self.expected_user_id
-                )
+                validate_sks_lock_state_payload(event)
             except EnrollmentProtocolError as error:
                 self.state = EnrollmentState.FROZEN
                 raise EnrollmentProtocolError(

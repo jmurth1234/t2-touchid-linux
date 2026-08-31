@@ -128,6 +128,21 @@ class EnrollmentCoordinatorTests(unittest.TestCase):
         )
         self.assertIsNone(coordinator._safe_stop_detail(RuntimeError("private")))
 
+    def test_deepest_controlled_protocol_detail_is_exposed(self):
+        inner = enrollment_protocol.EnrollmentProtocolError(
+            "SKS lock-state event belongs to another Apple user"
+        )
+        outer = enrollment_protocol.EnrollmentProtocolError(
+            "invalid SKS lock-state auxiliary event"
+        )
+        outer.__cause__ = inner
+        wrapped = RuntimeError("private wrapper")
+        wrapped.__cause__ = outer
+        self.assertEqual(
+            coordinator._safe_stop_detail(wrapped),
+            "SKS lock-state event belongs to another Apple user",
+        )
+
     def run_coordinator(self, directory: str, finalizer):
         lease = FakeLease()
         device = acm_device()

@@ -74,6 +74,20 @@ class ReplyTests(unittest.TestCase):
         self.assertTrue(summary["parsed_ordinal_matches"])
         self.assertNotIn(str(timestamp), str(summary))
 
+    def test_sks_event_summary_exposes_only_shape_and_user_match(self):
+        timestamp = 0x6B158284DB5
+        raw = struct.pack("<QIIQ", 0, 0xE3FF800A, 1, timestamp)
+        raw += struct.pack("<IH", 501, 0x228) + b"opaque"
+        summary = MODULE.summarize_event(
+            [9, 0xE3FF8000, raw, None, None], expected_user_id=501
+        )
+        self.assertEqual(summary["event_kind"], "sks_lock_state")
+        self.assertEqual(summary["event_data_length"], 12)
+        self.assertTrue(summary["user_id_matches_configured"])
+        self.assertNotIn("501", str(summary))
+        self.assertNotIn("552", str(summary))
+        self.assertNotIn("opaque", str(summary))
+
     def full_inventory(self):
         identity = struct.pack("<I", 501) + uuid.UUID(int=1).bytes
         group = struct.pack("<I", 1) + uuid.UUID(int=2).bytes

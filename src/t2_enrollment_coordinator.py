@@ -25,15 +25,16 @@ def _safe_stop_detail(error: BaseException) -> str | None:
     """Expose only controlled adapter diagnostics, never arbitrary text."""
     current: BaseException | None = error
     seen: set[int] = set()
+    detail: str | None = None
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         if isinstance(current, t2_enrollment_bridge.EnrollmentBridgeError):
-            return str(current)
-        if isinstance(current, t2_enrollment_protocol.EnrollmentProtocolError):
-            return str(current)
+            detail = str(current)
+        elif isinstance(current, t2_enrollment_protocol.EnrollmentProtocolError):
+            detail = str(current)
         cause = current.__cause__
         current = cause if isinstance(cause, BaseException) else None
-    return None
+    return detail
 
 
 def _stopped(error: BaseException) -> EnrollmentCoordinatorError:

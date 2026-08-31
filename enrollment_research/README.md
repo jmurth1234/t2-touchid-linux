@@ -118,12 +118,15 @@ only when the stable host/SEP snapshot still equals E0. It refuses automatic
 recovery if a new identity or any persistent delta is visible, and the live
 path refuses a new operation while an earlier journal is unfinished.
 
-E4 post-reboot verification is now a typed journal gate, not a live command. A
-successful enrollment can cross it only on a genuinely new Linux boot and
-Bridge connection while reproducing the E3 snapshot, mapping, account/bag,
-identity, protocol, host/SEP equality, and keybag-ready state. Failed enrollment
-transactions cannot manufacture E4, and this repository does not trigger the
-required reboot.
+E4 post-reboot verification is both a typed journal gate and a read-only broker
+mode, `--verify-post-reboot`. A successful enrollment can cross it only on a
+genuinely new Linux boot and Bridge connection while reproducing the E3
+snapshot, mapping, account/bag, identity, protocol, host/SEP equality, and
+keybag-ready state. The verifier opens the already-mutated local Catacomb
+directly; it never restores the original backup over it. Failed enrollment
+transactions cannot manufacture E4, and the repository does not trigger the
+required reboot. A successful E3 awaiting E4 blocks another enrollment so its
+exact snapshot cannot be displaced before verification.
 
 ## Current boundary
 
@@ -229,7 +232,8 @@ and console progress are strictly best-effort; desktop-bus failure or a closed
 stdout cannot change an authorized enrollment or persistence outcome.
 The read-only `--status-only` mode takes the operation lock but skips sensor
 warm-up and store provisioning. It emits only unfinished phase counts and a
-no-change recovery-candidate boolean, never journal paths or operation IDs.
+no-change recovery-candidate boolean, plus the count/eligibility of pending E4
+verification, never journal paths, operation IDs, or identity UUIDs.
 Automatic recovery requires that this be the sole unfinished journal; a mixed
 unfinished set is rejected before Bridge is opened.
 
@@ -280,11 +284,13 @@ matching-daemon code identifies this as an SKS lock-state notification, accepts
 at least six payload bytes (32-bit Apple user ID plus 16-bit state), and may
 synchronize the template list, save the bio-lockout record, cancel a tokenless
 unlock match, notify observers, and emit analytics according to its state bits.
-Those effects do not advance enrollment itself. The reducer therefore validates
-the version, minimum shape, and equality to the operation's pinned Apple user,
-then treats it as an auxiliary event while the finalizer owns bio-lockout host
-persistence. It never emits enrollment feedback or sends continue for this
-type.
+Those effects do not advance enrollment itself. A later approved run proved
+that this ambient notification's user can differ from the active enrollment
+user. That matches the exact daemon, which routes the record using its own user
+field rather than requiring equality with the active operation. The reducer now
+validates only the exact version and minimum shape, treats it as an auxiliary
+event, and never lets it select an identity, emit enrollment feedback, or send
+continue. The finalizer still owns persistence for the enrolled user.
 
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements

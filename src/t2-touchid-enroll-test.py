@@ -284,7 +284,7 @@ UNFINISHED_PHASES = frozenset(
 )
 
 
-def unfinished_enrollment_journals() -> list[
+def enrollment_journals() -> list[
     tuple[Path, t2_enrollment_journal.EnrollmentHistory]
 ]:
     _private_root_owned(MUTATION_ROOT, directory=True)
@@ -298,21 +298,52 @@ def unfinished_enrollment_journals() -> list[
                 "mutation journal directory contains an unexpected entry"
             )
         _private_root_owned(entry, directory=False)
-        history = t2_enrollment_journal.read(entry)
-        if history.phase in UNFINISHED_PHASES:
-            found.append((entry, history))
+        found.append((entry, t2_enrollment_journal.read(entry)))
     return found
 
 
+def unfinished_enrollment_journals() -> list[
+    tuple[Path, t2_enrollment_journal.EnrollmentHistory]
+]:
+    return [
+        item for item in enrollment_journals() if item[1].phase in UNFINISHED_PHASES
+    ]
+
+
+def pending_post_reboot_journals() -> list[
+    tuple[Path, t2_enrollment_journal.EnrollmentHistory]
+]:
+    return [
+        item
+        for item in enrollment_journals()
+        if item[1].phase is t2_enrollment_journal.EnrollmentPhase.RECONCILED
+        and item[1].terminal_identity_uuid is not None
+    ]
+
+
 def require_no_unfinished_enrollment() -> None:
-    if unfinished_enrollment_journals():
+    journals = enrollment_journals()
+    unfinished = any(history.phase in UNFINISHED_PHASES for _path, history in journals)
+    pending_post_reboot = any(
+        history.phase is t2_enrollment_journal.EnrollmentPhase.RECONCILED
+        and history.terminal_identity_uuid is not None
+        for _path, history in journals
+    )
+    if unfinished or pending_post_reboot:
         raise EnrollmentCommandError(
-            "an earlier enrollment journal is unfinished; reconcile it before retrying"
+            "an earlier enrollment is unfinished or awaiting post-reboot verification"
         )
 
 
 def enrollment_status() -> dict[str, object]:
-    unfinished = unfinished_enrollment_journals()
+    journals = enrollment_journals()
+    unfinished = [item for item in journals if item[1].phase in UNFINISHED_PHASES]
+    pending_post_reboot = [
+        item
+        for item in journals
+        if item[1].phase is t2_enrollment_journal.EnrollmentPhase.RECONCILED
+        and item[1].terminal_identity_uuid is not None
+    ]
     phases: dict[str, int] = {}
     for _path, history in unfinished:
         name = history.phase.value
@@ -327,7 +358,9 @@ def enrollment_status() -> dict[str, object]:
         "status_only": True,
         "unfinished_count": len(unfinished),
         "unfinished_phases": dict(sorted(phases.items())),
-        "live_enrollment_blocked": bool(unfinished),
+        "post_reboot_pending_count": len(pending_post_reboot),
+        "post_reboot_verification_candidate": len(pending_post_reboot) == 1,
+        "live_enrollment_blocked": bool(unfinished or pending_post_reboot),
         "automatic_no_change_recovery_candidate": recovery_available,
         "identifiers_redacted": True,
         "mutation_performed": False,
@@ -383,6 +416,60 @@ def run_outcome_unknown_reconciliation(
         "persistent_identity_delta": False,
         "identifiers_redacted": True,
         "fingerprint_mutation_performed": False,
+    }
+
+
+def run_post_reboot_verification(
+    configuration: dict[str, object], store: t2_catacomb_store.CatacombStore
+) -> dict[str, object]:
+    candidates = pending_post_reboot_journals()
+    if len(candidates) != 1:
+        raise EnrollmentCommandError(
+            "post-reboot verification requires exactly one reconciled identity journal"
+        )
+    journal_path, history = candidates[0]
+    if (
+        history.baseline["apple_uid"] != configuration["apple_uid"]
+        or history.baseline["mapping_generation"]
+        != configuration["mapping_generation"]
+    ):
+        raise EnrollmentCommandError(
+            "post-reboot journal belongs to another mapping"
+        )
+    keybag_runtime(configuration["special_bag"])
+    host = t2_enrollment_finalizer.read_local_host_snapshot(
+        store, history.baseline
+    )
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"],
+        configuration["interface"],
+        _port(),
+        timeout=60,
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        verified = t2_enrollment_reconciliation.append_post_reboot_verified(
+            journal_path,
+            history.operation_id,
+            host=host,
+            live=live,
+            linux_boot_uuid=BOOT_ID.read_text().strip(),
+            mapping_generation=configuration["mapping_generation"],
+            keybag_runtime_revalidated=True,
+        )
+    if (
+        verified.phase
+        is not t2_enrollment_journal.EnrollmentPhase.POST_REBOOT_VERIFIED
+    ):
+        raise EnrollmentCommandError("post-reboot verification did not reach E4")
+    return {
+        "schema_version": 1,
+        "post_reboot_verified": True,
+        "identity_count": len(live["per_user_identity_records"]),
+        "identifiers_redacted": True,
+        "fingerprint_mutation_performed": False,
+        "journal_updated": True,
     }
 
 
@@ -477,6 +564,7 @@ def main() -> int:
     mode.add_argument("--preflight-only", action="store_true")
     mode.add_argument("--reconcile-outcome-unknown", action="store_true")
     mode.add_argument("--status-only", action="store_true")
+    mode.add_argument("--verify-post-reboot", action="store_true")
     parser.add_argument("--identity-name", default="Linux enrolled finger")
     parser.add_argument(
         "--acknowledge-password-fallback-tested", action="store_true"
@@ -493,6 +581,7 @@ def main() -> int:
     if (
         not args.reconcile_outcome_unknown
         and not args.status_only
+        and not args.verify_post_reboot
         and not args.acknowledge_password_fallback_tested
     ):
         parser.error("password-fallback acknowledgement is required")
@@ -500,6 +589,7 @@ def main() -> int:
         not args.preflight_only
         and not args.reconcile_outcome_unknown
         and not args.status_only
+        and not args.verify_post_reboot
     )
     if live_enrollment and not (
         args.acknowledge_live_fingerprint_enrollment
@@ -520,8 +610,10 @@ def main() -> int:
         configuration = runtime_configuration()
         _private_root_owned(STATE_ROOT, directory=True)
         _private_root_owned(MUTATION_ROOT, directory=True)
+        backup: Path | None = None
         if not args.status_only:
-            backup = select_backup()
+            if not args.verify_post_reboot:
+                backup = select_backup()
             # The readiness service takes OPERATION_LOCK itself, so this must
             # finish before the broker acquires its long-lived operation lock.
             warm_sensor()
@@ -540,7 +632,21 @@ def main() -> int:
             fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if args.status_only:
                 result = enrollment_status()
+            elif args.verify_post_reboot:
+                if not os.path.lexists(STORE_ROOT):
+                    raise EnrollmentCommandError(
+                        "post-reboot verification requires the existing local Catacomb"
+                    )
+                store = t2_catacomb_store.CatacombStore(
+                    STORE_ROOT, configuration["apple_uid"]
+                )
+                result = run_post_reboot_verification(configuration, store)
+                result["local_store_provisioned"] = False
             else:
+                if backup is None:
+                    raise EnrollmentCommandError(
+                        "protected Catacomb backup selection was skipped"
+                    )
                 store_preexisting = os.path.lexists(STORE_ROOT)
                 host_inventory, store = t2_catacomb_local.provision_from_backup(
                     backup, STORE_ROOT, configuration["apple_uid"]

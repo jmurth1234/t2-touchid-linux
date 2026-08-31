@@ -1308,8 +1308,11 @@ digest, protected mapping, account UUID, bag UUID, identity UUID, and protocol
 remain unchanged. The snapshot digest itself includes the account and bag
 bindings. Double collection, host/SEP identity equality, binding preservation,
 and keybag runtime revalidation must all be literal true. Generic failures have
-no identity and cannot reach E4. This is an offline validation rule only; no
-collector, compactor, reboot action, or mapping-publication action is supplied.
+no identity and cannot reach E4. The read-only broker collector opens the
+already-mutated local Catacomb directly and appends E4 only after those checks;
+it does not restore the original backup or initiate a reboot. Another enrollment
+is blocked while E4 is pending so the reconciled snapshot cannot be displaced.
+Compaction and mapping publication remain separate work.
 
 ### Single and batched deletion milestones
 
@@ -5323,12 +5326,13 @@ The fifth approved attempt crossed that boundary and froze on version-1
 `0xe3ff800a`; fresh stable reconciliation again proved no identity or Catacomb
 delta. This is the matching daemon's already recovered SKS lock-state branch.
 It requires version 1 and at least six payload bytes, reads a 32-bit Apple user
-ID and 16-bit state, and routes the event only to analytics and structured
-logging. The enrollment reducer now mirrors that exact minimum boundary and
-requires the event's user to equal the operation's pinned Apple user before
-ignoring it as deduplicated telemetry. It emits no feedback, sends no continue,
-and cannot complete enrollment. A short, wrong-version, or cross-user record
-still freezes the operation.
+ID and 16-bit state, and performs the state-dependent host work described above.
+A later approved run proved the ambient event's user need not equal the active
+enrollment user, matching the exact daemon's use of the embedded user as a
+routing argument rather than an operation binding. The reducer now mirrors that
+boundary while ensuring the auxiliary event cannot select an identity, emit
+feedback, send continue, or complete enrollment. A short or wrong-version
+record still freezes the operation.
 
 The incident also closed a recovery gap. The broker now blocks new live
 enrollment while any mutation journal is unfinished. Its dedicated recovery
