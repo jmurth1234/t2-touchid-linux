@@ -174,6 +174,31 @@ their version-1 command wrapper under biometric protocol 2, and device maximum
 capacity (`0x0f`) cannot be combined arithmetically with configured-user free
 capacity (`0x41`). No biometric or Catacomb mutation was performed.
 
+The same-generation daemon and `CatacombStateCache` implementation also close
+the protocol-v2 component-layout gap. A component is exactly 24 bytes:
+`userID:u32 + groupType:u32 + groupUUID[16]`. Canonical built-in user and master
+components have a zero group record; master uses `userID == UINT32_MAX`.
+Command `0x3c` returns 8-byte `userID + state` records, command `0x50` returns a
+24-byte component plus a 4-byte state, and state bit `0x04` selects components
+for saving. The Linux parser now constructs only a selected-user-then-master
+save plan and fails closed on malformed, duplicate, or unexpected dirty state.
+
+A second read-only hardware run on 2026-08-31 exercised that typed parser over
+the owned connection. Two byte-identical reads returned exactly one master and
+one selected-user state record; the selected user carried save bit `0x04` and
+master did not. The output was redacted to kinds and booleans, and no Catacomb
+or biometric mutation was dispatched.
+
+The concrete no-CLI finalizer is now implemented. It double-reads the post-E2
+save state, constructs only the exact user/master descriptors, obtains both SEP
+secure blobs in user-then-master order, adds the provisional identity to the
+strict local archive, increments the master generation/time, crosses the
+crash-safe host commit boundary before final confirm, and performs stable
+same-generation SEP/host read-back before E3. Its end-to-end test uses the real
+codecs, store, journal, transport adapter, and classifier. A synthetic
+post-commit read-back disconnect becomes durable outcome-unknown rather than a
+success or rollback. The module still has no live command.
+
 The proven machine's copied macOS archive now passes the executable fixture
 check for the user, master, and bio-lockout components: original strict schemas,
 neutral semantic re-emission, independent-oracle read-back, opaque secure-data
@@ -185,8 +210,8 @@ The following remain disabled or unverified:
 
 - final biometric-consumer acceptance, replay, and one-shot behavior for the
   freshly authorized mode-0 ACM context;
-- live persistence/finalizer integration and fault-injection rehearsal for the
-  same-connection coordinator;
+- a deliberately gated live enrollment producer and explicit mutation approval;
+- broader crash/fault rehearsal around the concrete coordinator boundary;
 - creation of new AppleKeyStore/OpenDirectory/APFS users from Linux;
 - whole-biometric-user removal with command `0x48`;
 - writing Linux-generated Catacombs back into macOS; and

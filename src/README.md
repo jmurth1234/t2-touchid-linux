@@ -165,12 +165,16 @@ transport and temporary Catacomb copies; no live adapter or command exists.
 `t2_catacomb_protocol.py` captures the exact non-sending command boundary
 recovered from the matching daemon: prepare `0x3d` returns one 32-bit expected
 secure-blob length, complete `0x3e` must return exactly that many bytes, and
-confirm `0x3f` returns no payload. Every command carries the opaque component
-descriptor unchanged (4 bytes for protocol v1, 24 bytes for v2). The pure
-builders/parsers reject nonzero status, malformed descriptors, zero or
-unbounded sizes, length drift, immutable complete buffers, and unexpected
-confirm output. They do not interpret the still-opaque v2 descriptor and do
-not open BridgeXPC or expose a command.
+confirm `0x3f` returns no payload. Every command carries the component descriptor
+unchanged (4 bytes for protocol v1, 24 bytes for v2). The v2 value is decoded
+exactly as `userID:u32 + groupType:u32 + groupUUID[16]`; typed constructors
+distinguish canonical user, master, and group components. The same module parses
+exact `0x3c` 8-byte user-state and `0x50` 28-byte group-state records and derives
+a built-in enrollment save list only when the selected user is the sole dirty
+non-master component, always placing master last. The pure builders/parsers
+reject nonzero status, malformed descriptors, zero or unbounded sizes, length
+drift, immutable complete buffers, and unexpected confirm output. They do not
+open BridgeXPC or expose a command.
 
 `t2_catacomb_bridge.py` is the next bounded composition layer. A future broker
 must inject an already-open exclusive Bridge lease; this module creates no
@@ -194,7 +198,16 @@ matches the classifier's stable read-back. A generic failure reconciles
 only to a byte-for-byte unchanged persistent state; if stable read-back reveals
 a new UUID despite that failure, the journal first promotes it to a provisional
 E2 identity. These modules perform no I/O and no persistence themselves, and
-there is still no live producer for the persistence milestones.
+there is no command-line producer for the persistence milestones.
+
+`t2_enrollment_finalizer.py` is the concrete no-CLI producer. It derives the
+post-E2 built-in save list on the owned connection, composes the strict
+user/master encoders with `CatacombBridgeTransport` and `CatacombStore`,
+performs stable same-generation SEP and independent local archive read-back,
+and appends E3 only when the snapshot digest agrees. A real-codec end-to-end
+test reaches E3; an injected read-back disconnect after commit is durably
+outcome-unknown. A privileged, explicitly acknowledged broker is still required
+before hardware enrollment is exposed.
 
 The typed journal also defines `E4_POST_REBOOT_VERIFIED` for a successful
 identity. It is accepted only after E3, on both a different Linux boot UUID and

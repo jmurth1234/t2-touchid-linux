@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import t2_catacomb_codec as codec
 import t2_catacomb_bridge as bridge
+import t2_catacomb_protocol as catacomb_protocol
 import t2_catacomb_store as store_module
 import t2_enrollment_journal as enrollment
 import t2_enrollment_persistence_operation as operation
@@ -125,8 +126,14 @@ class PersistenceOperationTests(unittest.TestCase):
         )
         self.specs = (
             (
-                operation.ComponentSpec("user_000001f5.cat", b"u" * 24),
-                operation.ComponentSpec("master.cat", b"m" * 24),
+                operation.ComponentSpec(
+                    "user_000001f5.cat",
+                    catacomb_protocol.CatacombComponent.user(501).descriptor,
+                ),
+                operation.ComponentSpec(
+                    "master.cat",
+                    catacomb_protocol.CatacombComponent.master().descriptor,
+                ),
             ),
         )
         self.encoded_buffers = []
@@ -264,6 +271,31 @@ class PersistenceOperationTests(unittest.TestCase):
                 self.journal,
                 self.operation_id,
                 batches=reversed_specs,
+                transport=transport,
+                encoder=self.encode,
+                store=store_module.CatacombStore(self.root, 501),
+                readback=self.readback,
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_component_name_cannot_be_bound_to_another_descriptor(self):
+        transport = FakeTransport()
+        mismatched = (
+            (
+                operation.ComponentSpec(
+                    "user_000001f5.cat",
+                    catacomb_protocol.CatacombComponent.user(502).descriptor,
+                ),
+                self.specs[0][1],
+            ),
+        )
+        with self.assertRaisesRegex(
+            operation.PersistenceOperationError, "another target"
+        ):
+            operation.run(
+                self.journal,
+                self.operation_id,
+                batches=mismatched,
                 transport=transport,
                 encoder=self.encode,
                 store=store_module.CatacombStore(self.root, 501),

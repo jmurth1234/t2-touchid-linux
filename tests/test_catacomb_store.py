@@ -70,6 +70,14 @@ class CatacombStoreTests(unittest.TestCase):
         self.assert_root_is(self.new)
         self.assertFalse((self.root / "commit").exists())
 
+    def test_committed_readback_requires_complete_clean_valid_set(self):
+        self.assertEqual(self.store.read_committed_components(), self.old)
+        hashes = self.store.stage(self.new)
+        with self.assertRaisesRegex(store_module.CatacombStoreError, "incomplete"):
+            self.store.read_committed_components()
+        self.store.cross_commit_boundary(hashes)
+        self.assertEqual(self.store.read_committed_components(), self.new)
+
     def test_components_can_be_staged_durably_in_protocol_order(self):
         expected_names = set(self.new)
         hashes = {}

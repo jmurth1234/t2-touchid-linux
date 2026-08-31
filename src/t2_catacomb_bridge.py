@@ -35,6 +35,8 @@ class BridgeLease(Protocol):
         output_capacity: int,
     ) -> tuple[object, list[object]]: ...
 
+    def invalidate(self) -> None: ...
+
 
 class TransactionState(Enum):
     IDLE = "idle"
@@ -45,6 +47,74 @@ class TransactionState(Enum):
 
 def _wipe(value: bytearray) -> None:
     value[:] = b"\x00" * len(value)
+
+
+def collect_builtin_save_components(
+    lease: BridgeLease,
+    *,
+    apple_user_id: int,
+    connection_generation: str,
+) -> tuple[protocol.CatacombComponent, ...]:
+    """Double-read post-E2 state and derive one exact built-in save list."""
+    try:
+        parsed_generation = uuid.UUID(connection_generation)
+        if str(parsed_generation) != connection_generation:
+            raise CatacombBridgeError("connection generation is not canonical")
+        if lease.connection_generation != connection_generation:
+            raise CatacombBridgeError("Bridge lease belongs to another generation")
+        protocol.CatacombComponent.user(apple_user_id)
+    except (AttributeError, TypeError, ValueError, protocol.CatacombProtocolError) as error:
+        if isinstance(error, CatacombBridgeError):
+            raise
+        raise CatacombBridgeError("Catacomb save-state request is invalid") from error
+
+    dispatched = False
+    try:
+        outputs: list[bytes] = []
+        for _attempt in range(2):
+            dispatched = True
+            reply, events = lease.biometric_command(
+                0x3C,
+                # The command wrapper remains version 1 under biometric protocol 2.
+                version=1,
+                value=0,
+                data=b"",
+                output_capacity=4096,
+            )
+            if lease.connection_generation != connection_generation:
+                raise CatacombBridgeError("Bridge connection generation changed")
+            if type(events) is not list or events:
+                raise CatacombBridgeError(
+                    "Catacomb save-state query emitted an unexpected event"
+                )
+            if (
+                type(reply) is not list
+                or len(reply) != 2
+                or type(reply[0]) is not int
+                or isinstance(reply[0], bool)
+                or reply[0] != 0
+                or type(reply[1]) is not bytes
+                or len(reply[1]) > 4096
+            ):
+                raise CatacombBridgeError("Catacomb save-state reply is malformed")
+            outputs.append(reply[1])
+        if outputs[0] != outputs[1]:
+            raise CatacombBridgeError("Catacomb save state changed between reads")
+        states = protocol.parse_user_states(outputs[0])
+        return protocol.plan_builtin_enrollment_save(states, apple_user_id)
+    except BaseException as error:
+        if dispatched:
+            try:
+                lease.invalidate()
+            except BaseException:
+                pass
+        if isinstance(error, CatacombBridgeError):
+            raise
+        if isinstance(error, protocol.CatacombProtocolError):
+            raise CatacombBridgeError("Catacomb save state is unsafe") from error
+        raise CatacombBridgeError(
+            "Catacomb save-state collection failed; reconciliation is required"
+        ) from error
 
 
 class CatacombBridgeTransport:

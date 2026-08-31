@@ -2019,11 +2019,13 @@ SEP ownership before any enrollment-management implementation:
    Query Catacomb hash with `0x3a` (same input, exact 33-byte output): byte 0 is
    a presence/validity flag and bytes 1..32 are the hash returned to the host.
 6. Optionally read global Catacomb state with `0x3c`, requiring a reply divisible
-   by 8 (`catacomb_state_v1_t`). Protocol v2 additionally provides group state
-   with `0x50`, requiring a reply divisible by 28
-   (`catacomb_group_state_v1_t`, consistent with a 20-byte group identity plus
-   8-byte state). Treat the fields as opaque until their complete meanings are
-   recovered, and never pass these buffers into a save/load command.
+   by 8. Same-generation `CatacombStateCache` code proves each record is exactly
+   `userID:u32 + state:u32`; `userID == UINT32_MAX` names the master component.
+   Protocol v2 additionally provides group state with `0x50`, requiring a reply
+   divisible by 28. Each record is the complete 24-byte component descriptor
+   (`userID:u32 + groupType:u32 + groupUUID[16]`) followed by `state:u32`.
+   Bit `0x04` marks a component for saving. Reject malformed or duplicate records
+   rather than passing them into a save/load command.
 7. Compare the discovered Apple IDs and identity UUIDs with the root-owned
    Linux mapping. Report unmapped, stale, duplicate, and cross-user UUID entries
    without automatically repairing any of them.
@@ -5197,10 +5199,19 @@ coordinator builds the guarded journal from that E0, enters the ACM-authorized
 callback, drives the enrollment adapter, and requires a same-generation typed
 finalizer before returning. A provisional identity requires both persistence
 readiness and completed reconciliation; disagreement invalidates Bridge while
-ACM deletion still occurs. Hardware remains unreachable from this composition
-because it deliberately has no command-line entry point or concrete persistence
-finalizer. The remaining pre-experiment work is fault-injection of that finalizer
-and wiring the already-tested Catacomb persistence/reconciliation operations.
+ACM deletion still occurs.
+
+The concrete finalizer now double-reads typed post-E2 state, accepts only the
+selected built-in user as the dirty non-master component, saves user then
+master, commits independently decoded Linux-local archives before final SEP
+confirm, and requires stable SEP/host E3 read-back. Its real-codec composition
+test reaches reconciled E3, while an injected post-commit read-back disconnect
+becomes durable outcome-unknown. A read-only hardware run confirmed exactly one
+master and one selected-user `0x3c` record on the target; only the selected user
+had bit `0x04` set. No mutation was performed. Hardware remains unreachable
+from this composition because it deliberately has no command-line entry point.
+The remaining pre-experiment work is a gated privileged broker and broader
+fault rehearsal.
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.
 - Treat producer-side decomposition of generic enrollment failure 67 as
@@ -5341,6 +5352,12 @@ fingerprint setup.
 - Same-generation `BiometricKitXPCServer` used to separate Darwin enrollment
   notifications and Catacomb reconciliation from ACM command `0x0e`:
   https://github.com/EthanArbuckle/iPhone18-3_26.1_23B85_Restore/blob/main/System/Library/PrivateFrameworks/BiometricSupport.framework/BiometricSupport/BiometricKitXPCServer.mm
+- Same-generation `CatacombComponent` and `CatacombStateCache` implementations
+  used to recover the exact 24-byte descriptor, master sentinel, 8/28-byte
+  state records, dirty bit, and master-last save-list construction:
+  https://github.com/EthanArbuckle/iPhone18-3_26.1_23B85_Restore/blob/main/System/Library/PrivateFrameworks/BiometricSupport.framework/BiometricSupport/CatacombComponent.mm
+  and
+  https://github.com/EthanArbuckle/iPhone18-3_26.1_23B85_Restore/blob/main/System/Library/PrivateFrameworks/BiometricSupport.framework/BiometricSupport/CatacombStateCache.mm
 - Independent iOS 18.2 cross-check of the fail-open permission dispatcher:
   https://github.com/EthanArbuckle/iPhone17-1_18.2_22C152_Restore/blob/main/System/Library/PrivateFrameworks/BiometricSupport.framework/BiometricKitXPCExportedObject.m
 - Same-generation iOS 26.1 BiometricKitUI enrollment-controller decompilation

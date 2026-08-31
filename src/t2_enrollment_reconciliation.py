@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import t2_enrollment_journal as enrollment_journal
+import t2_enrollment_persistence_journal as persistence_journal
 import t2_mutation_journal as mutation_journal
 
 
@@ -162,10 +163,14 @@ def classify(
 ) -> ReconciliationPlan:
     if not isinstance(host, dict) or not isinstance(live, dict):
         raise EnrollmentReconciliationError("E3 snapshots are not mappings")
+    persistence_readback = (
+        history.phase is enrollment_journal.EnrollmentPhase.PERSISTING
+        and history.persistence.phase is persistence_journal.PersistencePhase.ATTESTATION_READY
+    )
     if history.phase not in (
         enrollment_journal.EnrollmentPhase.PERSISTENCE_READY,
         enrollment_journal.EnrollmentPhase.TERMINAL_FAILURE,
-    ):
+    ) and not persistence_readback:
         raise EnrollmentReconciliationError("journal is not ready for E3")
     baseline = history.baseline
     apple_uid = baseline["apple_uid"]
@@ -268,7 +273,8 @@ def classify(
     ):
         raise EnrollmentReconciliationError("master enrollment count is invalid")
     identity_uuid = next(iter(added))[1] if added else None
-    if history.phase is enrollment_journal.EnrollmentPhase.PERSISTENCE_READY:
+    persistence_success = history.phase is enrollment_journal.EnrollmentPhase.PERSISTENCE_READY or persistence_readback
+    if persistence_success:
         if identity_uuid != history.terminal_identity_uuid:
             raise EnrollmentReconciliationError(
                 "E2 identity does not match stable read-back"

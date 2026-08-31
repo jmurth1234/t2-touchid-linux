@@ -10,6 +10,7 @@ from typing import Callable, Protocol
 
 import t2_enrollment_journal as enrollment_journal
 import t2_mutation_journal as mutation_journal
+import t2_catacomb_protocol as catacomb_protocol
 
 
 class PersistenceOperationError(RuntimeError):
@@ -129,6 +130,8 @@ def _validate_components(
         )
     if not batches:
         raise PersistenceOperationError("persistence has no component batches")
+    apple_user_id = history.baseline["apple_uid"]
+    expected_user_name = f"user_{apple_user_id:08x}.cat"
     for batch in batches:
         if not batch:
             raise PersistenceOperationError("persistence has an empty batch")
@@ -142,6 +145,24 @@ def _validate_components(
                 raise PersistenceOperationError(
                     "persistence component descriptor is invalid"
                 )
+            if component.name in {expected_user_name, "master.cat"}:
+                try:
+                    parsed = catacomb_protocol.CatacombComponent.parse(
+                        component.descriptor
+                    )
+                except catacomb_protocol.CatacombProtocolError as error:
+                    raise PersistenceOperationError(
+                        "persistence component descriptor is invalid"
+                    ) from error
+                expected = (
+                    catacomb_protocol.CatacombComponent.user(apple_user_id)
+                    if component.name == expected_user_name
+                    else catacomb_protocol.CatacombComponent.master()
+                )
+                if parsed != expected:
+                    raise PersistenceOperationError(
+                        "persistence component descriptor is bound to another target"
+                    )
 
 
 def run(

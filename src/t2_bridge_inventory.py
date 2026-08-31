@@ -7,6 +7,8 @@ import struct
 import uuid
 from typing import Protocol
 
+import t2_catacomb_protocol as catacomb_protocol
+
 
 class BridgeInventoryError(RuntimeError):
     """Raised when a same-connection E0 snapshot cannot be trusted."""
@@ -163,8 +165,19 @@ def collect_stable_private_inventory(
             raise BridgeInventoryError("Catacomb UUID reply is invalid")
         if len(catacomb_hash) != 33:
             raise BridgeInventoryError("Catacomb hash reply is invalid")
-        if len(catacomb_state) not in (8, 16):
-            raise BridgeInventoryError("Catacomb state reply is invalid")
+        try:
+            catacomb_states = catacomb_protocol.parse_user_states(catacomb_state)
+        except catacomb_protocol.CatacombProtocolError as error:
+            raise BridgeInventoryError("Catacomb state reply is invalid") from error
+        master = catacomb_protocol.CatacombComponent.master()
+        selected = catacomb_protocol.CatacombComponent.user(apple_user_id)
+        if (
+            sum(record.component == master for record in catacomb_states) != 1
+            or sum(record.component == selected for record in catacomb_states) != 1
+        ):
+            raise BridgeInventoryError(
+                "Catacomb state does not contain unique master and selected-user records"
+            )
         if len(sks_state) != 4:
             raise BridgeInventoryError("SKS state reply is invalid")
         maximum = struct.unpack("<I", maximum_output)[0]
@@ -211,6 +224,15 @@ def collect_stable_private_inventory(
                 "present": bool(catacomb_hash[0]),
                 "hash": catacomb_hash[1:].hex(),
                 "global_state": catacomb_state.hex(),
+                "user_states": [
+                    {
+                        "kind": record.component.kind.value,
+                        "user_id": record.component.user_id,
+                        "state": record.state,
+                        "needs_save": record.needs_save,
+                    }
+                    for record in catacomb_states
+                ],
             },
             "sks_lock_state_raw": struct.unpack("<I", sks_state)[0],
             "double_collection_equal": True,

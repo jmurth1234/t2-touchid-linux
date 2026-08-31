@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 import sys
+import struct
 import unittest
 import uuid
 from pathlib import Path
@@ -18,6 +19,7 @@ class FakeLease:
         self.connection_generation = GENERATION
         self.replies = iter(replies)
         self.calls = []
+        self.invalidated = False
 
     def biometric_command(
         self, command, *, version, value, data, output_capacity
@@ -29,6 +31,9 @@ class FakeLease:
         if isinstance(result, BaseException):
             raise result
         return result
+
+    def invalidate(self):
+        self.invalidated = True
 
 
 def success_replies(length=32):
@@ -69,6 +74,53 @@ class CatacombBridgeTests(unittest.TestCase):
         self.assertNotIn(descriptor.hex(), repr(transport))
         output[:] = bytes(len(output))
         self.assertFalse(any(output))
+
+    def test_post_e2_state_double_read_builds_user_then_master(self):
+        state = (
+            struct.pack("<II", 0xFFFFFFFF, 4)
+            + struct.pack("<II", 501, 4)
+        )
+        lease = FakeLease([([0, state], []), ([0, state], [])])
+        components = bridge.collect_builtin_save_components(
+            lease,
+            apple_user_id=501,
+            connection_generation=GENERATION,
+        )
+        self.assertEqual(
+            [component.kind.value for component in components], ["user", "master"]
+        )
+        self.assertEqual(
+            lease.calls,
+            [
+                (0x3C, 1, 0, b"", 4096),
+                (0x3C, 1, 0, b"", 4096),
+            ],
+        )
+        self.assertFalse(lease.invalidated)
+
+    def test_post_e2_state_ambiguity_invalidates_owned_generation(self):
+        clean = (
+            struct.pack("<II", 0xFFFFFFFF, 0)
+            + struct.pack("<II", 501, 0)
+        )
+        dirty = (
+            struct.pack("<II", 0xFFFFFFFF, 4)
+            + struct.pack("<II", 501, 4)
+        )
+        for replies in (
+            [([0, clean], []), ([0, clean], [])],
+            [([0, clean], []), ([0, dirty], [])],
+            [([0, dirty], [b"event"])],
+        ):
+            lease = FakeLease(replies)
+            with self.subTest(reply_count=len(replies)):
+                with self.assertRaises(bridge.CatacombBridgeError):
+                    bridge.collect_builtin_save_components(
+                        lease,
+                        apple_user_id=501,
+                        connection_generation=GENERATION,
+                    )
+                self.assertTrue(lease.invalidated)
 
     def test_protocol_one_preserves_exact_four_byte_descriptor(self):
         descriptor = b"v1!!"

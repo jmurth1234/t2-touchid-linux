@@ -57,7 +57,11 @@ def snapshot(hash_byte: bytes = b"h") -> dict[int, list[object]]:
         0x41: [0, struct.pack("<I", 2)],
         0x38: [0, uuid.UUID(int=45).bytes],
         0x3A: [0, b"\x01" + hash_byte * 32],
-        0x3C: [0, bytes(16)],
+        0x3C: [
+            0,
+            struct.pack("<II", 0xFFFFFFFF, 0)
+            + struct.pack("<II", 501, 0),
+        ],
         0x27: [0, struct.pack("<I", 552)],
     }
 
@@ -71,6 +75,23 @@ class BridgeInventoryTests(unittest.TestCase):
         self.assertEqual(result["maximum_capacity"], 5)
         self.assertEqual(result["configured_user_free_capacity"], 2)
         self.assertEqual(len(result["per_user_identity_records"]), 1)
+        self.assertEqual(
+            result["catacomb"]["user_states"],
+            [
+                {
+                    "kind": "master",
+                    "user_id": 0xFFFFFFFF,
+                    "state": 0,
+                    "needs_save": False,
+                },
+                {
+                    "kind": "user",
+                    "user_id": 501,
+                    "state": 0,
+                    "needs_save": False,
+                },
+            ],
+        )
         self.assertTrue(result["double_collection_equal"])
         self.assertFalse(lease.invalidated)
         self.assertEqual(len(lease.seen), 18)
@@ -112,6 +133,23 @@ class BridgeInventoryTests(unittest.TestCase):
             inventory.collect_stable_private_inventory(lease, -1)
         self.assertEqual(lease.seen, [])
         self.assertFalse(lease.invalidated)
+
+    def test_catacomb_state_requires_unique_master_and_selected_user(self):
+        for state in (
+            struct.pack("<II", 501, 0),
+            struct.pack("<II", 0xFFFFFFFF, 0),
+            struct.pack("<II", 0xFFFFFFFF, 0) * 2
+            + struct.pack("<II", 501, 0),
+        ):
+            first = snapshot()
+            second = snapshot()
+            first[0x3C] = [0, state]
+            second[0x3C] = [0, state]
+            lease = FakeLease([first, second])
+            with self.subTest(state=state):
+                with self.assertRaises(inventory.BridgeInventoryError):
+                    inventory.collect_stable_private_inventory(lease, 501)
+                self.assertTrue(lease.invalidated)
 
 
 if __name__ == "__main__":
