@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import t2_enrollment_journal
+import t2_identity_delete_journal
 import t2_identity_rename_journal
 import t2_mutation_journal
 
@@ -83,6 +84,23 @@ def _rename_entry(records) -> MutationEntry:
     return MutationEntry("rename", phase.value, not complete, post_reboot)
 
 
+def _delete_entry(records) -> MutationEntry:
+    try:
+        history = t2_identity_delete_journal.validate_history(records)
+    except t2_identity_delete_journal.IdentityDeleteJournalError as error:
+        raise MutationRegistryError("single-delete journal is invalid") from error
+    phase = history.phase
+    post_reboot = (
+        phase is t2_identity_delete_journal.IdentityDeletePhase.RECONCILED
+    )
+    complete = phase in {
+        t2_identity_delete_journal.IdentityDeletePhase.BASELINE,
+        t2_identity_delete_journal.IdentityDeletePhase.ABORTED,
+        t2_identity_delete_journal.IdentityDeletePhase.POST_REBOOT_VERIFIED,
+    }
+    return MutationEntry("delete-one", phase.value, not complete, post_reboot)
+
+
 def scan(root: Path) -> tuple[MutationEntry, ...]:
     if not isinstance(root, Path):
         raise MutationRegistryError("mutation journal root is not a path")
@@ -106,7 +124,9 @@ def scan(root: Path) -> tuple[MutationEntry, ...]:
             result.append(_enrollment_entry(records))
         elif kind == "rename":
             result.append(_rename_entry(records))
-        elif kind in {"delete-one", "delete-batch", "recovery"}:
+        elif kind == "delete-one":
+            result.append(_delete_entry(records))
+        elif kind in {"delete-batch", "recovery"}:
             # No typed completion state exists yet, so these are conservatively
             # owned by their future broker and always block another mutation.
             result.append(MutationEntry(kind, "unrouted", True, False))
