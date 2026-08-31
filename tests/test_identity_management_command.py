@@ -46,6 +46,33 @@ class IdentityManagementCommandTests(unittest.TestCase):
         self.assertTrue(result["identifiers_redacted"])
         self.assertNotIn("operation", result)
 
+    def test_status_counts_delete_and_rename_post_reboot_work(self):
+        entries = (
+            SimpleNamespace(
+                kind="rename",
+                phase="reconciled",
+                blocks_new_mutation=True,
+                post_reboot_pending=True,
+            ),
+            SimpleNamespace(
+                kind="delete-one",
+                phase="outcome-unknown",
+                blocks_new_mutation=True,
+                post_reboot_pending=False,
+            ),
+        )
+        with mock.patch.object(
+            MODULE.t2_mutation_registry, "scan", return_value=entries
+        ):
+            result = MODULE.status()
+        self.assertEqual(result["delete_pending_count"], 1)
+        self.assertEqual(
+            result["delete_pending_phases"], {"outcome-unknown": 1}
+        )
+        self.assertEqual(result["post_reboot_pending_count"], 1)
+        self.assertFalse(result["rename_recovery_candidate"])
+        self.assertFalse(result["delete_recovery_candidate"])
+
     def test_current_host_uses_immutable_backup_only_as_metadata_anchor(self):
         with tempfile.TemporaryDirectory() as directory:
             backup = Path(directory) / ("a" * 64 + ".tar.gz")
@@ -109,6 +136,98 @@ class IdentityManagementCommandTests(unittest.TestCase):
             ):
                 MODULE.run_rename({}, slot=1, new_name="New")
 
+    def test_delete_refuses_dispatch_while_any_mutation_blocks(self):
+        with mock.patch.object(
+            MODULE.t2_mutation_registry, "blocks_new_mutation", return_value=True
+        ):
+            with self.assertRaisesRegex(
+                MODULE.IdentityManagementError, "earlier biometric mutation"
+            ):
+                MODULE.run_delete({}, slot=1)
+
+    def test_delete_broker_dispatches_once_then_persists_survivors(self):
+        generation = "00000000-0000-0000-0000-000000000111"
+        configuration = {
+            "apple_uid": 501,
+            "linux_uid": 1000,
+            "special_bag": -501,
+            "host": "host",
+            "interface": "interface",
+            "mapping_generation": "a" * 64,
+        }
+        local = SimpleNamespace(identities=(object(), object()))
+        plan = SimpleNamespace(
+            identity_uuid="redacted-target",
+            entity=1,
+            name="Finger 2",
+            request=b"x" * 20,
+            survivor_snapshot_sha256="b" * 64,
+        )
+        baseline = {
+            "identity_records": [object(), object()],
+            "connection_generation": generation,
+        }
+        lease = SimpleNamespace(connection_generation=generation)
+        lease_context = mock.MagicMock()
+        lease_context.__enter__.return_value = lease
+        lease_context.__exit__.return_value = False
+        bridge = object()
+        final = SimpleNamespace(
+            phase=MODULE.t2_identity_delete_journal.IdentityDeletePhase.RECONCILED
+        )
+        with (
+            mock.patch.object(
+                MODULE.t2_mutation_registry,
+                "blocks_new_mutation",
+                return_value=False,
+            ),
+            mock.patch.object(MODULE.os.path, "lexists", return_value=False),
+            mock.patch.object(MODULE, "keybag_runtime"),
+            mock.patch.object(
+                MODULE,
+                "current_host_and_local",
+                return_value=(object(), {}, local, Path("backup")),
+            ),
+            mock.patch.object(MODULE, "_port", return_value=55555),
+            mock.patch.object(
+                MODULE.t2_bridge_connection.BridgeConnectionLease,
+                "connect",
+                return_value=lease_context,
+            ),
+            mock.patch.object(
+                MODULE.t2_bridge_inventory,
+                "collect_stable_private_inventory",
+                return_value={},
+            ),
+            mock.patch.object(
+                MODULE.t2_identity_delete, "plan", return_value=plan
+            ),
+            mock.patch.object(
+                MODULE.t2_baseline, "build_baseline", return_value=baseline
+            ),
+            mock.patch.object(MODULE.t2_mutation_journal, "create"),
+            mock.patch.object(MODULE.t2_identity_delete_journal, "append_checked"),
+            mock.patch.object(
+                MODULE.t2_identity_delete_bridge,
+                "IdentityDeleteBridge",
+                return_value=bridge,
+            ) as bridge_factory,
+            mock.patch.object(
+                MODULE.t2_identity_delete_operation,
+                "run",
+                return_value=SimpleNamespace(outcome="sep-deleted"),
+            ) as dispatch,
+            mock.patch.object(MODULE, "_persist_delete", return_value=final) as persist,
+        ):
+            result = MODULE.run_delete(configuration, slot=2)
+        bridge_factory.assert_called_once_with(
+            lease, connection_generation=generation
+        )
+        self.assertIs(dispatch.call_args.kwargs["bridge"], bridge)
+        persist.assert_called_once()
+        self.assertTrue(result["delete_succeeded"])
+        self.assertEqual(result["identity_count"], 1)
+
     def test_post_reboot_requires_exactly_one_candidate(self):
         with mock.patch.object(MODULE, "rename_journals", return_value=[]):
             with self.assertRaisesRegex(
@@ -116,12 +235,26 @@ class IdentityManagementCommandTests(unittest.TestCase):
             ):
                 MODULE.run_post_reboot_verification({})
 
+    def test_delete_post_reboot_requires_exactly_one_candidate(self):
+        with mock.patch.object(MODULE, "delete_journals", return_value=[]):
+            with self.assertRaisesRegex(
+                MODULE.IdentityManagementError, "exactly one"
+            ):
+                MODULE.run_delete_post_reboot_verification({})
+
     def test_recovery_requires_exactly_one_candidate(self):
         with mock.patch.object(MODULE, "rename_journals", return_value=[]):
             with self.assertRaisesRegex(
                 MODULE.IdentityManagementError, "exactly one"
             ):
                 MODULE.run_recovery({})
+
+    def test_delete_recovery_requires_exactly_one_candidate(self):
+        with mock.patch.object(MODULE, "delete_journals", return_value=[]):
+            with self.assertRaisesRegex(
+                MODULE.IdentityManagementError, "exactly one"
+            ):
+                MODULE.run_delete_recovery({})
 
     def test_recovery_component_expectations_are_journal_bound(self):
         history = SimpleNamespace(

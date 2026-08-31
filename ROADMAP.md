@@ -70,7 +70,10 @@ evidence, not intent.
 - [x] Journal and persist a label-only rename with independent read-back.
 - [x] Recover interrupted rename transactions without replaying SEP mutation.
 - [x] Require a different boot and Bridge generation before closing a rename.
-- [ ] Implement reconciled single-identity deletion.
+- [x] Implement journaled reconciled single-identity deletion and interruption
+      recovery behind explicit acknowledgements.
+- [ ] Perform the first live single-identity deletion and post-reboot survivor
+      verification on the proven machine.
 - [ ] Implement Linux-native enrollment/unenrollment policy for multiple users.
 
 ## Hardware/root-only gates

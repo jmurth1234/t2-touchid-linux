@@ -212,7 +212,9 @@ class IdentityDeleteReconciliationTests(unittest.TestCase):
             },
         )
 
-    def recovery_intent(self, *, action="no-local-transaction"):
+    def recovery_intent(
+        self, *, action="no-local-transaction", linux_boot_uuid=None
+    ):
         self.append(
             "DELETE_OUTCOME_UNKNOWN",
             {
@@ -226,13 +228,23 @@ class IdentityDeleteReconciliationTests(unittest.TestCase):
             "DELETE_RECOVERY_INTENT",
             {
                 "action": action,
+                "linux_boot_uuid": (
+                    linux_boot_uuid or self.value["linux_boot_uuid"]
+                ),
                 "mapping_generation": self.value["mapping_generation"],
                 "host_commit_possible": action != "prepare-discarded",
                 "mutation_possible": True,
             },
         )
 
-    def fresh_live(self, local, generation_int, *, catacomb_hash="4" * 64):
+    def fresh_live(
+        self,
+        local,
+        generation_int,
+        *,
+        catacomb_hash="4" * 64,
+        user_needs_save=False,
+    ):
         live = live_for(local)
         live.update(
             {
@@ -243,7 +255,11 @@ class IdentityDeleteReconciliationTests(unittest.TestCase):
                     "hash": catacomb_hash,
                     "user_states": [
                         {"kind": "master", "user_id": None, "needs_save": False},
-                        {"kind": "user", "user_id": 501, "needs_save": False},
+                        {
+                            "kind": "user",
+                            "user_id": 501,
+                            "needs_save": user_needs_save,
+                        },
                     ],
                 },
             }
@@ -324,7 +340,8 @@ class IdentityDeleteReconciliationTests(unittest.TestCase):
             )
 
     def test_recovery_classifies_already_committed_delete(self):
-        history = self.recovery_intent()
+        recovery_boot = str(uuid.UUID(int=9200))
+        history = self.recovery_intent(linux_boot_uuid=recovery_boot)
         observed = recovery.classify(
             history,
             local=self.after,
@@ -344,6 +361,20 @@ class IdentityDeleteReconciliationTests(unittest.TestCase):
             final.reconciled_connection_generation,
             str(uuid.UUID(int=9201)),
         )
+        self.assertEqual(final.reconciled_linux_boot_uuid, recovery_boot)
+        next_live = self.fresh_live(self.after, 9299)
+        with self.assertRaisesRegex(
+            reconciliation.IdentityDeleteReconciliationError,
+            "did not advance",
+        ):
+            reconciliation.verify_post_reboot(
+                final,
+                local=self.after,
+                host=self.host,
+                live=next_live,
+                linux_boot_uuid=recovery_boot,
+                mapping_generation=self.value["mapping_generation"],
+            )
 
     def test_recovery_classifies_strict_no_change(self):
         history = self.recovery_intent(action="prepare-discarded")
@@ -373,7 +404,7 @@ class IdentityDeleteReconciliationTests(unittest.TestCase):
             history,
             local=self.before,
             host=self.baseline_host(),
-            live=self.fresh_live(self.after, 9203),
+            live=self.fresh_live(self.after, 9203, user_needs_save=True),
             mapping_generation=self.value["mapping_generation"],
         )
         self.assertEqual(observed.outcome, "forward-required")
@@ -391,6 +422,29 @@ class IdentityDeleteReconciliationTests(unittest.TestCase):
         self.assertEqual(
             final.persistence.phase,
             t2_enrollment_persistence_journal.PersistencePhase.NOT_STARTED,
+        )
+
+    def test_recovery_refreshes_committed_survivors_pending_sep_confirm(self):
+        history = self.recovery_intent()
+        observed = recovery.classify(
+            history,
+            local=self.after,
+            host=self.host,
+            live=self.fresh_live(self.after, 9204, user_needs_save=True),
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(observed.outcome, "forward-required")
+        self.assertEqual(observed.archive_state, "survivors")
+        final = recovery.append_observed(
+            self.path,
+            self.operation_id,
+            observed,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(final.phase, journal.IdentityDeletePhase.SEP_DELETED)
+        self.assertEqual(
+            final.persistence_connection_generation,
+            str(uuid.UUID(int=9204)),
         )
 
 

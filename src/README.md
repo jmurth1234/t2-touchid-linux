@@ -81,6 +81,24 @@ Bridge connection, the exact journaled user-component hash and label, unchanged
 account/keybag/master and unrelated component state, exact local/live identity
 equality, and clean selected-user/master SEP state.
 
+The `t2-touchid-manage delete` path is a separately acknowledged,
+single-identity-only broker. It resolves an ephemeral slot against a stable
+reconciled inventory, durably binds the exact 20-byte UID+UUID command-`0x0d`
+request, and refuses the final remaining identity. The command's return status
+is never sufficient evidence: a stable same-connection per-user/global
+inventory must prove either exact target absence or, after a failed command,
+an exact unchanged baseline. Proven absence is followed by a user-component
+only Catacomb save, independent read-back, and a different-boot verification.
+
+Deletion recovery never replays command `0x0d`. It records the local
+transaction direction before resolving it and uses a fresh Bridge generation
+to classify state as exact no-change, exact committed survivors, or an
+unconfirmed SEP deletion requiring forward persistence. The forward path can
+rebind either the exact baseline archive or an exact journaled survivor archive,
+resets persistence onto the fresh lease, and cannot claim rollback. Ambiguous states stay
+`outcome-unknown`. Delete-all, zero-identity archives, whole-user deletion, and
+cross-user mutation are not implemented.
+
 The installed wrapper selects the known positive runtime keybag and requires a
 narrow acknowledgement for this non-ACM path:
 

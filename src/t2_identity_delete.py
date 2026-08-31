@@ -119,6 +119,57 @@ def plan_target(
     )
 
 
+def recovery_plan(
+    local: t2_catacomb_codec.UserCatacomb,
+    *,
+    identity_uuid: str,
+    entity: int,
+    expected_survivor_sha256: str,
+) -> IdentityDeletePlan:
+    """Rebind an already-committed survivor archive for forward confirmation."""
+    if not isinstance(local, t2_catacomb_codec.UserCatacomb):
+        raise IdentityDeleteError("local survivor archive is not validated")
+    try:
+        parsed = uuid.UUID(identity_uuid)
+        t2_mutation_journal.require_sha256(
+            expected_survivor_sha256, "survivor snapshot"
+        )
+    except (
+        AttributeError,
+        TypeError,
+        ValueError,
+        t2_mutation_journal.JournalError,
+    ) as error:
+        raise IdentityDeleteError("recovery delete binding is invalid") from error
+    if (
+        str(parsed) != identity_uuid
+        or not isinstance(entity, int)
+        or isinstance(entity, bool)
+        or not 0 <= entity <= 0xFFFFFFFF
+        or not local.identities
+        or identity_uuid in {identity.uuid for identity in local.identities}
+        or survivor_snapshot_sha256(local.identities)
+        != expected_survivor_sha256
+    ):
+        raise IdentityDeleteError("recovery survivor set differs from the journal")
+    request = parsed.bytes + struct.pack("<I", local.expected_user_id)
+    archive = local.replace_secure_data(local.secure_data)
+    verified = t2_catacomb_codec.decode_user_catacomb(
+        archive, local.expected_user_id
+    )
+    if verified.identities != local.identities:
+        raise IdentityDeleteError("recovery archive changed surviving identities")
+    return IdentityDeletePlan(
+        local.expected_user_id,
+        identity_uuid,
+        entity,
+        "",
+        request,
+        expected_survivor_sha256,
+        archive,
+    )
+
+
 def bind_secure_blob(
     value: IdentityDeletePlan, secure_blob: bytes | bytearray
 ) -> bytearray:

@@ -181,6 +181,7 @@ class IdentityDeletePersistenceTests(unittest.TestCase):
             "DELETE_RECOVERY_INTENT",
             {
                 "action": "prepare-discarded",
+                "linux_boot_uuid": self.value["linux_boot_uuid"],
                 "mapping_generation": self.value["mapping_generation"],
                 "host_commit_possible": False,
                 "mutation_possible": True,
@@ -197,9 +198,10 @@ class IdentityDeletePersistenceTests(unittest.TestCase):
                 "survivor_count": 1,
                 "mapping_generation": self.value["mapping_generation"],
                 "target_absent": True,
-                "local_baseline_equal": True,
-                "host_baseline_equal": True,
-                "sep_clean": True,
+                "local_archive_state": "baseline",
+                "host_archive_state": "baseline",
+                "sep_user_needs_save": True,
+                "sep_master_clean": True,
                 "stable_double_read": True,
                 "recovery_action": "prepare-discarded",
             },
@@ -207,6 +209,60 @@ class IdentityDeletePersistenceTests(unittest.TestCase):
         result = self.execute(generation=generation)
         self.assertEqual(result.phase, journal.IdentityDeletePhase.RECONCILED)
         self.assertEqual(result.reconciled_connection_generation, generation)
+
+    def test_forward_recovery_host_stage_failure_freezes_on_fresh_generation(self):
+        generation = str(uuid.UUID(int=9302))
+        journal.append_checked(
+            self.path,
+            self.operation_id,
+            "DELETE_RECOVERY_INTENT",
+            {
+                "action": "prepare-discarded",
+                "linux_boot_uuid": self.value["linux_boot_uuid"],
+                "mapping_generation": self.value["mapping_generation"],
+                "host_commit_possible": False,
+                "mutation_possible": True,
+            },
+        )
+        journal.append_checked(
+            self.path,
+            self.operation_id,
+            "DELETE_RECOVERY_SEP_ABSENCE_OBSERVED",
+            {
+                "connection_generation": generation,
+                "identity_uuid": self.plan.identity_uuid,
+                "survivor_snapshot_sha256": self.plan.survivor_snapshot_sha256,
+                "survivor_count": 1,
+                "mapping_generation": self.value["mapping_generation"],
+                "target_absent": True,
+                "local_archive_state": "baseline",
+                "host_archive_state": "baseline",
+                "sep_user_needs_save": True,
+                "sep_master_clean": True,
+                "stable_double_read": True,
+                "recovery_action": "prepare-discarded",
+            },
+        )
+        with self.assertRaises(persistence.IdentityDeletePersistenceError):
+            self.execute(store=FakeStore("begin"), generation=generation)
+        history = journal.read(self.path)
+        self.assertEqual(history.phase, journal.IdentityDeletePhase.OUTCOME_UNKNOWN)
+        self.assertEqual(history.outcome_unknown_stage, "persistence")
+        retried = journal.append_checked(
+            self.path,
+            self.operation_id,
+            "DELETE_RECOVERY_INTENT",
+            {
+                "action": "prepare-discarded",
+                "linux_boot_uuid": str(uuid.UUID(int=9303)),
+                "mapping_generation": self.value["mapping_generation"],
+                "host_commit_possible": False,
+                "mutation_possible": True,
+            },
+        )
+        self.assertEqual(
+            retried.recovery_linux_boot_uuid, str(uuid.UUID(int=9303))
+        )
 
     def test_every_post_sep_failure_freezes_without_claiming_rollback(self):
         cases = (

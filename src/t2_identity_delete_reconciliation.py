@@ -238,7 +238,7 @@ def verify_post_reboot(
     except t2_mutation_journal.JournalError as error:
         raise IdentityDeleteReconciliationError(str(error)) from error
     if (
-        linux_boot_uuid == baseline["linux_boot_uuid"]
+        linux_boot_uuid == history.reconciled_linux_boot_uuid
         or live.get("connection_generation")
         == history.reconciled_connection_generation
         or mapping_generation != baseline["mapping_generation"]

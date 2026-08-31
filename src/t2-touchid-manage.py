@@ -37,6 +37,13 @@ import t2_catacomb_local
 import t2_catacomb_store
 import t2_enrollment_finalizer
 import t2_enrollment_persistence_journal
+import t2_identity_delete
+import t2_identity_delete_bridge
+import t2_identity_delete_journal
+import t2_identity_delete_operation
+import t2_identity_delete_persistence
+import t2_identity_delete_reconciliation
+import t2_identity_delete_recovery
 import t2_identity_inventory
 import t2_identity_rename
 import t2_identity_rename_journal
@@ -314,23 +321,57 @@ def rename_journals() -> list[tuple[Path, object]]:
     return found
 
 
+def delete_journals() -> list[tuple[Path, object]]:
+    _private_root_owned(MUTATION_ROOT, directory=True)
+    found = []
+    for entry in sorted(MUTATION_ROOT.iterdir(), key=lambda value: value.name):
+        if not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl",
+            entry.name,
+        ) or not t2_mutation_journal.secure_regular_file(entry):
+            raise IdentityManagementError("mutation journal directory is unsafe")
+        records = t2_mutation_journal.read(entry)
+        evidence = records[0].get("evidence") if records else None
+        if isinstance(evidence, dict) and evidence.get("operation_kind") == "delete-one":
+            found.append((entry, t2_identity_delete_journal.validate_history(records)))
+    return found
+
+
 def status() -> dict[str, object]:
     entries = t2_mutation_registry.scan(MUTATION_ROOT)
-    phases: dict[str, int] = {}
-    pending = 0
-    post_reboot = 0
+    rename_phases: dict[str, int] = {}
+    delete_phases: dict[str, int] = {}
+    rename_pending = 0
+    delete_pending = 0
+    rename_post_reboot = 0
+    delete_post_reboot = 0
     for entry in entries:
         if entry.kind == "rename" and entry.blocks_new_mutation:
-            phases[entry.phase] = phases.get(entry.phase, 0) + 1
-            pending += 1
-            post_reboot += int(entry.post_reboot_pending)
+            rename_phases[entry.phase] = rename_phases.get(entry.phase, 0) + 1
+            rename_pending += 1
+            rename_post_reboot += int(entry.post_reboot_pending)
+        elif entry.kind == "delete-one" and entry.blocks_new_mutation:
+            delete_phases[entry.phase] = delete_phases.get(entry.phase, 0) + 1
+            delete_pending += 1
+            delete_post_reboot += int(entry.post_reboot_pending)
     return {
         "schema_version": 1,
         "status_only": True,
-        "rename_pending_count": pending,
-        "rename_pending_phases": dict(sorted(phases.items())),
-        "post_reboot_pending_count": post_reboot,
-        "rename_recovery_candidate": pending == 1 and post_reboot == 0,
+        "rename_pending_count": rename_pending,
+        "rename_pending_phases": dict(sorted(rename_phases.items())),
+        "delete_pending_count": delete_pending,
+        "delete_pending_phases": dict(sorted(delete_phases.items())),
+        "post_reboot_pending_count": rename_post_reboot + delete_post_reboot,
+        "rename_recovery_candidate": (
+            rename_pending == 1
+            and rename_post_reboot == 0
+            and delete_pending == 0
+        ),
+        "delete_recovery_candidate": (
+            delete_pending == 1
+            and delete_post_reboot == 0
+            and rename_pending == 0
+        ),
         "new_mutation_blocked": any(item.blocks_new_mutation for item in entries),
         "identifiers_redacted": True,
     }
@@ -449,6 +490,157 @@ def run_rename(
     }
 
 
+def _persist_delete(
+    configuration: dict[str, object],
+    *,
+    lease: t2_bridge_connection.BridgeConnectionLease,
+    store: t2_catacomb_store.CatacombStore,
+    journal_path: Path,
+    operation_id: str,
+    plan: t2_identity_delete.IdentityDeletePlan,
+) -> t2_identity_delete_journal.IdentityDeleteHistory:
+    transport = t2_catacomb_bridge.CatacombBridgeTransport(
+        lease,
+        protocol_version=2,
+        connection_generation=lease.connection_generation,
+    )
+
+    def readback() -> t2_identity_delete_persistence.DeleteReadbackAttestation:
+        observed_live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        history = t2_identity_delete_journal.read(journal_path)
+        observed_host = t2_enrollment_finalizer.read_local_host_snapshot(
+            store, history.baseline
+        )
+        components = store.read_committed_components()
+        observed_local = t2_catacomb_codec.decode_user_catacomb(
+            components[f'user_{configuration["apple_uid"]:08x}.cat'],
+            configuration["apple_uid"],
+        )
+        attestation = t2_identity_delete_reconciliation.classify(
+            history,
+            plan,
+            local=observed_local,
+            host=observed_host,
+            live=observed_live,
+            mapping_generation=configuration["mapping_generation"],
+        )
+        return t2_identity_delete_persistence.DeleteReadbackAttestation(
+            attestation.connection_generation,
+            attestation.snapshot_sha256,
+            attestation.identity_count,
+        )
+
+    return t2_identity_delete_persistence.run(
+        journal_path,
+        operation_id,
+        plan=plan,
+        transport=transport,
+        store=store,
+        mapping_generation=configuration["mapping_generation"],
+        readback=readback,
+    )
+
+
+def run_delete(
+    configuration: dict[str, object], *, slot: int
+) -> dict[str, object]:
+    if t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
+        raise IdentityManagementError(
+            "an earlier biometric mutation is unfinished or awaits verification"
+        )
+    if os.path.lexists(STORE_ROOT / "prepare") or os.path.lexists(
+        STORE_ROOT / "commit"
+    ):
+        raise IdentityManagementError("a local Catacomb transaction needs recovery")
+    keybag_runtime(configuration["special_bag"])
+    store, host, local, backup = current_host_and_local(configuration)
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"], configuration["interface"], _port(), timeout=60
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        plan = t2_identity_delete.plan(local, live, slot=slot)
+        baseline = t2_baseline.build_baseline(
+            host=host,
+            live=live,
+            caller_linux_uid=configuration["linux_uid"],
+            target_linux_uid=configuration["linux_uid"],
+            linux_boot_uuid=BOOT_ID.read_text(encoding="ascii").strip(),
+            mapping_generation=configuration["mapping_generation"],
+            backup_reference=backup.name,
+            password_fallback_verified=True,
+        )
+        operation_id = str(uuid.uuid4())
+        journal_path = MUTATION_ROOT / f"{operation_id}.jsonl"
+        t2_mutation_journal.create(
+            journal_path, "delete-one", baseline, operation_id=operation_id
+        )
+        t2_identity_delete_journal.append_checked(
+            journal_path,
+            operation_id,
+            "DELETE_INTENT",
+            {
+                "connection_generation": lease.connection_generation,
+                "user_id": configuration["apple_uid"],
+                "identity_uuid": plan.identity_uuid,
+                "entity": plan.entity,
+                "target_name_sha256": hashlib.sha256(
+                    plan.name.encode("utf-8")
+                ).hexdigest(),
+                "request_sha256": hashlib.sha256(plan.request).hexdigest(),
+                "request_length": len(plan.request),
+                "survivor_snapshot_sha256": plan.survivor_snapshot_sha256,
+                "survivor_count": len(local.identities) - 1,
+                "mapping_generation": configuration["mapping_generation"],
+            },
+        )
+        bridge = t2_identity_delete_bridge.IdentityDeleteBridge(
+            lease, connection_generation=lease.connection_generation
+        )
+        result = t2_identity_delete_operation.run(
+            journal_path,
+            operation_id,
+            plan=plan,
+            local=local,
+            bridge=bridge,
+            collect_inventory=lambda: (
+                t2_bridge_inventory.collect_stable_private_inventory(
+                    lease, configuration["apple_uid"]
+                )
+            ),
+        )
+        if result.outcome == "not-deleted":
+            return {
+                "schema_version": 1,
+                "delete_succeeded": False,
+                "outcome": "not-deleted",
+                "identity_count": len(local.identities),
+                "post_reboot_verification_required": False,
+                "identifiers_redacted": True,
+            }
+        final = _persist_delete(
+            configuration,
+            lease=lease,
+            store=store,
+            journal_path=journal_path,
+            operation_id=operation_id,
+            plan=plan,
+        )
+    if final.phase is not t2_identity_delete_journal.IdentityDeletePhase.RECONCILED:
+        raise IdentityManagementError("identity deletion did not reconcile")
+    return {
+        "schema_version": 1,
+        "delete_succeeded": True,
+        "slot": slot,
+        "identity_count": len(baseline["identity_records"]) - 1,
+        "post_reboot_verification_required": True,
+        "identifiers_redacted": True,
+    }
+
+
 def run_post_reboot_verification(
     configuration: dict[str, object]
 ) -> dict[str, object]:
@@ -506,6 +698,65 @@ def run_post_reboot_verification(
     }
 
 
+def run_delete_post_reboot_verification(
+    configuration: dict[str, object]
+) -> dict[str, object]:
+    candidates = [
+        item
+        for item in delete_journals()
+        if item[1].phase
+        is t2_identity_delete_journal.IdentityDeletePhase.RECONCILED
+    ]
+    if len(candidates) != 1:
+        raise IdentityManagementError(
+            "post-reboot verification requires exactly one reconciled deletion"
+        )
+    path, history = candidates[0]
+    if (
+        history.baseline["apple_uid"] != configuration["apple_uid"]
+        or history.baseline["mapping_generation"]
+        != configuration["mapping_generation"]
+    ):
+        raise IdentityManagementError("delete journal belongs to another mapping")
+    keybag_runtime(configuration["special_bag"])
+    store = t2_catacomb_store.CatacombStore(
+        STORE_ROOT, configuration["apple_uid"]
+    )
+    host = t2_enrollment_finalizer.read_local_host_snapshot(store, history.baseline)
+    components = store.read_committed_components()
+    local = t2_catacomb_codec.decode_user_catacomb(
+        components[f'user_{configuration["apple_uid"]:08x}.cat'],
+        configuration["apple_uid"],
+    )
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"], configuration["interface"], _port(), timeout=60
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        final = t2_identity_delete_reconciliation.append_post_reboot_verified(
+            path,
+            history.operation_id,
+            local=local,
+            host=host,
+            live=live,
+            linux_boot_uuid=BOOT_ID.read_text(encoding="ascii").strip(),
+            mapping_generation=configuration["mapping_generation"],
+        )
+    if final.phase is not (
+        t2_identity_delete_journal.IdentityDeletePhase.POST_REBOOT_VERIFIED
+    ):
+        raise IdentityManagementError(
+            "delete post-reboot verification did not close"
+        )
+    return {
+        "schema_version": 1,
+        "delete_post_reboot_verified": True,
+        "identity_count": len(local.identities),
+        "identifiers_redacted": True,
+    }
+
+
 def _recovery_component_expectations(history) -> tuple[set[str], dict[str, str]]:
     persistence = history.persistence
     batch_index = persistence.batch_index
@@ -514,13 +765,13 @@ def _recovery_component_expectations(history) -> tuple[set[str], dict[str, str]]
         or not 0 <= batch_index < len(persistence.batches)
     ):
         raise IdentityManagementError(
-            "interrupted rename has no journaled Catacomb batch"
+            "interrupted mutation has no journaled Catacomb batch"
         )
     names = {name for name, _descriptor in persistence.batches[batch_index]}
     hashes = dict(persistence.staged_files)
     if not names or not set(hashes) <= names:
         raise IdentityManagementError(
-            "interrupted rename has inconsistent staged components"
+            "interrupted mutation has inconsistent staged components"
         )
     return names, hashes
 
@@ -654,6 +905,178 @@ def run_recovery(configuration: dict[str, object]) -> dict[str, object]:
     }
 
 
+def run_delete_recovery(configuration: dict[str, object]) -> dict[str, object]:
+    candidates = [
+        item
+        for item in delete_journals()
+        if item[1].phase
+        in {
+            t2_identity_delete_journal.IdentityDeletePhase.INTENT,
+            t2_identity_delete_journal.IdentityDeletePhase.DISPATCH_INTENT,
+            t2_identity_delete_journal.IdentityDeletePhase.COMMAND_OBSERVED,
+            t2_identity_delete_journal.IdentityDeletePhase.SEP_DELETED,
+            t2_identity_delete_journal.IdentityDeletePhase.PERSISTING,
+            t2_identity_delete_journal.IdentityDeletePhase.PERSISTENCE_READY,
+            t2_identity_delete_journal.IdentityDeletePhase.OUTCOME_UNKNOWN,
+        }
+    ]
+    if len(candidates) != 1:
+        raise IdentityManagementError(
+            "delete recovery requires exactly one interrupted deletion"
+        )
+    path, history = candidates[0]
+    if (
+        history.baseline["apple_uid"] != configuration["apple_uid"]
+        or history.baseline["mapping_generation"]
+        != configuration["mapping_generation"]
+    ):
+        raise IdentityManagementError("delete recovery belongs to another mapping")
+    keybag_runtime(configuration["special_bag"])
+    store = t2_catacomb_store.CatacombStore(
+        STORE_ROOT, configuration["apple_uid"]
+    )
+    prepare_pending = os.path.lexists(STORE_ROOT / "prepare")
+    commit_pending = os.path.lexists(STORE_ROOT / "commit")
+    if prepare_pending and commit_pending:
+        raise IdentityManagementError("both local transaction directions are present")
+    observed_action = (
+        "prepare-discarded"
+        if prepare_pending
+        else "commit-rolled-forward"
+        if commit_pending
+        else "no-local-transaction"
+    )
+    recovery_expectations = None
+    if prepare_pending or commit_pending:
+        recovery_expectations = _recovery_component_expectations(history)
+    if commit_pending:
+        expected_names, expected_hashes = recovery_expectations
+        if (
+            set(expected_hashes) != expected_names
+            or history.persistence.phase
+            is not t2_enrollment_persistence_journal.PersistencePhase.BATCH_COMMIT_INTENT
+        ):
+            raise IdentityManagementError(
+                "delete commit recovery lacks a complete journaled boundary"
+            )
+    action = history.recovery_action
+    retrying_forward_transaction = (
+        action is not None
+        and history.phase
+        is t2_identity_delete_journal.IdentityDeletePhase.OUTCOME_UNKNOWN
+        and history.persistence_connection_generation
+        != history.baseline["connection_generation"]
+        and (prepare_pending or commit_pending)
+    )
+    if action is None or retrying_forward_transaction:
+        history = t2_identity_delete_journal.append_checked(
+            path,
+            history.operation_id,
+            "DELETE_RECOVERY_INTENT",
+            {
+                "action": observed_action,
+                "linux_boot_uuid": BOOT_ID.read_text(encoding="ascii").strip(),
+                "mapping_generation": configuration["mapping_generation"],
+                "host_commit_possible": observed_action != "prepare-discarded",
+                "mutation_possible": True,
+            },
+        )
+        action = observed_action
+    elif observed_action != action and observed_action != "no-local-transaction":
+        raise IdentityManagementError(
+            "local transaction direction differs from its recovery journal"
+        )
+
+    if action == "prepare-discarded" and prepare_pending:
+        expected_names, expected_hashes = recovery_expectations
+        store.discard_prepare(expected_names, expected_hashes)
+    elif action == "commit-rolled-forward" and commit_pending:
+        _expected_names, expected_hashes = recovery_expectations
+        if store.recover(expected_hashes) != "commit-rolled-forward":
+            raise IdentityManagementError("delete commit did not roll forward")
+    elif action == "no-local-transaction" and (prepare_pending or commit_pending):
+        raise IdentityManagementError(
+            "journal expects no local transaction but one is present"
+        )
+
+    host = t2_enrollment_finalizer.read_local_host_snapshot(
+        store, history.baseline
+    )
+    components = store.read_committed_components()
+    local = t2_catacomb_codec.decode_user_catacomb(
+        components[f'user_{configuration["apple_uid"]:08x}.cat'],
+        configuration["apple_uid"],
+    )
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"], configuration["interface"], _port(), timeout=60
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        observed = t2_identity_delete_recovery.classify(
+            t2_identity_delete_journal.read(path),
+            local=local,
+            host=host,
+            live=live,
+            mapping_generation=configuration["mapping_generation"],
+        )
+        final = t2_identity_delete_recovery.append_observed(
+            path,
+            history.operation_id,
+            observed,
+            mapping_generation=configuration["mapping_generation"],
+        )
+        if observed.outcome == "forward-required":
+            if observed.archive_state == "baseline":
+                plan = t2_identity_delete.plan_target(
+                    local, history.target_identity_uuid
+                )
+            elif observed.archive_state == "survivors":
+                plan = t2_identity_delete.recovery_plan(
+                    local,
+                    identity_uuid=history.target_identity_uuid,
+                    entity=history.target_entity,
+                    expected_survivor_sha256=(
+                        history.survivor_snapshot_sha256
+                    ),
+                )
+            else:
+                raise IdentityManagementError(
+                    "delete recovery archive state is invalid"
+                )
+            final = _persist_delete(
+                configuration,
+                lease=lease,
+                store=store,
+                journal_path=path,
+                operation_id=history.operation_id,
+                plan=plan,
+            )
+    expected_phase = (
+        t2_identity_delete_journal.IdentityDeletePhase.ABORTED
+        if observed.outcome == "no-change"
+        else t2_identity_delete_journal.IdentityDeletePhase.RECONCILED
+    )
+    if final.phase is not expected_phase:
+        raise IdentityManagementError(
+            "delete recovery did not reach a reconciled terminal state"
+        )
+    return {
+        "schema_version": 1,
+        "delete_recovery_succeeded": True,
+        "outcome": observed.outcome,
+        "identity_count": (
+            observed.identity_count
+            if observed.outcome != "forward-required"
+            else len(history.baseline["identity_records"]) - 1
+        ),
+        "post_reboot_verification_required": (
+            observed.outcome != "no-change"
+        ),
+        "identifiers_redacted": True,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -667,14 +1090,34 @@ def main() -> int:
     rename.add_argument(
         "--acknowledge-local-catacomb-persistence", action="store_true"
     )
+    delete = subparsers.add_parser(
+        "delete", help="delete one reconciled fingerprint identity"
+    )
+    delete.add_argument("--slot", type=int, required=True)
+    delete.add_argument(
+        "--acknowledge-fingerprint-deletion", action="store_true"
+    )
+    delete.add_argument(
+        "--acknowledge-local-catacomb-persistence", action="store_true"
+    )
     subparsers.add_parser(
         "verify-post-reboot", help="verify a reconciled rename after reboot"
+    )
+    subparsers.add_parser(
+        "verify-delete-post-reboot",
+        help="verify a reconciled deletion after reboot",
     )
     recover = subparsers.add_parser(
         "recover", help="reconcile one interrupted rename without replay"
     )
     recover.add_argument(
         "--acknowledge-interrupted-rename-recovery", action="store_true"
+    )
+    recover_delete = subparsers.add_parser(
+        "recover-delete", help="reconcile one interrupted deletion without replay"
+    )
+    recover_delete.add_argument(
+        "--acknowledge-interrupted-delete-recovery", action="store_true"
     )
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -684,10 +1127,19 @@ def main() -> int:
         and args.acknowledge_local_catacomb_persistence
     ):
         parser.error("both rename mutation acknowledgements are required")
+    if args.command == "delete" and not (
+        args.acknowledge_fingerprint_deletion
+        and args.acknowledge_local_catacomb_persistence
+    ):
+        parser.error("both deletion mutation acknowledgements are required")
     if args.command == "recover" and not (
         args.acknowledge_interrupted_rename_recovery
     ):
         parser.error("interrupted-rename recovery acknowledgement is required")
+    if args.command == "recover-delete" and not (
+        args.acknowledge_interrupted_delete_recovery
+    ):
+        parser.error("interrupted-delete recovery acknowledgement is required")
     try:
         configuration = runtime_configuration()
         _private_root_owned(STATE_ROOT, directory=True)
@@ -699,9 +1151,17 @@ def main() -> int:
                 result = status()
             elif args.command == "verify-post-reboot":
                 result = run_post_reboot_verification(configuration)
+            elif args.command == "verify-delete-post-reboot":
+                result = run_delete_post_reboot_verification(configuration)
             elif args.command == "recover":
                 with sleep_inhibitor():
                     result = run_recovery(configuration)
+            elif args.command == "recover-delete":
+                with sleep_inhibitor():
+                    result = run_delete_recovery(configuration)
+            elif args.command == "delete":
+                with sleep_inhibitor():
+                    result = run_delete(configuration, slot=args.slot)
             else:
                 with sleep_inhibitor():
                     result = run_rename(
@@ -720,6 +1180,13 @@ def main() -> int:
         t2_catacomb_local.LocalCatacombError,
         t2_catacomb_store.CatacombStoreError,
         t2_enrollment_finalizer.EnrollmentFinalizerError,
+        t2_identity_delete.IdentityDeleteError,
+        t2_identity_delete_bridge.IdentityDeleteBridgeError,
+        t2_identity_delete_journal.IdentityDeleteJournalError,
+        t2_identity_delete_operation.IdentityDeleteOperationError,
+        t2_identity_delete_persistence.IdentityDeletePersistenceError,
+        t2_identity_delete_reconciliation.IdentityDeleteReconciliationError,
+        t2_identity_delete_recovery.IdentityDeleteRecoveryError,
         t2_identity_inventory.IdentityInventoryError,
         t2_identity_rename.IdentityRenameError,
         t2_identity_rename_journal.IdentityRenameJournalError,

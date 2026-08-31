@@ -4,14 +4,17 @@ Experimental, fail-closed Touch ID authentication for Intel Macs with an Apple
 T2 chip. It talks to bridgeOS BiometricKit over BridgeXPC and exposes a minimal
 `fprintd`-compatible D-Bus service for PAM clients.
 
-This is research software, not an upstream `libfprint` driver. Enrollment and
-deletion remain in macOS. The Linux side only verifies an identity already
-enrolled for the configured macOS user ID.
+This is research software, not an upstream `libfprint` driver. Verification and
+one live enrollment have been proven on the configuration below. Label rename
+is exposed through a separately gated management broker. Single-identity
+deletion is implemented behind explicit acknowledgements but has not yet had
+its first live hardware test; macOS remains the recovery environment.
 
 See [`ROADMAP.md`](ROADMAP.md) for the evidence-based reliability checklist.
 The separate [enrollment research](enrollment_research/README.md) publishes the
-current protocol findings and deferred evidence-collection helpers. It does not
-enable enrollment or deletion in the shipped service.
+current protocol findings and evidence-collection helpers. The fprintd service
+does not expose enrollment or deletion; experimental mutation commands use
+separate root-only, journaled brokers.
 
 The in-development endpoint-10 transport is separately opt-in. Setting
 `T2_TOUCHID_ENABLE_ACM_RESEARCH=1` in the private root-owned configuration
@@ -45,7 +48,8 @@ negative unenrolled-finger control were both verified at the raw bridge,
   protocol-v2 match-result event.
 - Missing, malformed, rejected, or timeout results fail closed.
 - The service never emits UUIDs, fingerprint images, or biometric payloads.
-- Enrollment and deletion are deliberately unsupported on Linux.
+- fprintd enrollment and deletion are deliberately unsupported; experimental
+  root-only brokers are separate and fail closed.
 - PAM templates are supplied but are not installed automatically.
 
 ## Important limitations
@@ -274,8 +278,49 @@ sudo t2-touchid-manage recover \
   --acknowledge-interrupted-rename-recovery
 ```
 
-Any third or ambiguous state remains blocked. Single-identity deletion and
-Linux-native enrollment management are not exposed by this command yet.
+Any third or ambiguous state remains blocked.
+
+### Experimental single-identity deletion
+
+Single deletion is irreversible in SEP and its first Linux hardware test has
+not yet been performed. Back up the private Catacomb, confirm password fallback
+works, and list the current reconciled slots immediately before selecting one.
+The command refuses to delete the last identity:
+
+```sh
+sudo t2-touchid-identities
+sudo t2-touchid-manage delete \
+  --slot 2 \
+  --acknowledge-fingerprint-deletion \
+  --acknowledge-local-catacomb-persistence
+```
+
+The broker journals the exact internal UID+UUID target before command `0x0d`,
+then trusts only a stable SEP inventory—not the command status—to decide
+whether deletion occurred. If SEP removed the identity, the broker persists
+only the selected user's survivor archive and independently reads it back. A
+reconciled deletion remains blocking until a different Linux boot and Bridge
+connection prove the exact survivor set and clean Catacomb state:
+
+```sh
+sudo t2-touchid-manage verify-delete-post-reboot
+```
+
+An interruption must be reconciled, never blindly replayed:
+
+```sh
+sudo t2-touchid-manage recover-delete \
+  --acknowledge-interrupted-delete-recovery
+```
+
+Recovery first journals and resolves any exact local `prepare/` or `commit/`
+transaction. Fresh stable host/SEP state must then prove exactly one of three
+outcomes: unchanged, already committed, or SEP-deleted and still requiring
+user-component confirmation. The last case may have either the exact old host
+file or the exact journaled survivor file; both run a fresh forward-only
+user-Catacomb persistence transaction. Any other state remains blocked.
+Delete-all, last-identity
+deletion, whole-user removal, and cross-user administration remain disabled.
 
 This read-only command performs two exact back-to-back collections and fails if
 the private global/per-user identity records, capacity replies, Catacomb

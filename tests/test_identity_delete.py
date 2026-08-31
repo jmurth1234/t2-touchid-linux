@@ -48,6 +48,21 @@ class IdentityDeleteTests(unittest.TestCase):
         rebuilt = delete.plan_target(self.local, selected.identity_uuid)
         self.assertEqual(rebuilt, selected)
 
+    def test_recovery_plan_rebinds_an_already_committed_survivor_archive(self):
+        selected = delete.plan(self.local, self.live, slot=2)
+        survivor = codec.decode_user_catacomb(selected.archive, 501)
+        rebuilt = delete.recovery_plan(
+            survivor,
+            identity_uuid=selected.identity_uuid,
+            entity=selected.entity,
+            expected_survivor_sha256=selected.survivor_snapshot_sha256,
+        )
+        self.assertEqual(rebuilt.identity_uuid, selected.identity_uuid)
+        self.assertEqual(rebuilt.entity, selected.entity)
+        self.assertEqual(rebuilt.request, selected.request)
+        rebound = codec.decode_user_catacomb(rebuilt.archive, 501)
+        self.assertEqual(rebound.identities, survivor.identities)
+
     def test_secure_blob_binding_preserves_exact_survivors(self):
         value = delete.plan(self.local, self.live, slot=1)
         output = delete.bind_secure_blob(value, b"LTFC" + b"z" * 28)
