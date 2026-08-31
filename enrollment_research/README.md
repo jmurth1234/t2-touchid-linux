@@ -39,6 +39,18 @@ The JSON inventory reports identity labels, counters, creation times, owner UID,
 and schema version. UUID output is deliberately opt-in with
 `--include-identifiers`; never paste that form into a public issue or log.
 
+To exercise the strict encoder and an independent semantic reader against the
+complete private capture without printing names or UUIDs, run:
+
+```sh
+t2-catacomb-fixture-check /path/to/t2-enrollment-evidence.tar.gz \
+  --apple-user-id 501
+```
+
+The checker is offline and non-mutating. It requires a private mode-0600
+archive, reads components directly from the tar stream, and emits only counts
+and compatibility booleans.
+
 ## Current boundary
 
 Existing, already-provisioned Apple users appear protocol-feasible for
@@ -76,6 +88,13 @@ mode-0 ACM external form, wipes its request buffer, deduplicates and sequences
 events within one connection/operation generation, never treats progress as
 success, and stops at `SEP-identity-observed`. It is deliberately not wired to
 BridgeXPC, fprintd enrollment, or Catacomb mutation.
+
+The proven machine's copied macOS archive now passes the executable fixture
+check for the user, master, and bio-lockout components: original strict schemas,
+neutral semantic re-emission, independent-oracle read-back, opaque secure-data
+preservation, and account/keybag binding preservation all succeed. This is not
+evidence that copying files into macOS preserves APFS metadata, and no write-back
+was performed.
 
 The following remain disabled or unverified:
 

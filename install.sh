@@ -66,6 +66,7 @@ install -o root -g root -m 0755 "$source_dir/src/"*.py "$target_dir/src/"
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-doctor.py" /usr/local/sbin/t2-touchid-doctor
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-inventory.py" /usr/local/sbin/t2-touchid-inventory
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-baseline.py" /usr/local/sbin/t2-touchid-baseline
+install -o root -g root -m 0755 "$source_dir/src/t2-catacomb-fixture-check.py" /usr/local/sbin/t2-catacomb-fixture-check
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-preflight.py" /usr/local/sbin/t2-acm-preflight
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-lifecycle-test.py" /usr/local/sbin/t2-acm-lifecycle-test
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-policy-preflight.py" /usr/local/sbin/t2-acm-policy-preflight

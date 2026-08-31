@@ -4933,9 +4933,8 @@ Before any mutating probe, require all of the following:
 
 The unresolved items do not all have equal weight:
 
-- **Required before any mutation implementation:** independent captured-fixture
-  read-back for the strict known-schema archive encoder; a privileged broker
-  above the endpoint-10 transport that binds the Linux session and PolicyKit
+- **Required before any mutation implementation:** a privileged broker above
+  the endpoint-10 transport that binds the Linux session and PolicyKit
   decision to the protected Apple-user mapping; a stable non-mutating
   cross-layer identity inventory; a per-component intent/result journal; and
   explicit approval for the exact target and operation. The staged kernel
@@ -4943,6 +4942,14 @@ The unresolved items do not all have equal weight:
   process-exit cleanup, and generation-safe late-reply rejection, but those new
   guarantees still require activation and live conformance on the next module
   boot.
+- **Satisfied offline fixture gate:** the copied live macOS archive's exact
+  user, master, and bio-lockout components all pass strict original decoding,
+  neutral semantic re-emission, and read-back by the independent
+  `t2_catacomb_oracle` implementation. Opaque secure envelopes and the internal
+  account/keybag bindings remain equal. The privacy-safe checker reports one
+  identity without exposing its name or UUID. This validates the Linux-local
+  known-schema encoder against a captured fixture; it does not claim macOS
+  destination-APFS metadata preservation or perform a write-back.
 - **Requires controlled device validation:** the final T2 consumer's replay,
   one-shot, expiry, and ambiguous-completion treatment of a mode-0 ACM external
   form. The J132 SEP payload is device-key-wrapped, so the plaintext host corpus
@@ -5065,7 +5072,7 @@ plausible design to a proven result:
 | Whole biometric-user removal | Exact `0x48` request and host cleanup ordering | Destructive command known, terminal proof incomplete; disabled | An explicit container-presence primitive or validated equivalent that distinguishes empty from absent |
 | Multi-user existing-account mapping | Exact numeric UID, ODUUID, bag UUID, alias, Catacomb, ACM subject joins; captured UID-501 tuple; serialized lease model | Multiple stored mappings and serialized per-user operations are protocol-feasible | Read-only multi-user inventory fixtures; optional selector-`0x61` capture to join UserPersona unique string to AKS persona UUID |
 | Linux-only Apple user provisioning | Exact top-level identity/persona request surfaces and non-atomic OD/APFS/file/registry milestones | Unsafe by construction with current evidence; disabled | A complete compensating protocol proven by disposable-volume fault injection, not a live-user experiment |
-| Catacomb archive semantics | Exact version-3 keys/classes, observed graphs, secure-decoder types, 24G830 writer and recovery code | Semantic codec specification complete; byte-identical Foundation output not required | Raw read-only master/user/biolockout fixtures for executable independent round-trip tests |
+| Catacomb archive semantics | Exact version-3 keys/classes, observed graphs, secure-decoder types, 24G830 writer/recovery code, and executable neutral round-trip of the copied live master/user/bio-lockout fixture through an independent oracle | Linux-local strict known-schema encoder fixture gate passed; byte-identical Foundation output not required | macOS decoder acceptance only if later cross-OS synchronization is pursued |
 | Catacomb transaction/rollback | Exact prepare/complete/stage/commit/confirm ordering, per-file forward recovery, fsync points and mixed-generation windows | Recovery direction and journaling invariants statically complete | Offline crash-injection tests on copied fixtures; later controlled device reconciliation |
 | macOS resynchronization | Exact serialized schema; APFS attributes shown not to be SEP inputs | Separate from Linux-local persistence and not needed for its codec | macOS decoder-only fixture acceptance plus destination xattr/protection preservation if cross-OS copying is pursued |
 | Suspend/reconnect | Observed RemoteXPC loss plus exact endpoint/OOL reset behavior | Transparent resume is unsupported; cancel, invalidate, reconnect, and inventory is the safe contract | Hardware validation of the conservative lifecycle, not session continuation |

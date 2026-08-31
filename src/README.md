@@ -84,6 +84,13 @@ only provisional; the state machine deliberately has no `completed` state
 because durable Catacomb persistence and stable read-back are still required.
 The module opens no device or socket and is not installed as a command.
 
+`t2-catacomb-fixture-check` performs the separate offline archive-compatibility
+gate. It accepts only a private regular archive, extracts no filesystem paths,
+strictly decodes the captured user/master/bio-lockout component set, neutrally
+re-emits each component, and requires a second independent semantic reader to
+agree. Its JSON output contains counts and booleans only. It never changes the
+archive or writes to a macOS Catacomb location.
+
 The v2 platform field formerly labelled `uid` is the caller's macOS audit
 session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent
 64-bit field is the macOS process-unique ID, not a PID. Both are research-only,
