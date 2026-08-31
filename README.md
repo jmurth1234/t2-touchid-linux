@@ -104,12 +104,15 @@ or an alternative sleep mode has been validated on the specific Mac model.
   lock-state evidence; it emits no AKS operation.
 - `src/t2_user_policy.py`: non-exposed self-service caller/target/policy
   resolver with exact operation, boot, mapping, and authorization bindings.
+- `src/t2_polkit_grant.py`: race-resistant `PID,start-time,UID` PolicyKit
+  adapter that creates bounded in-process grants for the policy resolver.
 - `src/t2_user_activation_{journal,operation,recovery}.py`: transport-free
   durable activation, execution, and read-only recovery core; no CLI exists.
 - `src/t2_aks_{state,observer,transport}.py`: strict operation-`0x19` state
   decoding plus an exact, non-exposed AKS observation/command adapter.
 - `systemd/`: system and audible-feedback units.
 - `pam/`: clamshell-safe Omarchy PAM templates.
+- `polkit/`: distinct non-transitive action definitions for future brokers.
 - `tools/macos/`: private export helpers; outputs must never be committed.
 - `enrollment_research/`: sanitized enrollment, multi-user, Catacomb, and
   rollback findings plus non-mutating/deferred collection helpers.
@@ -321,9 +324,18 @@ boot, action, and a bounded monotonic lifetime, and keeps verification,
 inventory, enrollment, and identity-management actions non-transitive. A
 separate `activate-user` grant is mandatory before a locked or absent alias may
 enter the keybag activation core. The activation journal then uses the same
-bound operation UUID. There is still no PolicyKit collector or public
-multi-user command; per-user relocking and runtime/session orchestration remain
-incomplete.
+bound operation UUID.
+
+The non-exposed PolicyKit adapter creates those grants using only a caller PID
+and UID obtained from a future trusted IPC peer. It reads the kernel process
+start time and all four process UIDs, invokes the locally documented
+`PID,start-time,UID` subject form, then repeats the reads before accepting the
+result. PID reuse, setuid subjects, unknown actions, cross-user targets,
+timeouts, and ambiguous exit statuses never create an authorized grant. The
+installed action manifest keeps verify, inventory, activation, enrollment, and
+identity management distinct. There is still no public multi-user broker;
+trusted IPC peer/session collection, per-user relocking, and runtime/session
+orchestration remain incomplete.
 
 The accompanying pure readiness classifier already defines the fail-closed
 outcomes for that future runtime: absent aliases require activation and fresh

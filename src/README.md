@@ -87,6 +87,18 @@ absent target additionally requires a separately bound `activate-user` grant;
 lockout and quarantine can never use that route. The returned mapping and
 binding are internal while the report is identifier-free.
 
+`t2_polkit_grant.py` is the concrete but non-exposed grant producer. A future
+IPC broker must supply a PID and UID obtained through kernel peer credentials;
+the adapter never reads sudo/pkexec environment variables or accepts a
+username. It reads `/proc/PID/stat` and all real/effective/saved/filesystem UIDs,
+uses polkit's required `PID,start-time,UID` process subject, and repeats those
+reads after `pkcheck` returns. PID reuse, setuid transitions, unknown actions,
+cross-user targets, timeout, or an exit status outside the documented
+authorized/denied/no-agent/dismissed set fail without a grant. Successful and
+negative decisions receive a bounded in-process lifetime and exact operation,
+boot, target, and mapping bindings. `polkit/org.t2linux.touchid.policy` defines
+the five compiled action IDs without granting inactive or remote subjects.
+
 `t2_user_readiness.py` is the next pure runtime boundary. Given a validated
 mapping plus independently collected Linux-account/keybag/Catacomb and live
 alias evidence, it returns one redacted typed decision. Exact binding and known
@@ -124,7 +136,7 @@ only inside a private transient directory, and deletes it immediately.
 `t2_aks_transport.py` composes that observer with the existing load, bind, and
 unlock commands; password bytes traverse a pipe and command output must match
 the exact typed reply. These modules provide the concrete dependency boundary,
-but no PolicyKit evidence collector, recovery CLI, or public activation command
+but no trusted IPC/session broker, recovery CLI, or public activation command
 is present. Hardware validation of operation `0x06` requires installing
 the rebuilt pinned module and rebooting before this adapter can be enabled.
 

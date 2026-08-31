@@ -2989,6 +2989,27 @@ operation UUID for its durable journal. This closes the internal authority-to-
 recovery join, but it does not implement the eventual PolicyKit evidence
 collector, cross-user actions, relocking, or public broker API.
 
+The local polkit 127 `pkcheck` contract makes the subject binding concrete. Its
+manual explicitly warns that bare PID and `PID,start-time` are racy and directs
+new code to use `PID,start-time,UID`, with UID obtained from an OS peer-
+credential mechanism. The new non-exposed collector implements exactly that
+form. It reads the kernel start tick plus all real/effective/saved/filesystem
+UIDs before the check, rejects setuid subjects, passes only compiled action IDs
+and redacted operation/target/mapping details, and repeats the process reads
+afterward. A changed start tick or UID tuple is PID-reuse/identity drift and
+produces no grant. Documented exits 1, 2, and 3 become typed denial, unavailable
+interaction, and dismissal; timeout, malformed invocation, pkcheck error, and
+unknown exits remain ambiguous errors rather than authorization.
+
+The installed PolicyKit action manifest has separate verify, own-inventory,
+activate-user, enroll, and identity-management actions; inactive subjects are
+denied for all five. The collector returns only short-lived in-process policy
+objects bound to the same operation, boot, mapping, caller, and target expected
+by `t2_user_policy.py`. It does not establish a public service or accept caller
+identity through CLI/environment state. A trusted IPC peer-credential and
+login-session broker is still required before these actions can authorize live
+multi-user work.
+
 The safest host-side activation is not to reuse `-501` for every Linux user.
 Each already-provisioned Apple user retains its Apple UID-derived alias
 (`-UID`), so switching from UID 501 to 502 selects `-502` rather than rebinding

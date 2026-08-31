@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>T2 Linux Touch ID</vendor>
+  <vendor_url>https://github.com/jmurth1234/t2-touchid-linux</vendor_url>
+  <icon_name>fingerprint</icon_name>
+
+  <action id="org.t2linux.touchid.verify">
+    <description>Verify with your mapped T2 Touch ID identities</description>
+    <message>Authentication is required to use T2 Touch ID</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.t2linux.touchid.inventory">
+    <description>List your mapped T2 Touch ID identity labels</description>
+    <message>Authentication is required to list T2 Touch ID identities</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.t2linux.touchid.activate-user">
+    <description>Activate your mapped Apple keybag for T2 Touch ID</description>
+    <message>Authentication is required to activate T2 Touch ID</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.t2linux.touchid.enroll">
+    <description>Enroll a fingerprint for your mapped Apple identity</description>
+    <message>Authentication is required to enroll a T2 Touch ID fingerprint</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.t2linux.touchid.identity-management">
+    <description>Rename or delete one of your T2 Touch ID identities</description>
+    <message>Authentication is required to manage T2 Touch ID identities</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

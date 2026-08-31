@@ -62,6 +62,7 @@ if [[ ! $aks_platform_asid =~ ^[0-9]+$ ]] || (( aks_platform_asid > 4294967295 )
 fi
 
 install -d -o root -g root -m 0755 "$target_dir" "$target_dir/src" /usr/local/lib/t2-touchid
+install -d -o root -g root -m 0755 /usr/share/polkit-1/actions
 install -o root -g root -m 0755 "$source_dir/src/"*.py "$target_dir/src/"
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-doctor.py" /usr/local/sbin/t2-touchid-doctor
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-inventory.py" /usr/local/sbin/t2-touchid-inventory
@@ -77,6 +78,9 @@ install -o root -g root -m 0755 "$source_dir/src/t2-touchid-enroll-test.py" /usr
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-enroll.py" /usr/local/sbin/t2-touchid-enroll
 install -o root -g root -m 0644 "$source_dir/README.md" "$target_dir/README.md"
 install -o root -g root -m 0644 "$source_dir/ROADMAP.md" "$target_dir/ROADMAP.md"
+install -o root -g root -m 0644 \
+  "$source_dir/polkit/org.t2linux.touchid.policy" \
+  /usr/share/polkit-1/actions/org.t2linux.touchid.policy
 
 python -m venv "$target_dir/.venv"
 requirements_stamp=$target_dir/.requirements.sha256
