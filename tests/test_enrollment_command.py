@@ -2,6 +2,7 @@
 import importlib.util
 import io
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -33,7 +34,9 @@ CONFIGURATION = {
 
 
 class EnrollmentCommandTests(unittest.TestCase):
-    def invoke(self, arguments, *, live=False, recovery=False):
+    def invoke(
+        self, arguments, *, live=False, recovery=False, enrollment_error=None
+    ):
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "operation.lock"
             backup = Path(directory) / ("a" * 64 + ".tar.gz")
@@ -77,6 +80,7 @@ class EnrollmentCommandTests(unittest.TestCase):
                         "mutation_performed": True,
                         "enrollment_succeeded": True,
                     },
+                    side_effect=enrollment_error,
                 ) as enrollment,
                 mock.patch.object(
                     MODULE,
@@ -87,13 +91,19 @@ class EnrollmentCommandTests(unittest.TestCase):
                         "fingerprint_mutation_performed": False,
                     },
                 ) as reconcile,
+                mock.patch.object(MODULE, "notify_user") as notify,
                 redirect_stdout(output),
+                redirect_stderr(io.StringIO()),
             ):
                 status = MODULE.main()
-            self.assertEqual(status, 0)
+            self.assertEqual(status, 1 if enrollment_error is not None else 0)
             self.assertEqual(preflight.called, not live and not recovery)
             self.assertEqual(enrollment.called, live)
             self.assertEqual(reconcile.called, recovery)
+            if enrollment_error is not None:
+                notify.assert_called_once_with(
+                    CONFIGURATION["linux_user"], "t2-touchid-failure.service"
+                )
             return output.getvalue()
 
     def test_preflight_requires_no_live_mutation_acknowledgement(self):
@@ -135,6 +145,17 @@ class EnrollmentCommandTests(unittest.TestCase):
             live=True,
         )
         self.assertIn('"mutation_performed": true', output)
+
+    def test_live_exception_emits_best_effort_failure_feedback(self):
+        self.invoke(
+            [
+                "--acknowledge-password-fallback-tested",
+                "--acknowledge-live-fingerprint-enrollment",
+                "--acknowledge-local-catacomb-mutation",
+            ],
+            live=True,
+            enrollment_error=MODULE.EnrollmentCommandError("synthetic failure"),
+        )
 
     def test_recovery_needs_no_password_or_live_mutation_acknowledgement(self):
         output = self.invoke(
@@ -248,6 +269,39 @@ class EnrollmentCommandTests(unittest.TestCase):
         self.assertEqual(seen["mapping_generation"], "d" * 64)
         self.assertEqual(finalizer.call_args.kwargs["catacomb_root"], MODULE.STORE_ROOT)
         self.assertTrue(output["persistence_ready"])
+
+    def test_desktop_feedback_failure_cannot_abort_enrollment(self):
+        with mock.patch.object(
+            MODULE.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired("systemctl", 5),
+        ):
+            MODULE.notify_user("mapped", "t2-touchid-alert.service")
+
+    def test_scan_feedback_is_actionable_and_advisory(self):
+        transition = SimpleNamespace(
+            action=MODULE.t2_enrollment_protocol.EnrollmentAction.RETRY_SMALL_COVERAGE,
+            progress_percent=None,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(MODULE, "notify_user") as notify,
+            redirect_stdout(output),
+        ):
+            MODULE.report_enrollment_feedback("mapped", transition)
+        self.assertIn("Cover more", output.getvalue())
+        notify.assert_called_once_with("mapped", "t2-touchid-alert.service")
+
+        progress = SimpleNamespace(
+            action=MODULE.t2_enrollment_protocol.EnrollmentAction.PROGRESS,
+            progress_percent=42,
+        )
+        with (
+            mock.patch.object(MODULE, "notify_user") as notify,
+            mock.patch("builtins.print", side_effect=BrokenPipeError),
+        ):
+            MODULE.report_enrollment_feedback("mapped", progress)
+        notify.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ import t2_catacomb_store
 import t2_enrollment_coordinator
 import t2_enrollment_finalizer
 import t2_enrollment_journal
+import t2_enrollment_protocol
 import t2_enrollment_reconciliation
 import t2_mutation_journal
 from t2_acm_device import ACMDevice, ACMDeviceError
@@ -163,20 +164,53 @@ def warm_sensor() -> None:
 
 
 def notify_user(user_name: str, unit: str) -> None:
-    subprocess.run(
-        [
-            "/usr/bin/systemctl",
-            f"--machine={user_name}@.host",
-            "--user",
-            "start",
-            "--no-block",
-            unit,
-        ],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=5,
-    )
+    try:
+        subprocess.run(
+            [
+                "/usr/bin/systemctl",
+                f"--machine={user_name}@.host",
+                "--user",
+                "start",
+                "--no-block",
+                unit,
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # Desktop feedback is advisory. It must never change the outcome of an
+        # authorized biometric operation or its persistence transaction.
+        pass
+
+
+def report_enrollment_feedback(user_name: str, transition: object) -> None:
+    progress = getattr(transition, "progress_percent", None)
+    action = getattr(transition, "action", None)
+    message = None
+    audible = False
+    if isinstance(progress, int):
+        message = f"Touch ID enrollment progress: {progress}%"
+    elif action is t2_enrollment_protocol.EnrollmentAction.REMOVE_AND_RETRY:
+        message = "Lift your finger, then place it on the sensor again."
+        audible = True
+    elif action is t2_enrollment_protocol.EnrollmentAction.RETRY_SCAN:
+        message = "Fingerprint scan was not accepted; try again."
+        audible = True
+    elif action is t2_enrollment_protocol.EnrollmentAction.RETRY_SMALL_COVERAGE:
+        message = "Cover more of the Touch ID sensor and try again."
+        audible = True
+    elif action is t2_enrollment_protocol.EnrollmentAction.DIRTY_SENSOR:
+        message = "Clean the Touch ID sensor and try again."
+        audible = True
+    if message is not None:
+        try:
+            print(message, flush=True)
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+    if audible:
+        notify_user(user_name, "t2-touchid-alert.service")
 
 
 def _port() -> int:
@@ -356,9 +390,7 @@ def run_enrollment(
         notify_user(configuration["linux_user"], "t2-touchid-alert.service")
 
     def feedback(transition: object) -> None:
-        progress = getattr(transition, "progress_percent", None)
-        if isinstance(progress, int):
-            print(f"Touch ID enrollment progress: {progress}%", flush=True)
+        report_enrollment_feedback(configuration["linux_user"], transition)
 
     with t2_bridge_connection.BridgeConnectionLease.connect(
         configuration["host"],
@@ -455,6 +487,7 @@ def main() -> int:
         parser.error("identity name is invalid")
 
     cancellation = Event()
+    configuration: dict[str, object] | None = None
     previous_sigint = signal.signal(signal.SIGINT, lambda _signum, _frame: cancellation.set())
     try:
         configuration = runtime_configuration()
@@ -510,6 +543,8 @@ def main() -> int:
         t2_enrollment_reconciliation.EnrollmentReconciliationError,
         t2_mutation_journal.JournalError,
     ) as error:
+        if live_enrollment and configuration is not None:
+            notify_user(configuration["linux_user"], "t2-touchid-failure.service")
         print(f"t2-touchid-enroll-test: {error}", file=sys.stderr)
         return 1
     finally:

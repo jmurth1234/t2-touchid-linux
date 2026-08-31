@@ -225,7 +225,10 @@ local store, sensor readiness, operation lock, same-connection E0, and capacity.
 The live branch additionally requires explicit live-fingerprint and local-store
 mutation acknowledgements, derives all security subjects from protected runtime
 state, retains one Bridge lease through E3, and provides cancellation/audio
-feedback. Its preflight has passed on the target hardware. Five explicitly
+feedback. Progress and retry guidance is best-effort: a closed terminal or
+unavailable desktop notification service cannot alter the biometric outcome,
+and handled live-path errors still emit the terminal failure cue. Its preflight
+has passed on the target hardware. Five explicitly
 approved live runs reached password-bound E1, then conservatively stopped
 outcome-unknown while the adapter learned the real Bridge reply/event variants;
 fresh stable read-back after each proved no identity or Catacomb delta. The

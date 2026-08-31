@@ -224,7 +224,9 @@ mutation acknowledgements. Both paths use the global operation lock; the broker
 never accepts an Apple UID, keybag handle, connection generation, backup path,
 or local-store path from the caller. Ctrl-C requests protocol cancellation
 rather than abandoning the operation, and desktop audio cues announce the
-finger request and terminal result.
+finger request, actionable retry conditions, and terminal result. Those cues
+and console progress are strictly best-effort; desktop-bus failure or a closed
+stdout cannot change an authorized enrollment or persistence outcome.
 
 The non-mutating hardware preflight passed on 2026-08-31 and created the private
 Linux-local store from the sole hash-named root backup. It verified the backup,
