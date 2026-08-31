@@ -17,28 +17,6 @@ class EnrollmentReconciliationError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
-class PersistenceAttestation:
-    host_batch_committed: bool
-    final_confirmed: bool
-    sep_host_generation_equal: bool
-    independent_archive_readback: bool
-
-    def require_complete(self) -> None:
-        if not all(
-            value is True
-            for value in (
-                self.host_batch_committed,
-                self.final_confirmed,
-                self.sep_host_generation_equal,
-                self.independent_archive_readback,
-            )
-        ):
-            raise EnrollmentReconciliationError(
-                "persistence attestation is incomplete"
-            )
-
-
 @dataclass(frozen=True, repr=False)
 class ReconciliationPlan:
     evidence: dict[str, Any] | None
@@ -181,12 +159,11 @@ def classify(
     host: dict[str, Any],
     live: dict[str, Any],
     mapping_generation: str,
-    persistence: PersistenceAttestation | None = None,
 ) -> ReconciliationPlan:
     if not isinstance(host, dict) or not isinstance(live, dict):
         raise EnrollmentReconciliationError("E3 snapshots are not mappings")
     if history.phase not in (
-        enrollment_journal.EnrollmentPhase.TERMINAL_IDENTITY,
+        enrollment_journal.EnrollmentPhase.PERSISTENCE_READY,
         enrollment_journal.EnrollmentPhase.TERMINAL_FAILURE,
     ):
         raise EnrollmentReconciliationError("journal is not ready for E3")
@@ -291,16 +268,11 @@ def classify(
     ):
         raise EnrollmentReconciliationError("master enrollment count is invalid")
     identity_uuid = next(iter(added))[1] if added else None
-    if history.phase is enrollment_journal.EnrollmentPhase.TERMINAL_IDENTITY:
+    if history.phase is enrollment_journal.EnrollmentPhase.PERSISTENCE_READY:
         if identity_uuid != history.terminal_identity_uuid:
             raise EnrollmentReconciliationError(
                 "E2 identity does not match stable read-back"
             )
-        if persistence is None:
-            raise EnrollmentReconciliationError(
-                "identity reconciliation requires persistence attestation"
-            )
-        persistence.require_complete()
         user_name = f"user_{apple_uid:08x}.cat"
         if user_name not in after_components or "master.cat" not in after_components:
             raise EnrollmentReconciliationError("required Catacomb components are absent")
@@ -340,6 +312,13 @@ def classify(
     snapshot_sha256 = hashlib.sha256(
         mutation_journal.canonical(snapshot_model)
     ).hexdigest()
+    if (
+        history.phase is enrollment_journal.EnrollmentPhase.PERSISTENCE_READY
+        and history.persistence.reconciliation_snapshot_sha256 != snapshot_sha256
+    ):
+        raise EnrollmentReconciliationError(
+            "journaled persistence snapshot does not match E3 read-back"
+        )
     return ReconciliationPlan(
         {
             "connection_generation": baseline["connection_generation"],
@@ -365,7 +344,6 @@ def append_reconciled(
     host: dict[str, Any],
     live: dict[str, Any],
     mapping_generation: str,
-    persistence: PersistenceAttestation | None = None,
 ) -> enrollment_journal.EnrollmentHistory:
     history = enrollment_journal.read(path)
     plan = classify(
@@ -373,10 +351,9 @@ def append_reconciled(
         host=host,
         live=live,
         mapping_generation=mapping_generation,
-        persistence=persistence,
     )
     if plan.readback_identity_uuid is not None:
-        history = enrollment_journal.append_checked(
+        return enrollment_journal.append_checked(
             path,
             operation_id,
             "E2_IDENTITY_READBACK_OBSERVED",
@@ -386,13 +363,6 @@ def append_reconciled(
                 "identity_uuid": plan.readback_identity_uuid,
                 "source": "stable-readback",
             },
-        )
-        plan = classify(
-            history,
-            host=host,
-            live=live,
-            mapping_generation=mapping_generation,
-            persistence=persistence,
         )
     if plan.evidence is None:
         raise EnrollmentReconciliationError("E3 evidence is incomplete")

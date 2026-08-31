@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import t2_mutation_journal as journal
+import t2_enrollment_persistence_journal as persistence_journal
 
 
 SERVICE_STATUS = 0xE3FF8001
@@ -28,6 +29,8 @@ class EnrollmentPhase(Enum):
     CANCEL_REQUESTED = "cancel-requested"
     TERMINAL_IDENTITY = "terminal-identity"
     TERMINAL_FAILURE = "terminal-failure"
+    PERSISTING = "persisting"
+    PERSISTENCE_READY = "persistence-ready"
     RECONCILED = "reconciled"
     OUTCOME_UNKNOWN = "outcome-unknown"
 
@@ -43,6 +46,7 @@ class EnrollmentHistory:
     head_hash: str
     terminal_identity_uuid: str | None
     terminal_status: int | None
+    persistence: persistence_journal.PersistenceHistory
 
 
 def _exact(value: Any, keys: set[str], field: str) -> dict[str, Any]:
@@ -109,6 +113,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
     pending_event: int | None = None
     terminal_identity_uuid: str | None = None
     terminal_status: int | None = None
+    persistence = persistence_journal.PersistenceTracker(baseline)
 
     for record in records[1:]:
         if record.get("operation_id") != operation_id:
@@ -307,9 +312,28 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             phase = EnrollmentPhase.TERMINAL_IDENTITY
             continue
 
+        if isinstance(milestone, str) and milestone.startswith("CATACOMB_"):
+            if terminal_identity_uuid is None or phase not in (
+                EnrollmentPhase.TERMINAL_IDENTITY,
+                EnrollmentPhase.PERSISTING,
+            ):
+                raise EnrollmentJournalError(
+                    "Catacomb persistence is not attached to a provisional identity"
+                )
+            try:
+                persistence.consume(milestone, evidence)
+            except persistence_journal.PersistenceJournalError as error:
+                raise EnrollmentJournalError(str(error)) from error
+            phase = (
+                EnrollmentPhase.PERSISTENCE_READY
+                if persistence.phase is persistence_journal.PersistencePhase.COMPLETE
+                else EnrollmentPhase.PERSISTING
+            )
+            continue
+
         if milestone == "E3_RECONCILED":
             if phase not in (
-                EnrollmentPhase.TERMINAL_IDENTITY,
+                EnrollmentPhase.PERSISTENCE_READY,
                 EnrollmentPhase.TERMINAL_FAILURE,
             ):
                 raise EnrollmentJournalError("E3 reconciliation is out of order")
@@ -353,7 +377,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             )
             if used > maximum or maximum != baseline["capacity"]["maximum"]:
                 raise EnrollmentJournalError("E3 capacity is inconsistent")
-            if phase is EnrollmentPhase.TERMINAL_IDENTITY:
+            if phase is EnrollmentPhase.PERSISTENCE_READY:
                 _uuid(evidence["identity_uuid"], "identity_uuid")
                 if (
                     evidence["identity_uuid"] != terminal_identity_uuid
@@ -426,6 +450,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
         head_hash,
         terminal_identity_uuid,
         terminal_status,
+        persistence.snapshot(),
     )
 
 

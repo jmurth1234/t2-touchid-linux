@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ import t2_enrollment_journal as enrollment_journal
 import t2_enrollment_reconciliation as reconciliation
 import t2_mutation_journal as mutation_journal
 from tests.test_mutation_journal import baseline
+from tests.test_enrollment_persistence_journal import append_persistence
 
 
 class EnrollmentReconciliationTests(unittest.TestCase):
@@ -116,8 +118,30 @@ class EnrollmentReconciliationTests(unittest.TestCase):
         }
         return host, live
 
-    def attestation(self) -> reconciliation.PersistenceAttestation:
-        return reconciliation.PersistenceAttestation(True, True, True, True)
+    def snapshot_digest(self, host, live):
+        identity_records = sorted(
+            (record["user_id"], record["identity_uuid"])
+            for record in live["per_user_identity_records"]
+        )
+        components = {
+            component["name"]: component for component in host["host_components"]
+        }
+        model = {
+            "identity_records": identity_records,
+            "catacomb": {
+                "uuid": live["catacomb"]["uuid"],
+                "hash": live["catacomb"]["hash"],
+            },
+            "host_components": [components[name] for name in sorted(components)],
+            "master_enrollment_count": host["master_enrollment_count"],
+            "mapping_generation": baseline()["mapping_generation"],
+        }
+        return hashlib.sha256(mutation_journal.canonical(model)).hexdigest()
+
+    def persist(self, path, operation_id, host, live):
+        return append_persistence(
+            path, operation_id, self.snapshot_digest(host, live)
+        )
 
     def test_terminal_identity_reconciles_only_after_durable_state_advances(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -125,46 +149,47 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                 directory, identity=True
             )
             host, live = self.snapshots(success=True)
+            self.persist(path, operation_id, host, live)
             result = reconciliation.append_reconciled(
                 path,
                 operation_id,
                 host=host,
                 live=live,
                 mapping_generation=baseline()["mapping_generation"],
-                persistence=self.attestation(),
             )
         self.assertEqual(result.phase, enrollment_journal.EnrollmentPhase.RECONCILED)
 
-    def test_identity_reconciliation_requires_complete_persistence_attestation(self):
+    def test_identity_reconciliation_requires_completed_persistence_journal(self):
         with tempfile.TemporaryDirectory() as directory:
             path, _operation_id, _identity_uuid = self.create_terminal(
                 directory, identity=True
             )
             host, live = self.snapshots(success=True)
             with self.assertRaisesRegex(
-                reconciliation.EnrollmentReconciliationError, "attestation"
+                reconciliation.EnrollmentReconciliationError, "not ready"
             ):
                 reconciliation.classify(
                     enrollment_journal.read(path),
                     host=host,
                     live=live,
                     mapping_generation=baseline()["mapping_generation"],
-                    persistence=reconciliation.PersistenceAttestation(
-                        True, False, True, True
-                    ),
                 )
 
+    def test_e3_readback_must_match_journaled_persistence_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id, _identity_uuid = self.create_terminal(
+                directory, identity=True
+            )
+            host, live = self.snapshots(success=True)
+            append_persistence(path, operation_id, "f" * 64)
             with self.assertRaisesRegex(
-                reconciliation.EnrollmentReconciliationError, "attestation"
+                reconciliation.EnrollmentReconciliationError, "snapshot"
             ):
                 reconciliation.classify(
                     enrollment_journal.read(path),
                     host=host,
                     live=live,
                     mapping_generation=baseline()["mapping_generation"],
-                    persistence=reconciliation.PersistenceAttestation(
-                        1, True, True, True
-                    ),
                 )
 
     def test_generic_failure_reconciles_only_when_every_snapshot_is_unchanged(self):
@@ -182,7 +207,7 @@ class EnrollmentReconciliationTests(unittest.TestCase):
             )
         self.assertEqual(result.phase, enrollment_journal.EnrollmentPhase.RECONCILED)
 
-    def test_failure_with_new_identity_is_promoted_before_e3(self):
+    def test_failure_with_new_identity_is_promoted_before_persistence(self):
         with tempfile.TemporaryDirectory() as directory:
             path, operation_id, _identity_uuid = self.create_terminal(
                 directory, identity=False
@@ -194,11 +219,12 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                 host=host,
                 live=live,
                 mapping_generation=baseline()["mapping_generation"],
-                persistence=self.attestation(),
             )
             records = mutation_journal.read(path)
-        self.assertEqual(result.phase, enrollment_journal.EnrollmentPhase.RECONCILED)
-        self.assertEqual(records[-2]["milestone"], "E2_IDENTITY_READBACK_OBSERVED")
+        self.assertEqual(
+            result.phase, enrollment_journal.EnrollmentPhase.TERMINAL_IDENTITY
+        )
+        self.assertEqual(records[-1]["milestone"], "E2_IDENTITY_READBACK_OBSERVED")
 
     def test_host_sep_divergence_and_mapping_change_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -206,6 +232,7 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                 directory, identity=True
             )
             host, live = self.snapshots(success=True)
+            self.persist(path, _operation_id, host, live)
             host["identity_records"] = host["identity_records"][:-1]
             with self.assertRaisesRegex(
                 reconciliation.EnrollmentReconciliationError, "diverge"
@@ -215,7 +242,6 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                     host=host,
                     live=live,
                     mapping_generation=baseline()["mapping_generation"],
-                    persistence=self.attestation(),
                 )
             host, live = self.snapshots(success=True)
             with self.assertRaisesRegex(
@@ -226,7 +252,6 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                     host=host,
                     live=live,
                     mapping_generation="f" * 64,
-                    persistence=self.attestation(),
                 )
 
     def test_existing_identity_and_component_metadata_must_be_preserved(self):
@@ -235,6 +260,7 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                 directory, identity=True
             )
             host, live = self.snapshots(success=True)
+            self.persist(path, _operation_id, host, live)
             host["identity_records"][0]["entity"] = 4
             with self.assertRaisesRegex(
                 reconciliation.EnrollmentReconciliationError, "entity"
@@ -244,7 +270,6 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                     host=host,
                     live=live,
                     mapping_generation=baseline()["mapping_generation"],
-                    persistence=self.attestation(),
                 )
 
             host, live = self.snapshots(success=True)
@@ -257,7 +282,6 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                     host=host,
                     live=live,
                     mapping_generation=baseline()["mapping_generation"],
-                    persistence=self.attestation(),
                 )
 
             host, live = self.snapshots(success=True)
@@ -270,7 +294,6 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                     host=host,
                     live=live,
                     mapping_generation=baseline()["mapping_generation"],
-                    persistence=self.attestation(),
                 )
 
     def test_identity_event_without_changed_persistence_is_rejected(self):
@@ -279,6 +302,7 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                 directory, identity=True
             )
             host, live = self.snapshots(success=True)
+            self.persist(path, _operation_id, host, live)
             before = baseline()
             for component in host["host_components"]:
                 component["sha256"] = next(
@@ -294,7 +318,6 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                     host=host,
                     live=live,
                     mapping_generation=baseline()["mapping_generation"],
-                    persistence=self.attestation(),
                 )
 
 

@@ -1224,15 +1224,28 @@ journal remains writable. Returned identity and failure results are explicitly
 reconciliation-required. There is deliberately no BridgeXPC transport adapter,
 public CLI, fprintd enrollment method, or hardware mutation path in this layer.
 
-The non-exposed `t2_enrollment_reconciliation.py` classifier now makes the E3
+The non-exposed `t2_enrollment_persistence_journal.py` validator now makes the
+recovered E2-to-E3 write-ahead order executable. Its immutable plan accepts the
+built-in user then master components as the primary batch and an optional
+separate bio-lockout batch. Every component must pass prepare intent/result,
+complete intent/secure-blob capture, and host-stage milestones. Only digests and
+lengths are retained. Every non-final component must be confirmed before the
+next begins; each final component requires host-batch commit intent/result
+before final-confirm intent/result. A final attestation binds the complete
+batch count and reconciliation snapshot and requires literal stable SEP/host
+generation equality plus independent archive read-back. Skips, reordering,
+descriptor substitution, secure-blob digest substitution, and staged snapshot
+substitution fail closed.
+
+The non-exposed `t2_enrollment_reconciliation.py` classifier makes the E3
 decision executable without adding live I/O. It requires a double-collected,
 same-generation SEP snapshot; exact protected mapping, account, bag, Catacomb
 UUID, existing UUID/entity, and host-component metadata continuity; equal host,
 per-user, and configured built-in identity sets; and at most one added UUID. A
-provisional identity additionally requires four literal persistence attestations:
-host batch committed, final SEP confirmation observed, SEP/host generation
-equal, and independent archive read-back successful. The user and master host
-components, SEP Catacomb hash, and master enrollment count must all advance. A
+provisional identity additionally requires that complete typed persistence
+history and an exact match between its journaled reconciliation snapshot and
+the E3 read-back. The user and master host components, SEP Catacomb hash, and
+master enrollment count must all advance. A
 terminal failure reconciles only if host components, SEP Catacomb, identity set,
 and master count are unchanged. If a nominal failure has nevertheless produced
 one stable new UUID, it is first journaled as `E2_IDENTITY_READBACK_OBSERVED` and

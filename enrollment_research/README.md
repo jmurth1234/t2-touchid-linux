@@ -68,12 +68,20 @@ of that transport and no enrollment CLI; the next live-capable broker must keep
 this whole core inside the authorized ACM callback and continue through E3
 reconciliation before reporting completion.
 
-The pure E3 reconciliation layer is now executable too. Given already-collected
+The persistence journal now enforces the recovered component order between E2
+and E3. It binds an immutable user/master batch plus an optional separate
+bio-lockout batch, requires prepare and complete intent/observations, records
+only secure-blob and final-file digests, forces early confirms before advancing,
+and forces host batch commit before the final confirm. It cannot become
+`persistence-ready` until stable SEP/host generation equality and independent
+archive read-back are journaled. No raw secure blob may enter the journal.
+
+The pure E3 reconciliation layer is executable too. Given already-collected
 host and same-connection SEP snapshots, it rejects mapping or binding drift,
 removed or multiple identities, changed existing entity numbers, component
 metadata changes, Catacomb UUID changes, and host/SEP disagreement. Identity
-success additionally needs explicit host-commit, final-confirm, generation,
-and independent-read-back attestations plus advanced user/master/SEP state. A
+success additionally needs the completed typed persistence history and an exact
+match to its reconciliation snapshot plus advanced user/master/SEP state. A
 reported failure can reconcile only against unchanged persistence. If that
 failure nevertheless left one new UUID, the journal records the stable read-back
 as provisional E2 success before attempting E3. This is a pure classifier: no

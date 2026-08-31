@@ -111,17 +111,27 @@ into `ENROLL_OUTCOME_UNKNOWN`. It must run inside the
 reconciliation-required failure. No BridgeXPC implementation or command-line
 entry point is supplied, so this still cannot start enrollment on hardware.
 
+`t2_enrollment_persistence_journal.py` makes the recovered persistence ordering
+mandatory after a provisional identity. An immutable plan contains exactly a
+user-then-master primary batch and, optionally, one separate bio-lockout batch.
+For every component it requires prepare intent/result, complete intent and
+secure-blob digest, and host-stage digest. Non-final components must be
+confirmed before advancing; the final component requires a separately
+journaled host-batch commit before final confirm. Only a matching stable
+SEP/host generation and independent archive read-back can reach
+`persistence-ready`. The journal stores lengths and hashes, never secure bytes.
+
 `t2_enrollment_reconciliation.py` is the pure E3 classifier. It accepts only a
 stable same-generation SEP inventory and a strict host Catacomb read-back,
 requires the mapping, account, bag, existing identities, entity numbers,
 component metadata, and Catacomb UUID to remain bound, and permits exactly one
-new identity. A provisional identity reaches E3 only with separately supplied
-evidence that host batch commit, final SEP confirmation, generation equality,
-and independent archive read-back all completed. A generic failure reconciles
+new identity. A provisional identity reaches E3 only after the typed journal
+has replayed every persistence milestone and its reconciliation-snapshot digest
+matches the classifier's stable read-back. A generic failure reconciles
 only to a byte-for-byte unchanged persistent state; if stable read-back reveals
 a new UUID despite that failure, the journal first promotes it to a provisional
-E2 identity. This module performs no I/O and no persistence itself, and there is
-still no live producer for its persistence attestation.
+E2 identity. These modules perform no I/O and no persistence themselves, and
+there is still no live producer for the persistence milestones.
 
 The v2 platform field formerly labelled `uid` is the caller's macOS audit
 session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent
