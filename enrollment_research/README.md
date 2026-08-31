@@ -335,6 +335,13 @@ delivery, or `enrollContinue`. The reducer now treats this one recovered status
 as a validated no-op phase event and continues waiting on the same connection;
 all other unrecovered ordinals remain fail-closed.
 
+The following approved run reached status 63 immediately after the first finger
+press; recovery proved no persistent delta. Exact matching `BKOperation` maps
+63 and 64 to `operation:presenceStateChanged:` with true and false respectively,
+and 64 returns the host operation to its waiting state. Neither status sends a
+biometric command or proves a successful capture. The broker now reports these
+as quiet contact/lift feedback and continues waiting on the same connection.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,

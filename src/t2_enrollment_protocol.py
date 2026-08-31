@@ -52,6 +52,8 @@ class EnrollmentAction(Enum):
     IGNORE_TELEMETRY = "ignore-telemetry"
     IGNORE_AUXILIARY = "ignore-auxiliary"
     IGNORE_PHASE = "ignore-phase"
+    FINGER_PRESENT = "finger-present"
+    FINGER_REMOVED = "finger-removed"
     CONTINUE = "continue"
     PROGRESS = "progress"
     REMOVE_AND_RETRY = "remove-and-retry"
@@ -370,6 +372,14 @@ class EnrollmentStateMachine:
             return EnrollmentTransition(EnrollmentAction.TIMED_OUT, self.state)
         if self.state is EnrollmentState.CANCEL_REQUESTED:
             self._freeze("nonterminal event arrived after cancellation was requested")
+        # Exact macOS 15.7 / 24G830 BKOperation dispatches these two statuses
+        # through operation:presenceStateChanged:. Status 63 supplies true;
+        # status 64 supplies false and returns the host operation to its
+        # waiting state. Neither path sends enrollContinue or completes.
+        if status == 63:
+            return EnrollmentTransition(EnrollmentAction.FINGER_PRESENT, self.state)
+        if status == 64:
+            return EnrollmentTransition(EnrollmentAction.FINGER_REMOVED, self.state)
         if status == 70:
             return EnrollmentTransition(
                 EnrollmentAction.CONTINUE,

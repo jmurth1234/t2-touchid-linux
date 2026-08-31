@@ -498,6 +498,11 @@ Mesa enrollment statuses actionable:
   `BKEnrollTouchIDOperation` finds no capture error, `BKEnrollOperation` finds
   no progress or terminal action, and `BKOperation` falls through without
   notifying its delegate or issuing `enrollContinue`.
+- Statuses **63** and **64** are presence transitions in the exact generic
+  operation handler. Both asynchronously call
+  `operation:presenceStateChanged:`; 63 supplies true, while 64 supplies false
+  and returns the host operation to its waiting state. Neither issues
+  `enrollContinue` or establishes capture success.
 - Statuses **66, 67, and 68** terminate through enrollment failure reasons
   **1, 2, and 3**, respectively. The shipping UI identifies these as
   **cancelled**, **failed**, and **timeout**.
@@ -688,6 +693,8 @@ stops at `SEP-identity-observed` pending persistence and inventory reconciliatio
 | Observed event | Required transition | Automatic `0x0e` continue | External result boundary |
 |---|---|---:|---|
 | `0xe3ff8001`, ordinal 100..355 | Active -> progress; compute `floor(100 * (ordinal-100) / 255)` | yes, exactly once for that accepted event | progress only; never success |
+| ordinal 63 | Active -> finger-present feedback | no | presence/animation only; not capture success |
+| ordinal 64 | Active -> finger-removed/waiting feedback | no | presence/animation only; not a retry or terminal result |
 | `0xe3ff8001`, ordinal 70 | Active -> continue-without-new-progress | yes, exactly once | no terminal result |
 | ordinal 90 | Active -> unchanged; exact-build phase message ignored after validation | no | no feedback or terminal result |
 | ordinal 74 | Active -> waiting-for-finger-removal | no invented continue | `enroll-remove-and-retry` feedback |
@@ -5356,6 +5363,15 @@ nor a terminal reason, and the generic operation handler falls through without
 delegate notification or a command. The reducer therefore accepts only ordinal
 90 as a validated no-op phase event, emits no feedback, sends no `0x0e`, and
 keeps the operation active. Other unrecovered ordinals remain fail-closed.
+
+The following approved attempt reached generic status 63 immediately after the
+operator's first finger press. Fresh reconciliation again proved no persistent
+delta. The exact 24G830 generic-operation jump table maps both 63 and its paired
+64 to an optional `operation:presenceStateChanged:` delegate callback, passing
+true for 63 and false for 64; only 64 also restores the host operation's waiting
+state. Neither branch dispatches a biometric command. Linux now exposes quiet
+contact/lift feedback for these two validated transitions, keeps enrollment
+active, and waits for a separate capture/progress or terminal event.
 
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.

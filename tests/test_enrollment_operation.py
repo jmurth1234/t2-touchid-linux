@@ -88,10 +88,12 @@ class EnrollmentOperationTests(unittest.TestCase):
                     protocol.SKS_LOCK_STATE_PAYLOAD.pack(501, 0x228),
                 ),
                 raw_event(9, protocol.SERVICE_STATISTICS, 1, 0, bytes(28)),
-                raw_event(10, protocol.SERVICE_STATUS, 1, 90),
-                raw_event(11, protocol.SERVICE_STATUS, 1, 263),
+                raw_event(10, protocol.SERVICE_STATUS, 1, 63),
+                raw_event(11, protocol.SERVICE_STATUS, 1, 64),
+                raw_event(12, protocol.SERVICE_STATUS, 1, 90),
+                raw_event(13, protocol.SERVICE_STATUS, 1, 263),
                 raw_event(
-                    12,
+                    14,
                     protocol.SERVICE_ENROLLMENT_RESULT,
                     2,
                     0,
@@ -108,8 +110,15 @@ class EnrollmentOperationTests(unittest.TestCase):
         self.assertTrue(result.reconciliation_required)
         self.assertEqual(history.phase, typed_journal.EnrollmentPhase.TERMINAL_IDENTITY)
         self.assertEqual(transport.continue_calls, 1)
-        self.assertEqual(len(feedback), 1)
-        self.assertEqual(feedback[0].progress_percent, 63)
+        self.assertEqual(
+            [item.action for item in feedback],
+            [
+                protocol.EnrollmentAction.FINGER_PRESENT,
+                protocol.EnrollmentAction.FINGER_REMOVED,
+                protocol.EnrollmentAction.PROGRESS,
+            ],
+        )
+        self.assertEqual(feedback[-1].progress_percent, 63)
         self.assertIsNotNone(transport.start_view)
         self.assertEqual(bytes(transport.start_view), bytes(68))
 

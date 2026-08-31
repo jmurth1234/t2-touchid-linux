@@ -269,6 +269,10 @@ def report_enrollment_feedback(user_name: str, transition: object) -> None:
     audible = False
     if isinstance(progress, int):
         message = f"Touch ID enrollment progress: {progress}%"
+    elif action is t2_enrollment_protocol.EnrollmentAction.FINGER_PRESENT:
+        message = "Finger detected; keep it on the Touch ID sensor."
+    elif action is t2_enrollment_protocol.EnrollmentAction.FINGER_REMOVED:
+        message = "Finger lifted; waiting for the next scan."
     elif action is t2_enrollment_protocol.EnrollmentAction.REMOVE_AND_RETRY:
         message = "Lift your finger, then place it on the sensor again."
         audible = True

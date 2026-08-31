@@ -114,6 +114,20 @@ class EnrollmentProtocolTests(unittest.TestCase):
         self.assertIsNone(transition.progress_percent)
         self.assertTrue(transition.continue_required)
 
+    def test_statuses_63_and_64_report_presence_without_continue(self):
+        machine = self.machine()
+        present = self.accept(
+            machine, event(1, enrollment.SERVICE_STATUS, 1, 63)
+        )
+        removed = self.accept(
+            machine, event(2, enrollment.SERVICE_STATUS, 1, 64)
+        )
+        self.assertEqual(present.action, enrollment.EnrollmentAction.FINGER_PRESENT)
+        self.assertEqual(removed.action, enrollment.EnrollmentAction.FINGER_REMOVED)
+        self.assertFalse(present.continue_required)
+        self.assertFalse(removed.continue_required)
+        self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
+
     def test_status_90_is_an_exact_build_phase_noop(self):
         machine = self.machine()
         phase = self.accept(

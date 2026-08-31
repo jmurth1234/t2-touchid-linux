@@ -1045,6 +1045,26 @@ class EnrollmentCommandTests(unittest.TestCase):
             MODULE.report_enrollment_feedback("mapped", progress)
         notify.assert_not_called()
 
+        for action, expected in (
+            (
+                MODULE.t2_enrollment_protocol.EnrollmentAction.FINGER_PRESENT,
+                "Finger detected",
+            ),
+            (
+                MODULE.t2_enrollment_protocol.EnrollmentAction.FINGER_REMOVED,
+                "Finger lifted",
+            ),
+        ):
+            output = io.StringIO()
+            transition = SimpleNamespace(action=action, progress_percent=None)
+            with (
+                mock.patch.object(MODULE, "notify_user") as notify,
+                redirect_stdout(output),
+            ):
+                MODULE.report_enrollment_feedback("mapped", transition)
+            self.assertIn(expected, output.getvalue())
+            notify.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
