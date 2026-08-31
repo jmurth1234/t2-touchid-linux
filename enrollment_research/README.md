@@ -199,6 +199,29 @@ codecs, store, journal, transport adapter, and classifier. A synthetic
 post-commit read-back disconnect becomes durable outcome-unknown rather than a
 success or rollback. The module still has no live command.
 
+An experimental root-only broker now wraps that composition. Its preflight path
+has no route to ACM or enrollment and requires only the already-established
+password-fallback acknowledgement. The live path is unreachable unless the
+mapped sudo user supplies both separate live-enrollment and local-Catacomb
+mutation acknowledgements. Both paths use the global operation lock; the broker
+never accepts an Apple UID, keybag handle, connection generation, backup path,
+or local-store path from the caller. Ctrl-C requests protocol cancellation
+rather than abandoning the operation, and desktop audio cues announce the
+finger request and terminal result.
+
+The non-mutating hardware preflight passed on 2026-08-31 and created the private
+Linux-local store from the sole hash-named root backup. It verified the backup,
+strictly decoded all three components, warmed the sensor, reconciled one current
+identity over a single Bridge generation, and confirmed spare capacity. It did
+not create an ACM context or dispatch enrollment/persistence. Do not run the
+live form until its command-level fault rehearsal is complete and the operator
+has explicitly approved a real fingerprint mutation.
+
+The negative live gate was also rehearsed on the target: an invocation with the
+password-fallback acknowledgement but without both mutation acknowledgements
+exited from argument validation with status 2, before runtime configuration,
+the operation lock, ACM, or Bridge hardware was opened.
+
 The proven machine's copied macOS archive now passes the executable fixture
 check for the user, master, and bio-lockout components: original strict schemas,
 neutral semantic re-emission, independent-oracle read-back, opaque secure-data
@@ -210,7 +233,8 @@ The following remain disabled or unverified:
 
 - final biometric-consumer acceptance, replay, and one-shot behavior for the
   freshly authorized mode-0 ACM context;
-- a deliberately gated live enrollment producer and explicit mutation approval;
+- command-level fault rehearsal and explicit operator approval of the first live
+  enrollment;
 - broader crash/fault rehearsal around the concrete coordinator boundary;
 - creation of new AppleKeyStore/OpenDirectory/APFS users from Linux;
 - whole-biometric-user removal with command `0x48`;

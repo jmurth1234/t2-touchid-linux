@@ -71,6 +71,7 @@ install -o root -g root -m 0755 "$source_dir/src/t2-acm-preflight.py" /usr/local
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-lifecycle-test.py" /usr/local/sbin/t2-acm-lifecycle-test
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-policy-preflight.py" /usr/local/sbin/t2-acm-policy-preflight
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-authorize-test.py" /usr/local/sbin/t2-acm-authorize-test
+install -o root -g root -m 0755 "$source_dir/src/t2-touchid-enroll-test.py" /usr/local/sbin/t2-touchid-enroll-test
 install -o root -g root -m 0644 "$source_dir/README.md" "$target_dir/README.md"
 install -o root -g root -m 0644 "$source_dir/ROADMAP.md" "$target_dir/ROADMAP.md"
 

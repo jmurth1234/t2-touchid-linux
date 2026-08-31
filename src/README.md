@@ -206,8 +206,17 @@ user/master encoders with `CatacombBridgeTransport` and `CatacombStore`,
 performs stable same-generation SEP and independent local archive read-back,
 and appends E3 only when the snapshot digest agrees. A real-codec end-to-end
 test reaches E3; an injected read-back disconnect after commit is durably
-outcome-unknown. A privileged, explicitly acknowledged broker is still required
-before hardware enrollment is exposed.
+outcome-unknown. Hardware enrollment is exposed only through a privileged,
+explicitly acknowledged broker.
+
+`t2-touchid-enroll-test.py` is that experimental broker. `--preflight-only`
+cannot enter ACM or enrollment; it verifies the sole protected backup, private
+local store, sensor readiness, operation lock, same-connection E0, and capacity.
+The live branch additionally requires explicit live-fingerprint and local-store
+mutation acknowledgements, derives all security subjects from protected runtime
+state, retains one Bridge lease through E3, and provides cancellation/audio
+feedback. Its preflight has passed on the target hardware. The live branch has
+not been executed and remains an experimental recovery-required path.
 
 The typed journal also defines `E4_POST_REBOOT_VERIFIED` for a successful
 identity. It is accepted only after E3, on both a different Linux boot UUID and

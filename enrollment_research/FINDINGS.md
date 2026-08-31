@@ -5210,8 +5210,16 @@ becomes durable outcome-unknown. A read-only hardware run confirmed exactly one
 master and one selected-user `0x3c` record on the target; only the selected user
 had bit `0x04` set. No mutation was performed. Hardware remains unreachable
 from this composition because it deliberately has no command-line entry point.
-The remaining pre-experiment work is a gated privileged broker and broader
-fault rehearsal.
+The gated privileged broker now exists. Its `--preflight-only` branch cannot
+enter ACM/enrollment, while the live branch requires separate enrollment and
+local-store mutation acknowledgements and derives every target from protected
+state. The target-hardware preflight passed and provisioned the private local
+store from the sole verified backup without dispatching a biometric or SEP
+persistence mutation. The remaining pre-experiment work is command-level fault
+rehearsal and explicit operator approval of the first live enrollment.
+The target-side negative gate rehearsal confirms that omitting either mutation
+acknowledgement exits during argument validation, before protected runtime state
+or hardware is opened.
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.
 - Treat producer-side decomposition of generic enrollment failure 67 as

@@ -125,8 +125,14 @@ class BuiltinEnrollmentFinalizer:
     ) -> None:
         if not isinstance(journal_path, Path) or not isinstance(catacomb_root, Path):
             raise EnrollmentFinalizerError("finalizer paths must be typed Paths")
-        if not isinstance(identity_name, str) or not identity_name:
-            raise EnrollmentFinalizerError("identity name is empty")
+        if (
+            not isinstance(identity_name, str)
+            or not identity_name
+            or "\x00" in identity_name
+            or len(identity_name.encode("utf-8"))
+            > t2_catacomb_codec.MAX_STRING_BYTES
+        ):
+            raise EnrollmentFinalizerError("identity name is invalid")
         if not callable(clock):
             raise EnrollmentFinalizerError("finalizer clock is not callable")
         self.lease = lease
