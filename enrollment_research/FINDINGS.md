@@ -5171,6 +5171,21 @@ and a provisional identity using that adapter on one canonical generation. No
 socket constructor or live enrollment command is exposed; the remaining host
 integration is the one-owner lease that collects E0 and then runs authorization,
 enrollment, persistence, and cleanup without changing connections.
+
+That final host ownership shape is now implemented as a no-CLI composition. A
+shared Bridge wire module backs both the existing read-only probe and a new
+exclusive socket owner. The owner negotiates API v2, prevents reentrant calls,
+acks service callbacks, and makes a disconnect or malformed transport terminal
+for its generation. A same-socket collector performs both complete E0 snapshots
+and invalidates the generation on any mismatch or unexpected event. The
+coordinator builds the guarded journal from that E0, enters the ACM-authorized
+callback, drives the enrollment adapter, and requires a same-generation typed
+finalizer before returning. A provisional identity requires both persistence
+readiness and completed reconciliation; disagreement invalidates Bridge while
+ACM deletion still occurs. Hardware remains unreachable from this composition
+because it deliberately has no command-line entry point or concrete persistence
+finalizer. The remaining pre-experiment work is fault-injection of that finalizer
+and wiring the already-tested Catacomb persistence/reconciliation operations.
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.
 - Treat producer-side decomposition of generic enrollment failure 67 as

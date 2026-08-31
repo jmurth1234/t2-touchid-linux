@@ -20,118 +20,28 @@ import tarfile
 import time
 import uuid
 
+LOCAL_SOURCE = os.path.dirname(os.path.abspath(__file__))
+if LOCAL_SOURCE not in sys.path:
+    sys.path.insert(0, LOCAL_SOURCE)
 
-MAGIC = 0xB892
-PROTOCOL_VERSION = 1
-TYPE_HELO = 1
-TYPE_MESSAGE = 2
-HEADER = struct.Struct("<HHIQ")
-BIOMETRIC_COMMAND_HEADER = struct.Struct("<HHHH")
-BIOMETRIC_COMMAND_MAGIC = 0x4D42  # "BM" in little-endian memory order
-
-
-def receive_exact(sock: socket.socket, length: int) -> bytes:
-    chunks = bytearray()
-    while len(chunks) < length:
-        chunk = sock.recv(length - len(chunks))
-        if not chunk:
-            raise EOFError(f"peer closed after {len(chunks)}/{length} bytes")
-        chunks.extend(chunk)
-    return bytes(chunks)
-
-
-def receive_frame(sock: socket.socket) -> tuple[int, bytes]:
-    raw_header = receive_exact(sock, HEADER.size)
-    magic, version, frame_type, body_length = HEADER.unpack(raw_header)
-    if magic != MAGIC:
-        raise ValueError(f"invalid BridgeXPC magic 0x{magic:04x}")
-    if version != PROTOCOL_VERSION:
-        raise ValueError(f"unsupported BridgeXPC protocol version {version}")
-    if body_length > 16 * 1024 * 1024:
-        raise ValueError(f"refusing implausible {body_length}-byte frame")
-    return frame_type, receive_exact(sock, body_length)
-
-
-def send_helo(sock: socket.socket, bridge_xpc_version: int) -> None:
-    body = json.dumps(
-        {
-            "MaxSupportedProtocolVersion": PROTOCOL_VERSION,
-            "OSBuild": "Linux",
-            "BridgeXPCVersion": bridge_xpc_version,
-            "ProcessName": "t2-touchid-probe",
-        },
-        separators=(",", ":"),
-    ).encode()
-    sock.sendall(HEADER.pack(MAGIC, PROTOCOL_VERSION, TYPE_HELO, len(body)) + body)
-
-
-def send_message(sock: socket.socket, value: object) -> None:
-    body = plistlib.dumps(value, fmt=plistlib.FMT_BINARY, sort_keys=False)
-    sock.sendall(
-        HEADER.pack(MAGIC, PROTOCOL_VERSION, TYPE_MESSAGE, len(body)) + body
-    )
-
-
-def describe(frame_type: int, body: bytes) -> object:
-    if frame_type == TYPE_HELO:
-        return json.loads(body)
-    if frame_type == TYPE_MESSAGE:
-        return plistlib.loads(body)
-    return {"unknown_frame_type": frame_type, "body_hex": body.hex()}
-
-
-def receive_envelope(sock: socket.socket) -> list:
-    frame_type, frame_body = receive_frame(sock)
-    envelope = describe(frame_type, frame_body)
-    if frame_type != TYPE_MESSAGE:
-        raise ValueError(f"expected message frame, received type {frame_type}")
-    if not isinstance(envelope, list) or len(envelope) != 4:
-        raise ValueError("malformed BiometricKit bridge envelope")
-    return envelope
-
-
-def request_with_events(sock: socket.socket, payload: object) -> tuple[object, list]:
-    reply_id = str(uuid.uuid4()).upper()
-    send_message(sock, [1, False, reply_id, payload])
-    events = []
-    while True:
-        envelope = receive_envelope(sock)
-        if envelope[0] != 1:
-            raise ValueError("unsupported BiometricKit envelope version")
-        if envelope[1] is True:
-            if envelope[2] != reply_id:
-                raise ValueError("reply envelope does not match request")
-            return envelope[3], events
-        # Bridge-side status callbacks are synchronous.  Acknowledge them just
-        # as BiometricKitBridgeConnection does, then continue waiting for the
-        # reply to our original request.
-        events.append(envelope[3])
-        send_message(sock, [1, True, envelope[2], [0]])
-
-
-def request(sock: socket.socket, payload: object) -> object:
-    reply, _events = request_with_events(sock, payload)
-    return reply
-
-
-def biometric_command(
-    sock: socket.socket,
-    command: int,
-    *,
-    version: int = 1,
-    value: int = 0,
-    data: bytes = b"",
-    output_capacity: int = 0,
-) -> tuple[object, list]:
-    """Send the inner AppleBiometricServices command through bkremoted.
-
-    BiometricKitXPCServerMesa wraps every command in an eight-byte ``BM``
-    header and submits it as bridge-level command zero.
-    """
-    inner = BIOMETRIC_COMMAND_HEADER.pack(
-        BIOMETRIC_COMMAND_MAGIC, command, version, value
-    ) + data
-    return request_with_events(sock, [3, 0, inner, output_capacity])
+from t2_bridge_wire import (
+    BIOMETRIC_COMMAND_HEADER,
+    BIOMETRIC_COMMAND_MAGIC,
+    HEADER,
+    MAGIC,
+    PROTOCOL_VERSION,
+    TYPE_HELO,
+    TYPE_MESSAGE,
+    biometric_command,
+    describe,
+    receive_envelope,
+    receive_exact,
+    receive_frame,
+    request,
+    request_with_events,
+    send_helo,
+    send_message,
+)
 
 
 def summarize_event(

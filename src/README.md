@@ -125,6 +125,24 @@ nonzero active-operation reply permanently poisons the adapter. It composes
 with the journaled enrollment core in tests, but no live lease, baseline-to-
 authorization coordinator, or enrollment CLI is exposed.
 
+`t2_bridge_wire.py` now holds the shared BridgeXPC framing previously embedded
+in the read-only probe. `t2_bridge_connection.py` owns one initialized socket,
+negotiates the matching API-v2 client contract, assigns one canonical generation
+UUID, acknowledges synchronous and asynchronous service callbacks, rejects
+reentrant use, and closes permanently on transport ambiguity. The existing
+probe uses the same wire implementation.
+
+`t2_bridge_inventory.py` double-collects the complete E0 inventory on that owned
+connection and validates protocol, global/per-user identity agreement, capacity,
+Catacomb metadata, SKS state, and exact snapshot equality. Any dispatched but
+untrustworthy collection invalidates the generation. `t2_enrollment_coordinator.py`
+then composes this E0, the typed journal, the live-scoped ACM callback, the
+enrollment Bridge adapter, and a mandatory injected finalizer without releasing
+the socket. A provisional identity cannot be reported as complete unless the
+finalizer attests both persistence readiness and same-generation reconciliation;
+finalizer ambiguity invalidates Bridge and still triggers ACM deletion. These
+modules have no CLI and cannot initiate enrollment by themselves.
+
 `t2_enrollment_persistence_journal.py` makes the recovered persistence ordering
 mandatory after a provisional identity. An immutable plan contains exactly a
 user-then-master primary batch and, optionally, one separate bio-lockout batch.

@@ -90,6 +90,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
 - `src/t2-aks-tool.c`: narrowly allow-listed AppleKeyStore operations.
 - `src/discover-biometric-port.py`: privacy-preserving RemoteXPC discovery.
 - `src/bridge-xpc-probe.py`: BridgeXPC command and match implementation.
+- `src/t2_bridge_connection.py`: exclusive generation-pinned Bridge owner used
+  by the no-CLI enrollment research coordinator.
 - `src/t2-fprintd.py`: verification-only fprintd facade.
 - `systemd/`: system and audible-feedback units.
 - `pam/`: clamshell-safe Omarchy PAM templates.

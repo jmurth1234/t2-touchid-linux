@@ -153,8 +153,16 @@ accept only the broker's 16-byte mode-0 ACM external form, wipe the request
 buffer, emit only exact start/continue/cancel commands, validate and sequence
 service events within one connection/operation generation, never treat progress
 as success, and stop at `SEP-identity-observed`. The adapter permanently poisons
-itself after an ambiguous dispatch or receive. It has no live socket producer,
-fprintd enrollment route, or Catacomb mutation command.
+itself after an ambiguous dispatch or receive. The adapter itself owns no
+socket, and there is no fprintd enrollment route or Catacomb mutation command.
+
+The next same-connection layer is also implemented without a live command. A
+single owner initializes and pins one Bridge socket; a private collector obtains
+both E0 snapshots without closing it; and a coordinator creates the journal,
+runs the ACM-scoped enrollment callback, and requires a typed finalizer on that
+same generation. An observed SEP identity is never reported complete unless the
+finalizer attests persistence readiness and reconciliation. Any finalizer error
+invalidates the Bridge generation while mandatory ACM deletion still runs.
 
 The proven machine's copied macOS archive now passes the executable fixture
 check for the user, master, and bio-lockout components: original strict schemas,
@@ -167,6 +175,8 @@ The following remain disabled or unverified:
 
 - final biometric-consumer acceptance, replay, and one-shot behavior for the
   freshly authorized mode-0 ACM context;
+- live persistence/finalizer integration and fault-injection rehearsal for the
+  same-connection coordinator;
 - creation of new AppleKeyStore/OpenDirectory/APFS users from Linux;
 - whole-biometric-user removal with command `0x48`;
 - writing Linux-generated Catacombs back into macOS; and
