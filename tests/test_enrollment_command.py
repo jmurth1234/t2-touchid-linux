@@ -423,8 +423,17 @@ class EnrollmentCommandTests(unittest.TestCase):
             phase=MODULE.t2_enrollment_journal.EnrollmentPhase.RECONCILED,
             terminal_identity_uuid="private-identity",
         )
-        with mock.patch.object(
-            MODULE, "enrollment_journals", return_value=[(Path("private"), pending)]
+        with (
+            mock.patch.object(
+                MODULE,
+                "enrollment_journals",
+                return_value=[(Path("private"), pending)],
+            ),
+            mock.patch.object(
+                MODULE.t2_mutation_registry,
+                "blocks_new_mutation",
+                return_value=False,
+            ),
         ):
             result = MODULE.enrollment_status()
             self.assertEqual(result["post_reboot_pending_count"], 1)
@@ -831,6 +840,11 @@ class EnrollmentCommandTests(unittest.TestCase):
             with (
                 mock.patch.object(MODULE, "STORE_ROOT", store_root),
                 mock.patch.object(MODULE, "enrollment_journals", return_value=[]),
+                mock.patch.object(
+                    MODULE.t2_mutation_registry,
+                    "blocks_new_mutation",
+                    return_value=False,
+                ),
                 self.assertRaisesRegex(
                     MODULE.EnrollmentCommandError, "pending local transaction"
                 ),
@@ -857,6 +871,11 @@ class EnrollmentCommandTests(unittest.TestCase):
                     MODULE.t2_enrollment_journal,
                     "validate_history",
                     return_value=history,
+                ),
+                mock.patch.object(
+                    MODULE.t2_mutation_registry,
+                    "blocks_new_mutation",
+                    return_value=False,
                 ),
                 self.assertRaisesRegex(MODULE.EnrollmentCommandError, "unfinished"),
             ):

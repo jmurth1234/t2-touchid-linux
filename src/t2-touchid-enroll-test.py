@@ -43,6 +43,7 @@ import t2_enrollment_persistence_journal
 import t2_enrollment_protocol
 import t2_enrollment_reconciliation
 import t2_mutation_journal
+import t2_mutation_registry
 from t2_acm_device import ACMDevice, ACMDeviceError
 
 
@@ -461,7 +462,15 @@ def require_no_unfinished_enrollment() -> None:
     local_transaction_pending = os.path.lexists(
         STORE_ROOT / "prepare"
     ) or os.path.lexists(STORE_ROOT / "commit")
-    if unfinished or pending_post_reboot or local_transaction_pending:
+    other_mutation_pending = t2_mutation_registry.blocks_new_mutation(
+        MUTATION_ROOT, excluding_kind="enroll"
+    )
+    if (
+        unfinished
+        or pending_post_reboot
+        or local_transaction_pending
+        or other_mutation_pending
+    ):
         raise EnrollmentCommandError(
             "an earlier enrollment is unfinished, has a pending local transaction, "
             "or awaits post-reboot verification"
