@@ -244,9 +244,13 @@ stdout cannot change an authorized enrollment or persistence outcome.
 The broker verifies a block-mode systemd sleep inhibitor before live dispatch,
 holds it through the complete authorized enrollment/persistence window, and
 releases it through a parent-owned pipe on normal exit or process death. Failure
-to acquire that inhibitor stops before ACM or enrollment. SIGINT, SIGTERM, and
-SIGHUP all request typed cancellation, including a pre-dispatch gate. Public
-summaries omit the internal operation UUID as well as biometric identifiers.
+to acquire that inhibitor stops before ACM or enrollment. The guard is checked
+again inside the password-authorized consumer immediately before the first SEP
+enrollment dispatch. Guard loss or cancellation during authorization appends a
+typed `aborted-before-start` terminal record with `mutation_possible=false`;
+the enrollment transport and finalizer are not invoked. SIGINT, SIGTERM, and
+SIGHUP all request typed cancellation, including that pre-dispatch gate.
+Public summaries omit the internal operation UUID as well as biometric identifiers.
 The read-only `--status-only` mode takes the operation lock but skips sensor
 warm-up and store provisioning. It emits only unfinished phase counts and a
 no-change recovery-candidate boolean, plus the count/eligibility of pending E4

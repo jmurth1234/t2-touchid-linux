@@ -36,6 +36,40 @@ class EnrollmentJournalTests(unittest.TestCase):
             path, operation_id, "ENROLL_START_OBSERVED", {"status": 0}
         )
 
+    def test_pre_dispatch_abort_is_terminal_and_records_no_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create(directory)
+            result = enrollment.append_checked(
+                path,
+                operation_id,
+                "ENROLL_ABORTED_BEFORE_START",
+                {
+                    "connection_generation": baseline()["connection_generation"],
+                    "reason": "safety-guard-unavailable",
+                    "mutation_possible": False,
+                },
+            )
+            self.assertEqual(
+                result.phase, enrollment.EnrollmentPhase.ABORTED_BEFORE_START
+            )
+            with self.assertRaisesRegex(
+                enrollment.EnrollmentJournalError, "out of order"
+            ):
+                enrollment.append_checked(
+                    path,
+                    operation_id,
+                    "ENROLL_START_INTENT",
+                    {
+                        "apple_uid": 501,
+                        "protocol_version": 2,
+                        "connection_generation": baseline()[
+                            "connection_generation"
+                        ],
+                        "request_length": 68,
+                        "request_sha256": "a" * 64,
+                    },
+                )
+
     def test_start_continue_and_terminal_identity_are_strictly_ordered(self):
         with tempfile.TemporaryDirectory() as directory:
             path, operation_id = self.create(directory)

@@ -740,6 +740,7 @@ def run_enrollment(
     backup: Path,
     identity_name: str,
     cancel_requested: Callable[[], bool],
+    dispatch_allowed: Callable[[], bool],
 ) -> dict[str, object]:
     session, _positive_handle = keybag_runtime(configuration["special_bag"])
     operation_id = str(uuid.uuid4())
@@ -794,6 +795,7 @@ def run_enrollment(
             password_fallback_verified=True,
             password_binder=bind_password,
             finalizer=finalizer,
+            dispatch_allowed=dispatch_allowed,
             cancel_requested=cancel_requested,
             on_feedback=feedback,
         )
@@ -947,6 +949,8 @@ def main() -> int:
                             args.identity_name,
                             lambda: cancellation.is_set()
                             or inhibitor.poll() is not None,
+                            lambda: not cancellation.is_set()
+                            and inhibitor.poll() is None,
                         )
                 result["local_store_provisioned"] = store_provisioned
         finally:

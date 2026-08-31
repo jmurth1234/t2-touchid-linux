@@ -29,10 +29,12 @@ class FakeTransport:
         self.events = iter(events)
         self.start_status = start_status
         self.start_view: memoryview | None = None
+        self.start_calls = 0
         self.continue_calls = 0
         self.cancel_calls = 0
 
     def start(self, payload: memoryview) -> int:
+        self.start_calls += 1
         self.start_view = payload
         return self.start_status
 
@@ -50,6 +52,7 @@ class FakeTransport:
 
 class FailingStartTransport(FakeTransport):
     def start(self, payload: memoryview) -> int:
+        self.start_calls += 1
         self.start_view = payload
         raise ConnectionError("synthetic disconnect")
 
@@ -123,6 +126,42 @@ class EnrollmentOperationTests(unittest.TestCase):
         self.assertEqual(result.outcome, "start-rejected")
         self.assertEqual(records[1]["evidence"]["request_sha256"], digest)
         self.assertNotIn(secret.hex(), journal_text)
+
+    def test_failed_dispatch_guard_aborts_durably_before_transport_use(self):
+        transport = FakeTransport([])
+        with tempfile.TemporaryDirectory() as directory:
+            instance, path, _operation_id = self.create(directory, transport)
+            with self.assertRaisesRegex(
+                operation.EnrollmentPreDispatchCancelled,
+                "before start dispatch",
+            ):
+                instance.run(
+                    bytes(range(16)), dispatch_allowed=lambda: False
+                )
+            history = typed_journal.read(path)
+        self.assertEqual(transport.start_calls, 0)
+        self.assertEqual(
+            history.phase, typed_journal.EnrollmentPhase.ABORTED_BEFORE_START
+        )
+
+    def test_dispatch_guard_exception_fails_closed_before_transport_use(self):
+        transport = FakeTransport([])
+
+        def fail() -> bool:
+            raise RuntimeError("private guard detail")
+
+        with tempfile.TemporaryDirectory() as directory:
+            instance, path, _operation_id = self.create(directory, transport)
+            with self.assertRaisesRegex(
+                operation.EnrollmentPreDispatchCancelled,
+                "before start dispatch",
+            ):
+                instance.run(bytes(range(16)), dispatch_allowed=fail)
+            history = typed_journal.read(path)
+        self.assertEqual(transport.start_calls, 0)
+        self.assertEqual(
+            history.phase, typed_journal.EnrollmentPhase.ABORTED_BEFORE_START
+        )
 
     def test_start_disconnect_becomes_durable_outcome_unknown(self):
         transport = FailingStartTransport([])

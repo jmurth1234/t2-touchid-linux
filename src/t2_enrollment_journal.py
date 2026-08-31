@@ -22,6 +22,7 @@ class EnrollmentJournalError(journal.JournalError):
 
 class EnrollmentPhase(Enum):
     BASELINE = "baseline-reconciled"
+    ABORTED_BEFORE_START = "aborted-before-start"
     START_INTENT = "start-intent"
     ACTIVE = "active"
     CONTINUE_INTENT = "continue-intent"
@@ -127,6 +128,27 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             raise EnrollmentJournalError("operation ID changed inside enrollment journal")
         milestone = record.get("milestone")
         evidence = record.get("evidence")
+
+        if milestone == "ENROLL_ABORTED_BEFORE_START":
+            if phase is not EnrollmentPhase.BASELINE:
+                raise EnrollmentJournalError(
+                    "pre-dispatch enrollment abort is out of order"
+                )
+            evidence = _exact(
+                evidence,
+                {"connection_generation", "reason", "mutation_possible"},
+                milestone,
+            )
+            _same_generation(evidence, baseline)
+            if (
+                evidence["reason"] != "safety-guard-unavailable"
+                or evidence["mutation_possible"] is not False
+            ):
+                raise EnrollmentJournalError(
+                    "pre-dispatch enrollment abort evidence is invalid"
+                )
+            phase = EnrollmentPhase.ABORTED_BEFORE_START
+            continue
 
         if milestone == "ENROLL_START_INTENT":
             if phase is not EnrollmentPhase.BASELINE:

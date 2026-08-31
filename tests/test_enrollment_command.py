@@ -905,6 +905,7 @@ class EnrollmentCommandTests(unittest.TestCase):
                     Path("/var/lib/t2-touchid/backups/" + "a" * 64 + ".tar.gz"),
                     "Left index finger",
                     MODULE.Event().is_set,
+                    lambda: True,
                 )
         binder_call = run.call_args_list[0]
         self.assertEqual(
@@ -915,6 +916,7 @@ class EnrollmentCommandTests(unittest.TestCase):
         self.assertEqual(seen["caller_linux_uid"], 1000)
         self.assertEqual(seen["target_linux_uid"], 1000)
         self.assertEqual(seen["mapping_generation"], "d" * 64)
+        self.assertTrue(seen["dispatch_allowed"]())
         self.assertEqual(finalizer.call_args.kwargs["catacomb_root"], MODULE.STORE_ROOT)
         self.assertTrue(output["persistence_ready"])
         self.assertNotIn("operation_id", output)

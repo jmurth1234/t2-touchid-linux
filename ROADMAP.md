@@ -51,6 +51,8 @@ evidence, not intent.
 - [x] Add a privacy-safe suspend diagnostic bundle.
 - [x] Prepare an upstream-ready t2bce report with exact reproduction evidence.
 - [x] Fail closed unless live enrollment holds a verified sleep inhibitor.
+- [x] Recheck the inhibitor inside the authorized consumer immediately before
+      the first enrollment dispatch and durably abort if it was lost.
 - [ ] Validate any kernel fix or alternative sleep mode on the proven machine.
 
 ## 8. Security, tests, and releases

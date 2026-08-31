@@ -19,6 +19,10 @@ class EnrollmentOperationError(RuntimeError):
     pass
 
 
+class EnrollmentPreDispatchCancelled(EnrollmentOperationError):
+    """The live safety guard stopped enrollment before any SEP dispatch."""
+
+
 class EnrollmentTransport(Protocol):
     """Synchronous same-connection transport supplied by a future broker."""
 
@@ -77,6 +81,7 @@ class EnrollmentOperation:
         self,
         acm_external_form: bytes,
         *,
+        dispatch_allowed: Callable[[], bool] = lambda: True,
         cancel_requested: Callable[[], bool] = lambda: False,
         on_feedback: Callable[[protocol.EnrollmentTransition], None] = lambda _transition: None,
         event_limit: int = 512,
@@ -89,6 +94,27 @@ class EnrollmentOperation:
             operation_id=self.operation_id,
         )
         try:
+            try:
+                allowed = dispatch_allowed()
+                if inspect.isawaitable(allowed):
+                    close = getattr(allowed, "close", None)
+                    if callable(close):
+                        close()
+                    allowed = False
+            except BaseException:
+                allowed = False
+            if allowed is not True:
+                self._append(
+                    "ENROLL_ABORTED_BEFORE_START",
+                    {
+                        "connection_generation": self.transport.connection_generation,
+                        "reason": "safety-guard-unavailable",
+                        "mutation_possible": False,
+                    },
+                )
+                raise EnrollmentPreDispatchCancelled(
+                    "enrollment cancelled before start dispatch"
+                )
             with protocol.SensitiveEnrollmentRequest(
                 self.transport.protocol_version,
                 self.apple_user_id,

@@ -32,6 +32,10 @@ def _safe_stop_detail(error: BaseException) -> str | None:
             detail = str(current)
         elif isinstance(current, t2_enrollment_protocol.EnrollmentProtocolError):
             detail = str(current)
+        elif isinstance(
+            current, t2_enrollment_operation.EnrollmentPreDispatchCancelled
+        ):
+            detail = "enrollment cancelled before start dispatch"
         cause = current.__cause__
         current = cause if isinstance(cause, BaseException) else None
     return detail
@@ -87,6 +91,7 @@ def run(
     password_fallback_verified: bool,
     password_binder: Callable[[bytes], None],
     finalizer: Finalizer,
+    dispatch_allowed: Callable[[], bool],
     cancel_requested: Callable[[], bool] = lambda: False,
     on_feedback: Callable[[object], None] = lambda _transition: None,
 ) -> EnrollmentCoordinatorResult:
@@ -132,6 +137,7 @@ def run(
         ]:
             result = enrollment.run(
                 external_form,
+                dispatch_allowed=dispatch_allowed,
                 cancel_requested=cancel_requested,
                 on_feedback=on_feedback,
             )

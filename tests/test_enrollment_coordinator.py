@@ -128,6 +128,15 @@ class EnrollmentCoordinatorTests(unittest.TestCase):
         )
         self.assertIsNone(coordinator._safe_stop_detail(RuntimeError("private")))
 
+    def test_pre_dispatch_cancellation_has_one_controlled_public_detail(self):
+        error = coordinator.t2_enrollment_operation.EnrollmentPreDispatchCancelled(
+            "private replacement text"
+        )
+        self.assertEqual(
+            coordinator._safe_stop_detail(error),
+            "enrollment cancelled before start dispatch",
+        )
+
     def test_deepest_controlled_protocol_detail_is_exposed(self):
         inner = enrollment_protocol.EnrollmentProtocolError(
             "SKS lock-state event belongs to another Apple user"
@@ -143,7 +152,9 @@ class EnrollmentCoordinatorTests(unittest.TestCase):
             "SKS lock-state event belongs to another Apple user",
         )
 
-    def run_coordinator(self, directory: str, finalizer):
+    def run_coordinator(
+        self, directory: str, finalizer, *, dispatch_allowed=lambda: True
+    ):
         lease = FakeLease()
         device = acm_device()
         self.last_lease = lease
@@ -166,8 +177,36 @@ class EnrollmentCoordinatorTests(unittest.TestCase):
             password_fallback_verified=True,
             password_binder=bound.append,
             finalizer=finalizer,
+            dispatch_allowed=dispatch_allowed,
         )
         return result, lease, device, bound, path
+
+    def test_dispatch_guard_stops_after_authorization_without_enrollment(self):
+        finalized = []
+
+        def finalize(result):
+            finalized.append(result)
+            raise AssertionError("finalizer must not run")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "operation.jsonl"
+            with self.assertRaisesRegex(
+                coordinator.EnrollmentCoordinatorError,
+                "cancelled before start dispatch",
+            ):
+                self.run_coordinator(
+                    directory, finalize, dispatch_allowed=lambda: False
+                )
+            history = enrollment_journal.read(path)
+        self.assertEqual(finalized, [])
+        self.assertEqual(self.last_lease.enrollment_commands, [])
+        self.assertEqual(
+            history.phase,
+            enrollment_journal.EnrollmentPhase.ABORTED_BEFORE_START,
+        )
+        self.assertEqual(
+            self.last_device.commands[-1][0], acm_protocol.OP_CONTEXT_DELETE
+        )
 
     def test_full_fake_flow_keeps_one_generation_through_finalizer(self):
         finalized = []
