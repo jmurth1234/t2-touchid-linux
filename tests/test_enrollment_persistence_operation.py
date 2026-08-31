@@ -11,7 +11,9 @@ import t2_catacomb_codec as codec
 import t2_catacomb_bridge as bridge
 import t2_catacomb_protocol as catacomb_protocol
 import t2_catacomb_store as store_module
+import t2_biolockout_protocol as biolockout_protocol
 import t2_enrollment_journal as enrollment
+import t2_enrollment_persistence_bridge as persistence_bridge
 import t2_enrollment_persistence_operation as operation
 import t2_mutation_journal as mutation
 from tests.test_catacomb_codec import biolockout_fixture, fixture, master_fixture
@@ -26,11 +28,19 @@ class FakeTransport:
 
     def prepare(self, descriptor):
         self.calls.append(("prepare", descriptor))
-        return 0, 32
+        return (
+            (0, biolockout_protocol.OUTPUT_CAPACITY)
+            if descriptor == biolockout_protocol.PERSISTENCE_DESCRIPTOR
+            else (0, 32)
+        )
 
     def complete(self, descriptor):
         self.calls.append(("complete", descriptor))
-        value = bytearray(b"LTFC" + bytes([descriptor[0]]) * 28)
+        value = (
+            bytearray(b"HRLB" + b"B" * 101)
+            if descriptor == biolockout_protocol.PERSISTENCE_DESCRIPTOR
+            else bytearray(b"LTFC" + bytes([descriptor[0]]) * 28)
+        )
         self.buffers.append(value)
         return 0, value
 
@@ -51,6 +61,7 @@ class FakeBridgeLease:
                 ([0, (32).to_bytes(4, "little")], []),
                 ([0, b"LTFC" + b"M" * 28], []),
                 ([0, b""], []),
+                ([0, b"HRLB" + b"B" * 101], []),
             ]
         self.replies = iter(replies)
 
@@ -135,6 +146,12 @@ class PersistenceOperationTests(unittest.TestCase):
                     catacomb_protocol.CatacombComponent.master().descriptor,
                 ),
             ),
+            (
+                operation.ComponentSpec(
+                    "biolockout.cat",
+                    biolockout_protocol.PERSISTENCE_DESCRIPTOR,
+                ),
+            ),
         )
         self.encoded_buffers = []
 
@@ -177,7 +194,17 @@ class PersistenceOperationTests(unittest.TestCase):
         self.assertEqual(result.phase, enrollment.EnrollmentPhase.PERSISTENCE_READY)
         self.assertEqual(
             [name for name, _descriptor in transport.calls],
-            ["prepare", "complete", "confirm", "prepare", "complete", "confirm"],
+            [
+                "prepare",
+                "complete",
+                "confirm",
+                "prepare",
+                "complete",
+                "confirm",
+                "prepare",
+                "complete",
+                "confirm",
+            ],
         )
         self.assertTrue(all(not any(value) for value in transport.buffers))
         self.assertTrue(all(not any(value) for value in self.encoded_buffers))
@@ -187,7 +214,7 @@ class PersistenceOperationTests(unittest.TestCase):
     def test_operation_composes_with_generation_pinned_bridge_adapter(self):
         generation = baseline()["connection_generation"]
         lease = FakeBridgeLease(generation)
-        transport = bridge.CatacombBridgeTransport(
+        transport = persistence_bridge.EnrollmentPersistenceBridgeTransport(
             lease,
             protocol_version=2,
             connection_generation=generation,
@@ -202,13 +229,14 @@ class PersistenceOperationTests(unittest.TestCase):
             readback=self.readback,
         )
         self.assertEqual(result.phase, enrollment.EnrollmentPhase.PERSISTENCE_READY)
-        self.assertEqual(transport.state, bridge.TransactionState.IDLE)
+        self.assertEqual(transport.state, persistence_bridge.RouteState.IDLE)
         self.assertEqual(
             [call[0] for call in lease.calls],
-            [0x3D, 0x3E, 0x3F, 0x3D, 0x3E, 0x3F],
+            [0x3D, 0x3E, 0x3F, 0x3D, 0x3E, 0x3F, 0x4A],
         )
         self.assertEqual(
-            [call[4] for call in lease.calls], [4, 32, 0, 4, 32, 0]
+            [call[4] for call in lease.calls],
+            [4, 32, 0, 4, 32, 0, biolockout_protocol.OUTPUT_CAPACITY],
         )
         self.assertTrue(all(not any(value) for value in self.encoded_buffers))
 
@@ -265,7 +293,7 @@ class PersistenceOperationTests(unittest.TestCase):
 
     def test_bad_component_order_is_rejected_before_transport_dispatch(self):
         transport = FakeTransport()
-        reversed_specs = ((self.specs[0][1], self.specs[0][0]),)
+        reversed_specs = ((self.specs[0][1], self.specs[0][0]), self.specs[1])
         with self.assertRaises(enrollment.EnrollmentJournalError):
             operation.run(
                 self.journal,
@@ -288,6 +316,7 @@ class PersistenceOperationTests(unittest.TestCase):
                 ),
                 self.specs[0][1],
             ),
+            self.specs[1],
         )
         with self.assertRaisesRegex(
             operation.PersistenceOperationError, "another target"

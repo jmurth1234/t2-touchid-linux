@@ -287,26 +287,63 @@ def classify(
     ):
         raise EnrollmentReconciliationError("master enrollment count is invalid")
     identity_uuid = next(iter(added))[1] if added else None
-    persistence_success = history.phase is enrollment_journal.EnrollmentPhase.PERSISTENCE_READY or persistence_readback
+    persistence_terminal = (
+        history.phase is enrollment_journal.EnrollmentPhase.PERSISTENCE_READY
+        or persistence_readback
+    )
+    persistence_success = (
+        persistence_terminal and history.terminal_identity_uuid is not None
+    )
+    failure_biolockout_sync = (
+        persistence_terminal
+        and history.terminal_identity_uuid is None
+        and history.terminal_status is not None
+        and len(history.persistence.batches) == 1
+        and [name for name, _digest in history.persistence.batches[0]]
+        == ["biolockout.cat"]
+    )
     if persistence_success:
         if identity_uuid != history.terminal_identity_uuid:
             raise EnrollmentReconciliationError(
                 "E2 identity does not match stable read-back"
             )
         user_name = f"user_{apple_uid:08x}.cat"
-        if user_name not in after_components or "master.cat" not in after_components:
+        if (
+            user_name not in after_components
+            or "master.cat" not in after_components
+            or "biolockout.cat" not in after_components
+        ):
             raise EnrollmentReconciliationError("required Catacomb components are absent")
         if (
             after_components[user_name]["sha256"]
             == before_components[user_name]["sha256"]
             or after_components["master.cat"]["sha256"]
             == before_components["master.cat"]["sha256"]
+            or after_components["biolockout.cat"]["sha256"]
+            == before_components["biolockout.cat"]["sha256"]
             or catacomb["hash"] == baseline["sep_catacomb"]["hash"]
             or master_enrollment_count
             <= baseline["master_enrollment_count"]
         ):
             raise EnrollmentReconciliationError(
                 "successful enrollment did not advance durable Catacomb state"
+            )
+    elif failure_biolockout_sync:
+        if identity_uuid is not None:
+            raise EnrollmentReconciliationError(
+                "failed enrollment bio-lockout sync observed a new identity"
+            )
+        user_name = f"user_{apple_uid:08x}.cat"
+        if (
+            after_components[user_name]["sha256"]
+            != before_components[user_name]["sha256"]
+            or after_components["master.cat"]["sha256"]
+            != before_components["master.cat"]["sha256"]
+            or catacomb.get("hash") != baseline["sep_catacomb"]["hash"]
+            or master_enrollment_count != baseline["master_enrollment_count"]
+        ):
+            raise EnrollmentReconciliationError(
+                "failed enrollment changed identity Catacomb state"
             )
     else:
         if identity_uuid is not None:

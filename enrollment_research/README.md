@@ -56,21 +56,21 @@ reordered start/continue/cancel/terminal milestones, stale concurrent appends,
 changed connection generations, boot or mapping reuse, exhausted capacity, and
 untyped generic records. A journal produced by the standalone baseline command
 is intentionally not mutation-ready because that command closes its inventory
-connection; a future broker must collect E0 and execute E1 under one connection
-lease.
+connection. The privileged broker described below instead collects E0 and
+executes E1 through final reconciliation under one connection lease.
 
 A synchronous operation core now composes the typed journal and pure event
 machine through a dependency-injected transport. Tests cover start rejection,
 disconnect, progress/continue, duplicate delivery, cancellation, request
 erasure, stale E0 generations, provisional identity, and journal failure after
-device dispatch. The repository intentionally supplies no live implementation
-of that transport and no enrollment CLI; the next live-capable broker must keep
-this whole core inside the authorized ACM callback and continue through E3
-reconciliation before reporting completion.
+device dispatch. The core itself has no socket or CLI; the privileged broker
+supplies its generation-pinned live adapter, keeps it inside the authorized ACM
+callback, and continues through E3 reconciliation before reporting completion.
 
 The persistence journal now enforces the recovered component order between E2
-and E3. It binds an immutable user/master batch plus an optional separate
-bio-lockout batch, requires prepare and complete intent/observations, records
+and E3. Successful enrollment binds an immutable user/master batch followed by
+a mandatory separate bio-lockout batch; terminal failure permits only a single
+bio-lockout refresh batch. It requires prepare and complete intent/observations, records
 only secure-blob and final-file digests, forces early confirms before advancing,
 and forces host batch commit before the final confirm. It cannot become
 `persistence-ready` until stable SEP/host generation equality and independent
@@ -78,8 +78,8 @@ archive read-back are journaled. No raw secure blob may enter the journal.
 The dependency-injected operation core now executes this ordering against fake
 transport and temporary host-store interfaces, wipes its secure and encoded
 buffers, and freezes post-dispatch transport, codec, host-store, journal, or
-read-back ambiguity as outcome-unknown. There is still no concrete SEP/Bridge
-persistence transport and no user-facing command.
+read-back ambiguity as outcome-unknown. Concrete generation-pinned Catacomb and
+bio-lockout adapters are composed only by the explicitly gated broker.
 
 The matching daemon disassembly also fixes the reply contract precisely:
 prepare `0x3d` returns exactly one 32-bit expected secure-blob length, complete
@@ -103,12 +103,13 @@ host and same-connection SEP snapshots, it rejects mapping or binding drift,
 removed or multiple identities, changed existing entity numbers, component
 metadata changes, Catacomb UUID changes, and host/SEP disagreement. Identity
 success additionally needs the completed typed persistence history and an exact
-match to its reconciliation snapshot plus advanced user/master/SEP state. A
-reported failure can reconcile only against unchanged persistence. If that
-failure nevertheless left one new UUID, the journal records the stable read-back
-as provisional E2 success before attempting E3. This is a pure classifier: no
-snapshot collector, Catacomb writer, Bridge adapter, or hardware enrollment
-command has been added.
+match to its reconciliation snapshot plus advanced user/master/bio-lockout/SEP
+state. A reported failure without persistence can reconcile only against an
+unchanged snapshot; the finalizer's bio-lockout-only path permits just that
+component to refresh. If failure nevertheless left one new UUID, the journal
+records the stable read-back as provisional E2 success before attempting E3.
+The classifier itself remains pure; collection, writes, and hardware commands
+are owned by the surrounding broker composition.
 
 The privileged experimental broker now supplies the collector around this pure
 layer. Its recovery-only mode accepts exactly one outcome-unknown enrollment,
@@ -200,12 +201,20 @@ or biometric mutation was dispatched.
 The concrete no-CLI finalizer is now implemented. It double-reads the post-E2
 save state, constructs only the exact user/master descriptors, obtains both SEP
 secure blobs in user-then-master order, adds the provisional identity to the
-strict local archive, increments the master generation/time, crosses the
-crash-safe host commit boundary before final confirm, and performs stable
-same-generation SEP/host read-back before E3. Its end-to-end test uses the real
-codecs, store, journal, transport adapter, and classifier. A synthetic
-post-commit read-back disconnect becomes durable outcome-unknown rather than a
-success or rollback. The module still has no live command.
+strict local archive, increments the master generation/time, and crosses the
+crash-safe primary host commit boundary before final confirm. It then exports
+the separate bio-lockout record with command `0x4a` into a second committed
+batch and performs stable same-generation SEP/host read-back before E3. The
+4096-byte output capacity is recovered from the preserved full 14.4 superclass
+and confirmed by a read-only 24G830 hardware reply; returned record length is
+variable and strictly bounded. End-to-end tests use the real codecs, store,
+journal, transport adapters, and classifier. Synthetic bio-lockout reply and
+post-commit read-back failures become durable outcome-unknown rather than a
+success, retry, or rollback. The module still has no ungated live command.
+Terminal failure and cancel paths use the same machinery in a strictly
+bio-lockout-only batch; reconciliation then requires user/master/identity/SEP
+Catacomb state to remain unchanged while the current lockout record is safely
+refreshed.
 
 An experimental root-only broker now wraps that composition. Its preflight path
 has no route to ACM or enrollment and requires only the already-established
@@ -261,10 +270,14 @@ type/version is included in the controlled diagnostic for the next boundary.
 The fifth approved run crossed statistics handling and froze on version-1
 `0xe3ff800a`; stable reconciliation again proved no persistent delta. Exact
 matching-daemon code identifies this as an SKS lock-state notification, accepts
-at least six payload bytes (32-bit Apple user ID plus 16-bit state), and sends it
-only to analytics/logging. The reducer now ignores that telemetry only after
-validating its version, minimum shape, and equality to the operation's pinned
-Apple user. It never emits enrollment feedback or sends continue for this type.
+at least six payload bytes (32-bit Apple user ID plus 16-bit state), and may
+synchronize the template list, save the bio-lockout record, cancel a tokenless
+unlock match, notify observers, and emit analytics according to its state bits.
+Those effects do not advance enrollment itself. The reducer therefore validates
+the version, minimum shape, and equality to the operation's pinned Apple user,
+then treats it as an auxiliary event while the finalizer owns bio-lockout host
+persistence. It never emits enrollment feedback or sends continue for this
+type.
 
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements

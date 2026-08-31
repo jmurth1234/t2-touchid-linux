@@ -215,6 +215,21 @@ class EnrollmentCoordinatorTests(unittest.TestCase):
             self.last_device.commands[-1][0], acm_protocol.OP_CONTEXT_DELETE
         )
 
+    def test_finalizer_exception_invalidates_bridge_and_deletes_acm_context(self):
+        def finalize(_result):
+            raise RuntimeError("private finalizer detail")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                coordinator.EnrollmentCoordinatorError,
+                "^same-connection enrollment stopped$",
+            ):
+                self.run_coordinator(directory, finalize)
+        self.assertTrue(self.last_lease.invalidated)
+        self.assertEqual(
+            self.last_device.commands[-1][0], acm_protocol.OP_CONTEXT_DELETE
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

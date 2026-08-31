@@ -191,7 +191,7 @@ class EnrollmentProtocolTests(unittest.TestCase):
             )
         self.assertEqual(truncated.state, enrollment.EnrollmentState.FROZEN)
 
-    def test_sks_lock_state_telemetry_is_validated_and_ignored(self):
+    def test_sks_lock_state_auxiliary_event_is_validated_and_ignored(self):
         machine = self.machine()
         payload = enrollment.SKS_LOCK_STATE_PAYLOAD.pack(501, 0x228)
         transition = self.accept(
@@ -199,7 +199,7 @@ class EnrollmentProtocolTests(unittest.TestCase):
             event(1, enrollment.SERVICE_SKS_LOCK_STATE, 1, 0, payload),
         )
         self.assertEqual(
-            transition.action, enrollment.EnrollmentAction.IGNORE_TELEMETRY
+            transition.action, enrollment.EnrollmentAction.IGNORE_AUXILIARY
         )
         self.assertFalse(transition.continue_required)
         self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
@@ -218,10 +218,10 @@ class EnrollmentProtocolTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            accepted.action, enrollment.EnrollmentAction.IGNORE_TELEMETRY
+            accepted.action, enrollment.EnrollmentAction.IGNORE_AUXILIARY
         )
 
-    def test_sks_lock_state_telemetry_rejects_wrong_shape_or_user(self):
+    def test_sks_lock_state_auxiliary_event_rejects_wrong_shape_or_user(self):
         cases = (
             event(1, enrollment.SERVICE_SKS_LOCK_STATE, 0, 0, bytes(6)),
             event(1, enrollment.SERVICE_SKS_LOCK_STATE, 2, 0, bytes(6)),
@@ -239,7 +239,7 @@ class EnrollmentProtocolTests(unittest.TestCase):
                 machine = self.machine()
                 with self.assertRaisesRegex(
                     enrollment.EnrollmentProtocolError,
-                    "invalid SKS lock-state telemetry event",
+                    "invalid SKS lock-state auxiliary event",
                 ):
                     self.accept(machine, value)
                 self.assertEqual(machine.state, enrollment.EnrollmentState.FROZEN)

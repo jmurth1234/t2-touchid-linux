@@ -50,6 +50,7 @@ class EnrollmentState(Enum):
 
 class EnrollmentAction(Enum):
     IGNORE_TELEMETRY = "ignore-telemetry"
+    IGNORE_AUXILIARY = "ignore-auxiliary"
     CONTINUE = "continue"
     PROGRESS = "progress"
     REMOVE_AND_RETRY = "remove-and-retry"
@@ -245,7 +246,7 @@ def validate_status_payload(event: ServiceEvent) -> None:
 def validate_sks_lock_state_payload(
     event: ServiceEvent, *, expected_user_id: int
 ) -> None:
-    """Validate matching-daemon SKS telemetry without retaining its state."""
+    """Validate an SKS host-side event without retaining its lock state."""
     if event.version != 1:
         raise EnrollmentProtocolError("unsupported SKS lock-state event version")
     if len(event.payload) < SKS_LOCK_STATE_PAYLOAD.size:
@@ -331,10 +332,12 @@ class EnrollmentStateMachine:
                 self._freeze("statistics telemetry payload is truncated")
             return EnrollmentTransition(EnrollmentAction.IGNORE_TELEMETRY, self.state)
         # Matching macOS accepts a version-1 record containing at least a
-        # uint32 Apple user ID and uint16 SKS state, then only updates analytics
-        # and logs. It neither advances nor terminates enrollment. Bind even
-        # this ambient telemetry to the operation's pinned Apple user before
-        # ignoring it; malformed or cross-user records remain fail-closed.
+        # uint32 Apple user ID and uint16 SKS state. It can synchronize the
+        # template list, save the bio-lockout record, cancel a tokenless unlock
+        # match, notify observers, and log. None of those side effects advances
+        # or terminates enrollment. Bind the event to the operation's pinned
+        # Apple user and leave persistence to the finalizer; malformed or
+        # cross-user records remain fail-closed.
         if event.envelope_type == SERVICE_SKS_LOCK_STATE:
             try:
                 validate_sks_lock_state_payload(
@@ -343,9 +346,9 @@ class EnrollmentStateMachine:
             except EnrollmentProtocolError as error:
                 self.state = EnrollmentState.FROZEN
                 raise EnrollmentProtocolError(
-                    "invalid SKS lock-state telemetry event"
+                    "invalid SKS lock-state auxiliary event"
                 ) from error
-            return EnrollmentTransition(EnrollmentAction.IGNORE_TELEMETRY, self.state)
+            return EnrollmentTransition(EnrollmentAction.IGNORE_AUXILIARY, self.state)
         if event.envelope_type != SERVICE_STATUS or event.version != 1:
             self._freeze(
                 "unknown enrollment envelope "

@@ -152,7 +152,8 @@ modules have no CLI and cannot initiate enrollment by themselves.
 
 `t2_enrollment_persistence_journal.py` makes the recovered persistence ordering
 mandatory after a provisional identity. An immutable plan contains exactly a
-user-then-master primary batch and, optionally, one separate bio-lockout batch.
+user-then-master primary batch followed by one separate bio-lockout batch. A
+terminal failure instead permits exactly one bio-lockout-only refresh batch.
 For every component it requires prepare intent/result, complete intent and
 secure-blob digest, and host-stage digest. Non-final components must be
 confirmed before advancing; the final component requires a separately
@@ -183,7 +184,7 @@ reject nonzero status, malformed descriptors, zero or unbounded sizes, length
 drift, immutable complete buffers, and unexpected confirm output. They do not
 open BridgeXPC or expose a command.
 
-`t2_catacomb_bridge.py` is the next bounded composition layer. A future broker
+`t2_catacomb_bridge.py` is the bounded user/master composition layer. Its caller
 must inject an already-open exclusive Bridge lease; this module creates no
 socket and has no CLI. It pins one canonical connection-generation UUID,
 requires an exact two-item `[status, data]` reply with no service events, and
@@ -201,21 +202,22 @@ requires the mapping, account, bag, existing identities, entity numbers,
 component metadata, and Catacomb UUID to remain bound, and permits exactly one
 new identity. A provisional identity reaches E3 only after the typed journal
 has replayed every persistence milestone and its reconciliation-snapshot digest
-matches the classifier's stable read-back. A generic failure reconciles
-only to a byte-for-byte unchanged persistent state; if stable read-back reveals
-a new UUID despite that failure, the journal first promotes it to a provisional
-E2 identity. An outcome-unknown start can be closed only as no-change recovery
-on a fresh generation; a new identity instead refuses automatic recovery.
-These modules perform no I/O and no persistence themselves.
+matches the classifier's stable read-back. A terminal failure with no persistence
+reconciles only to a byte-for-byte unchanged persistent state; the concrete
+finalizer's bio-lockout-only path instead permits only that component to refresh.
+If stable read-back reveals a new UUID despite failure, the journal first
+promotes it to a provisional E2 identity. An outcome-unknown start can be closed
+only as no-change recovery on a fresh generation; a new identity instead refuses
+automatic recovery. These modules perform no I/O and no persistence themselves.
 
 `t2_enrollment_finalizer.py` is the concrete no-CLI producer. It derives the
 post-E2 built-in save list on the owned connection, composes the strict
-user/master encoders with `CatacombBridgeTransport` and `CatacombStore`,
-performs stable same-generation SEP and independent local archive read-back,
-and appends E3 only when the snapshot digest agrees. A real-codec end-to-end
-test reaches E3; an injected read-back disconnect after commit is durably
-outcome-unknown. Hardware enrollment is exposed only through a privileged,
-explicitly acknowledged broker.
+user/master encoders with the separate bio-lockout export, commits both batches
+through `CatacombStore`, performs stable same-generation SEP and independent
+local archive read-back, and appends E3 only when the snapshot digest agrees. A
+real-codec end-to-end test reaches E3; malformed bio-lockout output or an
+injected read-back disconnect after commit is durably outcome-unknown. Hardware
+enrollment is exposed only through a privileged, explicitly acknowledged broker.
 
 `t2-touchid-enroll-test.py` is that experimental broker. `--preflight-only`
 cannot enter ACM or enrollment; it verifies the sole protected backup, private
@@ -245,11 +247,14 @@ statistics meeting the daemon's 12-byte minimum without feedback or state
 advancement; all other non-enrollment
 types remained fail-closed and are reported numerically. The fifth run then
 exposed version-1 `0xe3ff800a`. Exact matching-daemon disassembly requires at
-least a 32-bit user ID plus 16-bit SKS state and routes the record only to
-analytics/logging. The reducer now ignores it only after validating that shape
-and the operation's pinned Apple user; it sends no feedback or continue. Live
-enrollment refuses to start while an earlier mutation journal remains
-unfinished. Any next live attempt remains explicitly operator-gated.
+least a 32-bit user ID plus 16-bit SKS state. Depending on the state bits, the
+daemon can synchronize the template list, save the bio-lockout record, cancel
+a tokenless unlock match, notify observers, and emit analytics. None of those
+callbacks is an enrollment transition, so the reducer validates the shape and
+pinned Apple user and delegates the required host persistence to the finalizer
+without sending feedback or continue. Live enrollment refuses to start while
+an earlier mutation journal remains unfinished. Any next live attempt remains
+explicitly operator-gated.
 
 The typed journal also defines `E4_POST_REBOOT_VERIFIED` for a successful
 identity. It is accepted only after E3, on both a different Linux boot UUID and

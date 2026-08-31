@@ -37,6 +37,7 @@ def baseline():
         "host_components": [
             {"name": "master.cat", "sha256": "b" * 64, "mode": 0o644, "uid": 0, "gid": 0},
             {"name": "user_000001f5.cat", "sha256": "c" * 64, "mode": 0o644, "uid": 0, "gid": 0},
+            {"name": "biolockout.cat", "sha256": "f" * 64, "mode": 0o644, "uid": 0, "gid": 0},
         ],
         "master_enrollment_count": 2,
         "mapping_generation": "d" * 64,

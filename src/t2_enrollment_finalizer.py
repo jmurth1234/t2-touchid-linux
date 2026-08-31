@@ -14,12 +14,14 @@ from pathlib import Path
 from typing import Callable
 
 import t2_bridge_inventory
+import t2_biolockout_protocol
 import t2_catacomb_bridge
 import t2_catacomb_codec
 import t2_catacomb_store
 import t2_enrollment_coordinator
 import t2_enrollment_journal
 import t2_enrollment_operation
+import t2_enrollment_persistence_bridge
 import t2_enrollment_persistence_operation
 import t2_enrollment_reconciliation
 
@@ -174,12 +176,86 @@ class BuiltinEnrollmentFinalizer:
             raise EnrollmentFinalizerError("finalizer binding changed")
 
         if result.outcome != "identity-observed":
-            host, live = self._stable_readback(baseline)
+            committed = self.store.read_committed_components()
+            old_biolockout = t2_catacomb_codec.decode_biolockout_catacomb(
+                committed["biolockout.cat"]
+            )
+            batches = (
+                (
+                    t2_enrollment_persistence_operation.ComponentSpec(
+                        "biolockout.cat",
+                        t2_biolockout_protocol.PERSISTENCE_DESCRIPTOR,
+                    ),
+                ),
+            )
+
+            def encode_failure_biolockout(
+                name: str, secure_blob: bytearray
+            ) -> bytearray:
+                if name != "biolockout.cat":
+                    raise EnrollmentFinalizerError(
+                        "unexpected failure persistence component"
+                    )
+                return bytearray(
+                    old_biolockout.encode(secure_data=bytes(secure_blob))
+                )
+
+            cached: dict[str, dict[str, object]] = {}
+
+            def readback_failure() -> (
+                t2_enrollment_persistence_operation.ReadbackAttestation
+            ):
+                host, live = self._stable_readback(baseline)
+                current = t2_enrollment_journal.read(self.journal_path)
+                plan = t2_enrollment_reconciliation.classify(
+                    current,
+                    host=host,
+                    live=live,
+                    mapping_generation=self.mapping_generation,
+                )
+                if (
+                    plan.evidence is None
+                    or plan.readback_identity_uuid is not None
+                    or plan.evidence["identity_uuid"] is not None
+                ):
+                    raise EnrollmentFinalizerError(
+                        "failure bio-lockout read-back is incomplete"
+                    )
+                cached["host"] = host
+                cached["live"] = live
+                return t2_enrollment_persistence_operation.ReadbackAttestation(
+                    plan.evidence["snapshot_sha256"], True, True
+                )
+
+            transport = (
+                t2_enrollment_persistence_bridge.EnrollmentPersistenceBridgeTransport(
+                    self.lease,
+                    protocol_version=2,
+                    connection_generation=self.connection_generation,
+                )
+            )
+            persisted = t2_enrollment_persistence_operation.run(
+                self.journal_path,
+                self.operation_id,
+                batches=batches,
+                transport=transport,
+                encoder=encode_failure_biolockout,
+                store=self.store,
+                readback=readback_failure,
+            )
+            if persisted.phase is not t2_enrollment_journal.EnrollmentPhase.PERSISTENCE_READY:
+                raise EnrollmentFinalizerError(
+                    "failure bio-lockout sync did not reach its attested state"
+                )
+            if set(cached) != {"host", "live"}:
+                raise EnrollmentFinalizerError(
+                    "failure bio-lockout read-back snapshots are absent"
+                )
             reconciled = t2_enrollment_reconciliation.append_reconciled(
                 self.journal_path,
                 self.operation_id,
-                host=host,
-                live=live,
+                host=cached["host"],
+                live=cached["live"],
                 mapping_generation=self.mapping_generation,
             )
             if reconciled.phase is not t2_enrollment_journal.EnrollmentPhase.RECONCILED:
@@ -207,6 +283,12 @@ class BuiltinEnrollmentFinalizer:
                     "master.cat", components[1].descriptor
                 ),
             ),
+            (
+                t2_enrollment_persistence_operation.ComponentSpec(
+                    "biolockout.cat",
+                    t2_biolockout_protocol.PERSISTENCE_DESCRIPTOR,
+                ),
+            ),
         )
 
         committed = self.store.read_committed_components()
@@ -216,6 +298,9 @@ class BuiltinEnrollmentFinalizer:
         )
         old_master = t2_catacomb_codec.decode_master_catacomb(
             committed["master.cat"]
+        )
+        old_biolockout = t2_catacomb_codec.decode_biolockout_catacomb(
+            committed["biolockout.cat"]
         )
         timestamp = self.clock()
         apple_time = _apple_time(timestamp)
@@ -241,6 +326,8 @@ class BuiltinEnrollmentFinalizer:
                     enrollment_count=old_master.enrollment_count + 1,
                     current_time=apple_time,
                 )
+            elif name == "biolockout.cat":
+                output = old_biolockout.encode(secure_data=bytes(secure_blob))
             else:
                 raise EnrollmentFinalizerError("unexpected persistence component")
             return bytearray(output)
@@ -268,10 +355,12 @@ class BuiltinEnrollmentFinalizer:
                 plan.evidence["snapshot_sha256"], True, True
             )
 
-        transport = t2_catacomb_bridge.CatacombBridgeTransport(
-            self.lease,
-            protocol_version=2,
-            connection_generation=self.connection_generation,
+        transport = (
+            t2_enrollment_persistence_bridge.EnrollmentPersistenceBridgeTransport(
+                self.lease,
+                protocol_version=2,
+                connection_generation=self.connection_generation,
+            )
         )
         persisted = t2_enrollment_persistence_operation.run(
             self.journal_path,

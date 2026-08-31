@@ -742,6 +742,35 @@ completion ordering directly:
 4. Update counters and post the enrollment-changed notification.
 5. Deliver `enrollResult:` to the active registered foreground client.
 
+The bio-lockout step is a different SEP transaction from the user/master
+Catacomb save. In the exact 24G830 daemon,
+`performSaveBioLockoutRecordCommand:` sends biometric command `0x4a`, version
+1, with no input bytes and value zero. The caller supplies mutable output
+storage; the daemon uses its initial length as capacity and truncates it to the
+returned length after a successful reply. The preserved full macOS 14.4
+BiometricSupport superclass allocates exactly `0x1000` bytes before invoking
+that method. A read-only target-hardware check then confirmed that 24G830
+accepts the same 4096-byte capacity and returns a bounded `HRLB` record; no raw
+record was logged or retained by the check. This cross-version constant is
+therefore live-confirmed on the target rather than assumed from the older
+framework.
+
+The Linux finalizer models this as a separate second host batch after the
+user/master batch. It accepts a variable returned length between the strict
+secure-envelope minimum and 4096 bytes, re-encodes only the known
+`biolockout.cat` schema, wipes working buffers, and requires independent
+read-back showing that user, master, and bio-lockout files all advanced before
+E3. A malformed/disconnected `0x4a` reply, host-commit ambiguity, or read-back
+failure is outcome-unknown and is never retried automatically.
+
+The same bounded export is also run after a terminal enrollment failure or
+cancel. In that case the journal permits only a bio-lockout-only batch: user
+and master archives, identity inventory, SEP Catacomb hash, and master count
+must remain unchanged, while `biolockout.cat` is refreshed to the current SEP
+record before the failure is reconciled. This covers the independently observed
+SKS callback side effect without pretending the SKS event is an enrollment
+transition.
+
 ### Multi-component Catacomb save ordering
 
 Same-generation superclass recovery clarifies how a *first* per-user Catacomb
@@ -1213,6 +1242,7 @@ boundary in the existing research command: `t2-touchid-baseline` closes its
 inventory connection, so its otherwise valid E0 journal is evidence only and
 cannot be consumed by a later mutating connection. A future broker must collect
 the stable baseline and start enrollment under one serialized connection lease.
+The implemented privileged broker now enforces that composition.
 
 The non-exposed `t2_enrollment_operation.py` core now makes the E1/E2 ordering
 executable without adding a live transport. It accepts a synchronous injected
@@ -1249,8 +1279,9 @@ codec, store, journal, or read-back ambiguity is best-effort journaled as
 `CATACOMB_PERSISTENCE_OUTCOME_UNKNOWN`; it is never retried or reported as E3.
 The Linux-local `CatacombStore` now supports the same incremental staging order
 while retaining discard-only `prepare/` and roll-forward-only `commit/`
-recovery. All current operation tests use fake transport and temporary copied
-fixtures. No live command or Bridge persistence adapter exists.
+recovery. Operation tests use fake transport and temporary copied fixtures; the
+privileged, acknowledgement-gated broker now composes generation-pinned
+Catacomb and bio-lockout Bridge adapters for the live path.
 
 The non-exposed `t2_enrollment_reconciliation.py` classifier makes the E3
 decision executable without adding live I/O. It requires a double-collected,
@@ -1259,12 +1290,14 @@ UUID, existing UUID/entity, and host-component metadata continuity; equal host,
 per-user, and configured built-in identity sets; and at most one added UUID. A
 provisional identity additionally requires that complete typed persistence
 history and an exact match between its journaled reconciliation snapshot and
-the E3 read-back. The user and master host components, SEP Catacomb hash, and
-master enrollment count must all advance. A
-terminal failure reconciles only if host components, SEP Catacomb, identity set,
-and master count are unchanged. If a nominal failure has nevertheless produced
-one stable new UUID, it is first journaled as `E2_IDENTITY_READBACK_OBSERVED` and
-then subjected to the success rules. This is not live E3 completion: the
+the E3 read-back. The user, master, and bio-lockout host components, SEP
+Catacomb hash, and master enrollment count must all advance. A terminal failure
+without a persistence batch reconciles only if every persistent component is
+unchanged; the concrete failure finalizer may instead refresh only
+`biolockout.cat`, while user/master, SEP Catacomb, identity set, and master count
+remain unchanged. If a nominal failure has nevertheless produced one stable new
+UUID, it is first journaled as `E2_IDENTITY_READBACK_OBSERVED` and then subjected
+to the success rules. This is not live E3 completion: the
 classifier does not collect snapshots, commit Catacombs, manufacture an
 attestation, or connect to BridgeXPC.
 
@@ -2734,24 +2767,26 @@ alias verification through the terminal event and the final Catacomb confirm
 (or cancellation plus reconciliation). The explicit user ID prevents accidental
 cross-user attribution, but it does not make mid-operation alias switching safe.
 
-The matching daemon's Secure Key Store state-event path strengthens that rule.
-Raw envelope `0xe3ff800a` accepts wire version 1, decodes a 32-bit user ID and a
-16-bit SKS lock state, and then makes only three notifications:
+The matching daemon's Secure Key Store state-event path strengthens that rule,
+but it is not telemetry-only. Raw envelope `0xe3ff800a` accepts wire version 1,
+requires at least six payload bytes, and decodes a 32-bit user ID followed by a
+16-bit SKS lock state. It then performs state-dependent host work:
 
-- `lockStateUpdated:forUser:` on the daemon's analytics recipient;
-- `logSKSLockState:forUser:withTimestamp:` on its structured logger; and
-- `logSKSLockState:userID:` on `BiometricKitDStatistics`.
+- state bit `0x80` triggers `syncTemplateListForUser:`;
+- either state bit selected by mask `0x22` triggers `saveBioLockoutRecord`;
+- when the previous display state is active and bit `0x08` is absent, it calls
+  `cancelUnlockMatchIfTokenNotPresent:`; and
+- it posts the general lockout-state notification and records the analytics,
+  structured-log, and statistics updates.
 
-There is no call in this envelope branch to cancel, end, continue, or reset an
-active match/enrollment operation, and no Catacomb prepare/complete/confirm
-call. The recovered `MesaCoreAnalytics lockStateUpdated:forUser:` implementation
-forwards to its superclass, maps the state into an analytics property, and
-queues an analytics event; it likewise contains no biometric-operation abort.
-The statistics implementation only records/logs the state transition. Thus the
-matching host treats an SKS lock-state transition as observability/telemetry,
-not as an operation barrier. An alias unload or relock cannot be assumed to
-cancel in-flight biometric work safely; the future broker must quiesce/cancel
-and reconcile the operation itself before changing AKS context.
+There is still no call in this envelope branch to start, continue, end, or
+cancel enrollment, nor a user/master Catacomb prepare/complete/confirm call.
+The enrollment reducer may therefore validate and ignore this envelope as an
+enrollment *transition* only because the broker/finalizer independently owns
+the required host persistence and reconciliation. It must not describe the
+event itself as logging-only. An alias unload or relock likewise cannot be
+assumed to cancel all in-flight biometric work safely; the broker must
+quiesce/cancel and reconcile the operation itself before changing AKS context.
 
 This still does not reveal whether SEP internally snapshots the relevant keybag
 association or resolves AppleKeyStore state again during later Catacomb phases.
@@ -5206,12 +5241,15 @@ ACM deletion still occurs.
 The concrete finalizer now double-reads typed post-E2 state, accepts only the
 selected built-in user as the dirty non-master component, saves user then
 master, commits independently decoded Linux-local archives before final SEP
-confirm, and requires stable SEP/host E3 read-back. Its real-codec composition
-test reaches reconciled E3, while an injected post-commit read-back disconnect
-becomes durable outcome-unknown. A read-only hardware run confirmed exactly one
-master and one selected-user `0x3c` record on the target; only the selected user
-had bit `0x04` set. No mutation was performed. Hardware remains unreachable
-from this composition because it deliberately has no command-line entry point.
+confirm, then exports and commits the separate bio-lockout record. Stable
+SEP/host E3 read-back must show all three host components advanced. Its
+real-codec composition test reaches reconciled E3, while injected malformed
+bio-lockout and post-commit read-back failures become durable outcome-unknown.
+A read-only hardware run confirmed exactly one master and one selected-user
+`0x3c` record on the target; only the selected user had bit `0x04` set. A
+separate read-only `0x4a` run confirmed the target record envelope and bounded
+capacity without retaining its opaque bytes. Mutation remains reachable only
+through the explicitly gated broker path.
 The gated privileged broker now exists. Its `--preflight-only` branch cannot
 enter ACM/enrollment, while the live branch requires separate enrollment and
 local-store mutation acknowledgements and derives every target from protected

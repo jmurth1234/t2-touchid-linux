@@ -176,7 +176,9 @@ class PersistenceTracker:
             raise PersistenceJournalError("staged Catacomb snapshot digest differs")
         return evidence
 
-    def _plan(self, value: Any, milestone: str) -> None:
+    def _plan(
+        self, value: Any, milestone: str, *, allow_biolockout_only: bool
+    ) -> None:
         if self.phase is not PersistencePhase.NOT_STARTED:
             raise PersistenceJournalError("Catacomb persistence plan is out of order")
         evidence = _exact(value, {"connection_generation", "batches"}, milestone)
@@ -224,19 +226,28 @@ class PersistenceTracker:
                     "master Catacomb must be last in its batch"
                 )
             normalized.append(tuple(normalized_batch))
-        if not required <= seen:
+        if allow_biolockout_only:
+            if (
+                len(normalized) != 1
+                or [name for name, _digest in normalized[0]]
+                != ["biolockout.cat"]
+            ):
+                raise PersistenceJournalError(
+                    "failure persistence must contain only bio-lockout Catacomb"
+                )
+        elif not required <= seen:
             raise PersistenceJournalError(
                 "enrollment persistence omits the user or master Catacomb"
             )
         user_name = f'user_{self._baseline["apple_uid"]:08x}.cat'
         primary_names = [name for name, _digest in normalized[0]]
-        if primary_names != [user_name, "master.cat"]:
+        if not allow_biolockout_only and primary_names != [user_name, "master.cat"]:
             raise PersistenceJournalError(
                 "primary enrollment batch must contain user then master Catacomb"
             )
-        if (
-            len(normalized) == 2
-            and [name for name, _digest in normalized[1]] != ["biolockout.cat"]
+        if not allow_biolockout_only and (
+            len(normalized) != 2
+            or [name for name, _digest in normalized[1]] != ["biolockout.cat"]
         ):
             raise PersistenceJournalError(
                 "secondary enrollment batch must contain only bio-lockout Catacomb"
@@ -246,11 +257,21 @@ class PersistenceTracker:
         self.component_index = 0
         self.phase = PersistencePhase.COMPONENT_READY
 
-    def consume(self, milestone: str, value: Any) -> bool:
+    def consume(
+        self,
+        milestone: str,
+        value: Any,
+        *,
+        allow_biolockout_only: bool = False,
+    ) -> bool:
         if not isinstance(milestone, str) or not milestone.startswith("CATACOMB_"):
             return False
         if milestone == "CATACOMB_PERSISTENCE_PLAN":
-            self._plan(value, milestone)
+            self._plan(
+                value,
+                milestone,
+                allow_biolockout_only=allow_biolockout_only,
+            )
             return True
         if self.phase is PersistencePhase.NOT_STARTED:
             raise PersistenceJournalError("Catacomb persistence has no immutable plan")
@@ -347,7 +368,13 @@ class PersistenceTracker:
             blob_length = _uint(
                 evidence["blob_length"], "secure blob length", 1024 * 1024
             )
-            if blob_length == 0 or blob_length != self._expected_blob_length:
+            name, _descriptor = self._current()
+            length_valid = (
+                16 <= blob_length <= self._expected_blob_length
+                if name == "biolockout.cat"
+                else blob_length == self._expected_blob_length
+            )
+            if not length_valid:
                 raise PersistenceJournalError(
                     "secure blob length differs from prepare response"
                 )

@@ -114,6 +114,8 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                     component["sha256"] = "1" * 64
                 elif component["name"] == "user_000001f5.cat":
                     component["sha256"] = "2" * 64
+                elif component["name"] == "biolockout.cat":
+                    component["sha256"] = "4" * 64
         host = {
             "account_uuid": value["account_uuid"],
             "bag_uuid": value["bag_uuid"],
@@ -171,7 +173,10 @@ class EnrollmentReconciliationTests(unittest.TestCase):
 
     def persist(self, path, operation_id, host, live):
         return append_persistence(
-            path, operation_id, self.snapshot_digest(host, live)
+            path,
+            operation_id,
+            self.snapshot_digest(host, live),
+            include_biolockout=True,
         )
 
     def test_terminal_identity_reconciles_only_after_durable_state_advances(self):
@@ -269,7 +274,9 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                 directory, identity=True
             )
             host, live = self.snapshots(success=True)
-            append_persistence(path, operation_id, "f" * 64)
+            append_persistence(
+                path, operation_id, "f" * 64, include_biolockout=True
+            )
             with self.assertRaisesRegex(
                 reconciliation.EnrollmentReconciliationError, "snapshot"
             ):

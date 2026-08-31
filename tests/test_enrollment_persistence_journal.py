@@ -175,10 +175,44 @@ class EnrollmentPersistenceJournalTests(unittest.TestCase):
         )
         return path, operation_id
 
+    def create_failure(self, directory):
+        value = baseline()
+        path = Path(directory) / "operation.jsonl"
+        operation_id, _record = mutation.create(path, "enroll", value)
+        enrollment.append_checked(
+            path,
+            operation_id,
+            "ENROLL_START_INTENT",
+            {
+                "apple_uid": 501,
+                "protocol_version": 2,
+                "connection_generation": value["connection_generation"],
+                "request_length": 68,
+                "request_sha256": "a" * 64,
+            },
+        )
+        enrollment.append_checked(
+            path, operation_id, "ENROLL_START_OBSERVED", {"status": 0}
+        )
+        enrollment.append_checked(
+            path,
+            operation_id,
+            "ENROLL_TERMINAL_FAILURE_OBSERVED",
+            {
+                "connection_generation": value["connection_generation"],
+                "event_sequence": 1,
+                "envelope_type": enrollment.SERVICE_STATUS,
+                "status": 67,
+            },
+        )
+        return path, operation_id
+
     def test_complete_sequence_reaches_persistence_ready(self):
         with tempfile.TemporaryDirectory() as directory:
             path, operation_id = self.create_identity(directory)
-            result = append_persistence(path, operation_id, "9" * 64)
+            result = append_persistence(
+                path, operation_id, "9" * 64, include_biolockout=True
+            )
         self.assertEqual(result.phase, enrollment.EnrollmentPhase.PERSISTENCE_READY)
         self.assertTrue(result.persistence.sep_host_generation_equal)
         self.assertTrue(result.persistence.independent_archive_readback)
@@ -191,6 +225,46 @@ class EnrollmentPersistenceJournalTests(unittest.TestCase):
             )
         self.assertEqual(result.phase, enrollment.EnrollmentPhase.PERSISTENCE_READY)
         self.assertEqual(len(result.persistence.batches), 2)
+
+    def test_terminal_failure_allows_only_one_biolockout_batch(self):
+        generation = baseline()["connection_generation"]
+        bio = {"name": "biolockout.cat", "descriptor_sha256": "3" * 64}
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create_failure(Path(directory) / "allowed")
+            result = enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_PERSISTENCE_PLAN",
+                {"connection_generation": generation, "batches": [[bio]]},
+            )
+            self.assertEqual(result.phase, enrollment.EnrollmentPhase.PERSISTING)
+            self.assertEqual(
+                result.persistence.batches,
+                ((("biolockout.cat", "3" * 64),),),
+            )
+
+            rejected_plans = (
+                [[{"name": "master.cat", "descriptor_sha256": "2" * 64}]],
+                [[bio], [{"name": "master.cat", "descriptor_sha256": "2" * 64}]],
+                [[bio, {"name": "master.cat", "descriptor_sha256": "2" * 64}]],
+            )
+            for index, batches in enumerate(rejected_plans):
+                with self.subTest(index=index):
+                    path, operation_id = self.create_failure(
+                        Path(directory) / f"rejected-{index}"
+                    )
+                    with self.assertRaisesRegex(
+                        enrollment.EnrollmentJournalError, "bio-lockout"
+                    ):
+                        enrollment.append_checked(
+                            path,
+                            operation_id,
+                            "CATACOMB_PERSISTENCE_PLAN",
+                            {
+                                "connection_generation": generation,
+                                "batches": batches,
+                            },
+                        )
 
     def test_persistence_requires_identity_and_immutable_complete_plan(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -244,6 +318,31 @@ class EnrollmentPersistenceJournalTests(unittest.TestCase):
                     },
                 )
 
+            path, operation_id = self.create_identity(Path(directory) / "fourth")
+            with self.assertRaisesRegex(
+                enrollment.EnrollmentJournalError, "secondary"
+            ):
+                enrollment.append_checked(
+                    path,
+                    operation_id,
+                    "CATACOMB_PERSISTENCE_PLAN",
+                    {
+                        "connection_generation": value["connection_generation"],
+                        "batches": [
+                            [
+                                {
+                                    "name": "user_000001f5.cat",
+                                    "descriptor_sha256": "1" * 64,
+                                },
+                                {
+                                    "name": "master.cat",
+                                    "descriptor_sha256": "2" * 64,
+                                },
+                            ]
+                        ],
+                    },
+                )
+
     def test_final_component_cannot_use_early_confirm_path(self):
         with tempfile.TemporaryDirectory() as directory:
             path, operation_id = self.create_identity(directory)
@@ -261,7 +360,13 @@ class EnrollmentPersistenceJournalTests(unittest.TestCase):
                                 "descriptor_sha256": "1" * 64,
                             },
                             {"name": "master.cat", "descriptor_sha256": "2" * 64},
-                        ]
+                        ],
+                        [
+                            {
+                                "name": "biolockout.cat",
+                                "descriptor_sha256": "3" * 64,
+                            }
+                        ],
                     ],
                 },
             )

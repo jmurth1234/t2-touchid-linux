@@ -318,15 +318,27 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             continue
 
         if isinstance(milestone, str) and milestone.startswith("CATACOMB_"):
-            if terminal_identity_uuid is None or phase not in (
+            identity_persistence = terminal_identity_uuid is not None
+            failure_biolockout_persistence = (
+                terminal_identity_uuid is None and terminal_status is not None
+            )
+            if (
+                not identity_persistence
+                and not failure_biolockout_persistence
+            ) or phase not in (
                 EnrollmentPhase.TERMINAL_IDENTITY,
+                EnrollmentPhase.TERMINAL_FAILURE,
                 EnrollmentPhase.PERSISTING,
             ):
                 raise EnrollmentJournalError(
-                    "Catacomb persistence is not attached to a provisional identity"
+                    "Catacomb persistence has no terminal identity or failure"
                 )
             try:
-                persistence.consume(milestone, evidence)
+                persistence.consume(
+                    milestone,
+                    evidence,
+                    allow_biolockout_only=failure_biolockout_persistence,
+                )
             except persistence_journal.PersistenceJournalError as error:
                 raise EnrollmentJournalError(str(error)) from error
             phase = (
@@ -387,7 +399,10 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             )
             if used > maximum or maximum != baseline["capacity"]["maximum"]:
                 raise EnrollmentJournalError("E3 capacity is inconsistent")
-            if phase is EnrollmentPhase.PERSISTENCE_READY:
+            if (
+                phase is EnrollmentPhase.PERSISTENCE_READY
+                and terminal_identity_uuid is not None
+            ):
                 _uuid(evidence["identity_uuid"], "identity_uuid")
                 if (
                     evidence["identity_uuid"] != terminal_identity_uuid

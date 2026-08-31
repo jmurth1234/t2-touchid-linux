@@ -11,6 +11,7 @@ from typing import Callable, Protocol
 import t2_enrollment_journal as enrollment_journal
 import t2_mutation_journal as mutation_journal
 import t2_catacomb_protocol as catacomb_protocol
+import t2_biolockout_protocol as biolockout_protocol
 
 
 class PersistenceOperationError(RuntimeError):
@@ -124,9 +125,19 @@ def _validate_components(
     history: enrollment_journal.EnrollmentHistory,
     batches: tuple[tuple[ComponentSpec, ...], ...],
 ) -> None:
-    if history.phase is not enrollment_journal.EnrollmentPhase.TERMINAL_IDENTITY:
+    identity_persistence = (
+        history.phase is enrollment_journal.EnrollmentPhase.TERMINAL_IDENTITY
+    )
+    failure_biolockout_persistence = (
+        history.phase is enrollment_journal.EnrollmentPhase.TERMINAL_FAILURE
+        and len(batches) == 1
+        and len(batches[0]) == 1
+        and isinstance(batches[0][0], ComponentSpec)
+        and batches[0][0].name == "biolockout.cat"
+    )
+    if not identity_persistence and not failure_biolockout_persistence:
         raise PersistenceOperationError(
-            "persistence requires one provisional enrollment identity"
+            "persistence requires an identity or a terminal bio-lockout sync"
         )
     if not batches:
         raise PersistenceOperationError("persistence has no component batches")
@@ -163,6 +174,15 @@ def _validate_components(
                     raise PersistenceOperationError(
                         "persistence component descriptor is bound to another target"
                     )
+            elif component.name == "biolockout.cat":
+                if component.descriptor != biolockout_protocol.PERSISTENCE_DESCRIPTOR:
+                    raise PersistenceOperationError(
+                        "bio-lockout persistence descriptor is invalid"
+                    )
+            else:
+                raise PersistenceOperationError(
+                    "persistence component name is invalid"
+                )
 
 
 def run(
@@ -285,7 +305,11 @@ def run(
                     or complete_status != 0
                     or not isinstance(secure_blob, bytearray)
                     or not secure_blob
-                    or len(secure_blob) != expected_blob_length
+                    or (
+                        len(secure_blob) > expected_blob_length
+                        if component.name == "biolockout.cat"
+                        else len(secure_blob) != expected_blob_length
+                    )
                 ):
                     _freeze(
                         path,
