@@ -20,6 +20,7 @@ import t2_bridge_wire as wire
 
 
 COMMAND_CANCEL = 0x0C
+PAYLOADLESS_COMMAND_VERSION = 1
 
 
 class EnrollmentBridgeError(RuntimeError):
@@ -130,12 +131,18 @@ class EnrollmentBridgeTransport:
         *,
         poison_nonzero: bool,
         status_authoritative: bool = True,
+        wire_version: int | None = None,
     ) -> int:
+        selected_version = (
+            self.protocol_version if wire_version is None else wire_version
+        )
+        if type(selected_version) is not int or selected_version not in (1, 2):
+            raise EnrollmentBridgeError("enrollment command wire version is invalid")
         try:
             self._check_generation()
             result = self._lease.biometric_command(
                 command,
-                version=self.protocol_version,
+                version=selected_version,
                 value=0,
                 data=data,
                 output_capacity=0,
@@ -208,16 +215,25 @@ class EnrollmentBridgeTransport:
 
     def continue_enrollment(self) -> int:
         self._require_state((EnrollmentBridgeState.ACTIVE,), "continue")
+        # The exact daemon's payload-less wrapper calls
+        # performCommand:inValue:... and hardcodes wire version 1.  Only the
+        # initial enrollment request selects biometric protocol version 1/2.
         return self._dispatch(
             protocol.COMMAND_ENROLL_CONTINUE,
             protocol.build_continue_payload(),
             poison_nonzero=False,
             status_authoritative=False,
+            wire_version=PAYLOADLESS_COMMAND_VERSION,
         )
 
     def cancel(self) -> int:
         self._require_state((EnrollmentBridgeState.ACTIVE,), "cancel")
-        status = self._dispatch(COMMAND_CANCEL, b"", poison_nonzero=True)
+        status = self._dispatch(
+            COMMAND_CANCEL,
+            b"",
+            poison_nonzero=True,
+            wire_version=PAYLOADLESS_COMMAND_VERSION,
+        )
         if status == 0:
             self._state = EnrollmentBridgeState.CANCEL_REQUESTED
         return status

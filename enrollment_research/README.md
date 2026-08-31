@@ -395,6 +395,18 @@ validated service events, journals the numeric return as non-authoritative, and
 continues. Start, cancel, persistence, malformed-event, and connection-
 generation checks remain fail-closed.
 
+The same runs exposed a more fundamental continuation bug. Linux initially
+reused the negotiated enrollment payload version for every command, so a
+protocol-v2 enrollment sent payload-less continue `0x0e` with wire version 2.
+Every observed reply was `0xe00002c2` (`kIOReturnUnsupported`): SEP accepted
+the first node, then emitted contact/lift telemetry but captured no later node.
+Matching-daemon disassembly distinguishes the wrappers exactly. Enrollment
+start calls the versioned wrapper because its request layout is versioned;
+`enrollContinue` calls `performCommand:inValue:...`, whose implementation
+forwards to the versioned primitive with constant version 1. Cancellation uses
+the same payload-less contract. The adapter now keeps start at negotiated
+version 1/2 and sends continue/cancel with wire version 1.
+
 Two later approved attempts confirmed sustained capture and progress at 20% and
 22%, but the latter stopped after a quiet scan interval because the original
 Bridge socket retained its 60-second command timeout while waiting for the next

@@ -70,20 +70,31 @@ class EnrollmentBridgeTests(unittest.TestCase):
         )
 
     def test_exact_start_continue_and_cancel_commands(self):
-        lease = FakeLease()
-        transport = self.make(lease)
-        self.assertEqual(transport.start(start_payload()), 0)
-        self.assertEqual(transport.continue_enrollment(), 0)
-        self.assertEqual(transport.cancel(), 0)
-        self.assertEqual(
-            lease.calls,
-            [
-                (protocol.COMMAND_ENROLL_START, 2, 0, bytes(68), 0),
-                (protocol.COMMAND_ENROLL_CONTINUE, 2, 0, b"", 0),
-                (bridge.COMMAND_CANCEL, 2, 0, b"", 0),
-            ],
-        )
-        self.assertEqual(transport.state, bridge.EnrollmentBridgeState.CANCEL_REQUESTED)
+        for version, payload_size in ((1, 48), (2, 68)):
+            with self.subTest(protocol_version=version):
+                lease = FakeLease()
+                transport = self.make(lease, version)
+                self.assertEqual(transport.start(start_payload(version)), 0)
+                self.assertEqual(transport.continue_enrollment(), 0)
+                self.assertEqual(transport.cancel(), 0)
+                self.assertEqual(
+                    lease.calls,
+                    [
+                        (
+                            protocol.COMMAND_ENROLL_START,
+                            version,
+                            0,
+                            bytes(payload_size),
+                            0,
+                        ),
+                        (protocol.COMMAND_ENROLL_CONTINUE, 1, 0, b"", 0),
+                        (bridge.COMMAND_CANCEL, 1, 0, b"", 0),
+                    ],
+                )
+                self.assertEqual(
+                    transport.state,
+                    bridge.EnrollmentBridgeState.CANCEL_REQUESTED,
+                )
 
     def test_command_events_are_queued_before_async_receive(self):
         lease = FakeLease()

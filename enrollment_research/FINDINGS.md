@@ -5472,6 +5472,21 @@ queues every structurally valid interleaved event, journals the bounded return
 as non-authoritative, and continues consuming the event stream. Malformed
 replies/events and connection-generation changes still poison the operation.
 
+The nonzero continuation replies were subsequently identified as the direct
+cause of the stalled multi-touch loop, not merely incidental return values.
+Each was `0xe00002c2` (`kIOReturnUnsupported`), after which SEP continued to
+report contact/lift telemetry but captured no new enrollment node. Exact
+matching-daemon disassembly resolves the header rule: initial enrollment calls
+`performCommand:version:inValue:...` with the negotiated biometric request
+version, while `enrollContinue` calls the payload-less
+`performCommand:inValue:...` wrapper. That wrapper forwards to the versioned
+primitive with constant wire version 1. The same rule applies to payload-less
+cancellation. Linux had incorrectly reused protocol version 2 for all three.
+The corrected transport sends only start with negotiated version 1/2 and sends
+continue/cancel with wire version 1. The client layer still does not interpret
+the numeric continue return as a terminal enrollment result, but the exact
+header should no longer provoke the observed unsupported-command response.
+
 Two subsequent approved attempts exercised repeated lift/place capture and
 reported real progress at 20% and 22%. The second stopped during a quiet scan
 interval with a service-event receive failure. This isolated a host transport
