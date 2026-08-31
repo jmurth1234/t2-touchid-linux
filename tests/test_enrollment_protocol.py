@@ -128,18 +128,23 @@ class EnrollmentProtocolTests(unittest.TestCase):
         self.assertFalse(removed.continue_required)
         self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
 
-    def test_status_90_is_an_exact_build_phase_noop(self):
+    def test_exact_build_phase_noops_do_not_continue(self):
         machine = self.machine()
-        phase = self.accept(
-            machine, event(1, enrollment.SERVICE_STATUS, 1, 90)
-        )
-        self.assertEqual(phase.action, enrollment.EnrollmentAction.IGNORE_PHASE)
-        self.assertFalse(phase.continue_required)
-        self.assertIsNone(phase.progress_percent)
-        self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
+        for sequence, status in enumerate((55, 90), start=1):
+            with self.subTest(status=status):
+                phase = self.accept(
+                    machine,
+                    event(sequence, enrollment.SERVICE_STATUS, 1, status),
+                )
+                self.assertEqual(
+                    phase.action, enrollment.EnrollmentAction.IGNORE_PHASE
+                )
+                self.assertFalse(phase.continue_required)
+                self.assertIsNone(phase.progress_percent)
+                self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
 
         progress = self.accept(
-            machine, event(2, enrollment.SERVICE_STATUS, 1, 100)
+            machine, event(3, enrollment.SERVICE_STATUS, 1, 100)
         )
         self.assertEqual(progress.action, enrollment.EnrollmentAction.PROGRESS)
         self.assertTrue(progress.continue_required)

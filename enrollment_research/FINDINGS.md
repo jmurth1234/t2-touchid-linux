@@ -498,6 +498,10 @@ Mesa enrollment statuses actionable:
   `BKEnrollTouchIDOperation` finds no capture error, `BKEnrollOperation` finds
   no progress or terminal action, and `BKOperation` falls through without
   notifying its delegate or issuing `enrollContinue`.
+- Status **55** follows the same deliberate no-op shape on the exact 24G830
+  path. The Touch ID and enrollment handlers assign it no action, and the
+  generic jump table sends it directly to the common return path without a
+  delegate callback, state change, or command.
 - Statuses **63** and **64** are presence transitions in the exact generic
   operation handler. Both asynchronously call
   `operation:presenceStateChanged:`; 63 supplies true, while 64 supplies false
@@ -696,6 +700,7 @@ stops at `SEP-identity-observed` pending persistence and inventory reconciliatio
 | ordinal 63 | Active -> finger-present feedback | no | presence/animation only; not capture success |
 | ordinal 64 | Active -> finger-removed/waiting feedback | no | presence/animation only; not a retry or terminal result |
 | `0xe3ff8001`, ordinal 70 | Active -> continue-without-new-progress | yes, exactly once | no terminal result |
+| ordinal 55 | Active -> unchanged; exact-build phase message ignored after validation | no | no feedback or terminal result |
 | ordinal 90 | Active -> unchanged; exact-build phase message ignored after validation | no | no feedback or terminal result |
 | ordinal 74 | Active -> waiting-for-finger-removal | no invented continue | `enroll-remove-and-retry` feedback |
 | ordinals 78, 85, 87, 88, 98 | Active -> rejected-capture feedback | no invented continue | generic `enroll-retry-scan` |
@@ -707,7 +712,7 @@ stops at `SEP-identity-observed` pending persistence and inventory reconciliatio
 | `0xe3ff8003` with valid v1/v2 identity record | Active -> SEP-identity-observed | no | provisional identity only; `enroll-completed` waits for Catacomb and stable read-back |
 | version-1 `0xe3ff8004` statistics | Active -> unchanged; telemetry ignored after deduplication | no | no enrollment feedback or result |
 | `0xe3ff800e` / ordinal 501 accessory authorization | Active -> accessory-authorization-required | no guessed retry | unsupported for built-in-only Linux flow unless the accessory protocol is explicitly implemented |
-| unknown envelope, ordinal other than the explicitly recovered no-op 90, version, length, operation, or generation | no transition | no | protocol error; freeze/reconcile if an operation was active |
+| unknown envelope, ordinal other than the explicitly recovered no-ops 55 and 90, version, length, operation, or generation | no transition | no | protocol error; freeze/reconcile if an operation was active |
 
 “Exactly once” is scoped to a uniquely accepted event on the current operation
 and transport generation. A duplicate delivery must not send a second continue;
@@ -5372,6 +5377,16 @@ true for 63 and false for 64; only 64 also restores the host operation's waiting
 state. Neither branch dispatches a biometric command. Linux now exposes quiet
 contact/lift feedback for these two validated transitions, keeps enrollment
 active, and waits for a separate capture/progress or terminal event.
+
+The next approved attempt emitted generic status 55 after that first contact
+transition. Fresh stable reconciliation again proved no SEP identity, Catacomb,
+or other persistent delta. Exact 24G830 `BiometricKit` maps 55 to no capture
+error in the Touch ID subclass and no progress, terminal action, or continue in
+the enrollment superclass; the generic operation jump table sends it directly
+to the common return path without a delegate callback, state change, or
+command. Linux therefore treats only this additionally recovered ordinal as a
+silent phase no-op and continues waiting on the same connection. All other
+unrecovered ordinals remain fail-closed.
 
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.

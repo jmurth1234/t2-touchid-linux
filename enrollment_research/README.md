@@ -342,6 +342,13 @@ and 64 returns the host operation to its waiting state. Neither status sends a
 biometric command or proves a successful capture. The broker now reports these
 as quiet contact/lift feedback and continues waiting on the same connection.
 
+The next approved run emitted status 55 after the first contact notification;
+stable recovery again proved no persistent delta. In the exact 24G830 handler
+chain, 55 maps to no capture error, enrollment action, delegate callback, state
+change, or command, and the generic jump table sends it directly to the common
+return path. The reducer therefore accepts 55 as a second silent phase no-op
+while continuing to fail closed on every other unrecovered ordinal.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,
