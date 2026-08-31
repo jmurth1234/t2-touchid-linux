@@ -100,6 +100,16 @@ Bridge connection generation as E0. Consequently the standalone
 `t2-touchid-baseline` command remains evidence collection only: it closes its
 inventory connection and reports `same_connection_enrollment_ready: false`.
 
+`t2_enrollment_operation.py` composes those two pure layers into a synchronous
+E1/E2 operation core. It requires a same-connection E0 journal, accepts only an
+injected transport interface, durably records start/continue/cancel intent
+before dispatch, records observations afterward, wipes the authorization
+request, and converts transport, protocol, or post-dispatch journal ambiguity
+into `ENROLL_OUTCOME_UNKNOWN`. It must run inside the
+`with_authorized_context` callback and stops at a provisional identity or
+reconciliation-required failure. No BridgeXPC implementation or command-line
+entry point is supplied, so this still cannot start enrollment on hardware.
+
 The v2 platform field formerly labelled `uid` is the caller's macOS audit
 session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent
 64-bit field is the macOS process-unique ID, not a PID. Both are research-only,

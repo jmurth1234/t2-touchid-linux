@@ -59,6 +59,15 @@ is intentionally not mutation-ready because that command closes its inventory
 connection; a future broker must collect E0 and execute E1 under one connection
 lease.
 
+A synchronous operation core now composes the typed journal and pure event
+machine through a dependency-injected transport. Tests cover start rejection,
+disconnect, progress/continue, duplicate delivery, cancellation, request
+erasure, stale E0 generations, provisional identity, and journal failure after
+device dispatch. The repository intentionally supplies no live implementation
+of that transport and no enrollment CLI; the next live-capable broker must keep
+this whole core inside the authorized ACM callback and continue through E3
+reconciliation before reporting completion.
+
 ## Current boundary
 
 Existing, already-provisioned Apple users appear protocol-feasible for

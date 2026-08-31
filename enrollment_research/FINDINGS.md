@@ -1212,6 +1212,19 @@ inventory connection, so its otherwise valid E0 journal is evidence only and
 cannot be consumed by a later mutating connection. A future broker must collect
 the stable baseline and start enrollment under one serialized connection lease.
 
+The non-exposed `t2_enrollment_operation.py` core now makes the E1/E2 ordering
+executable without adding a live transport. It accepts a synchronous injected
+same-generation transport, writes start/continue/cancel intent before dispatch,
+writes the corresponding observation only after a validated status, wipes the
+mode-0 request buffer immediately after start dispatch, and feeds raw events
+through the strict sequence/deduplication state machine. A disconnect, malformed
+or duplicate event, event-limit exhaustion, invalid callback result, or journal
+failure after dispatch becomes durable `ENROLL_OUTCOME_UNKNOWN` whenever the
+journal remains writable. Returned identity and failure results are explicitly
+reconciliation-required. There is deliberately no BridgeXPC transport adapter,
+public CLI, fprintd enrollment method, E3 completion, or hardware mutation path
+in this layer.
+
 ### Single and batched deletion milestones
 
 Deletion starts from the same reconciled baseline plus an immutable target UUID
