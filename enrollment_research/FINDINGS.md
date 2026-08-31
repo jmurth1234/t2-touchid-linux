@@ -693,6 +693,7 @@ stops at `SEP-identity-observed` pending persistence and inventory reconciliatio
 | ordinal 67 | Active -> generic-failure-terminal | no | `enroll-failed`, never duplicate |
 | ordinal 68 | Active -> timeout-terminal | no | timeout may be retained only while this raw event is directly observed; otherwise generic failure/unknown |
 | `0xe3ff8003` with valid v1/v2 identity record | Active -> SEP-identity-observed | no | provisional identity only; `enroll-completed` waits for Catacomb and stable read-back |
+| version-1 `0xe3ff8004` statistics | Active -> unchanged; telemetry ignored after deduplication | no | no enrollment feedback or result |
 | `0xe3ff800e` / ordinal 501 accessory authorization | Active -> accessory-authorization-required | no guessed retry | unsupported for built-in-only Linux flow unless the accessory protocol is explicitly implemented |
 | unknown envelope, ordinal, version, length, operation, or generation | no transition | no | protocol error; freeze/reconcile if an operation was active |
 
@@ -5264,6 +5265,16 @@ qword changing as a monotonic timestamp while the byte-24 word carried the
 actual public status. The enrollment parser had reversed those roles. It now
 derives the ordinal from the byte-24 status record, validates the accompanying
 detail length, and uses the timestamp only for ordering/deduplication.
+
+The fourth approved attempt crossed that parser and froze on another envelope;
+fresh reconciliation again showed no persistent delta. The non-mutating control
+had already demonstrated version-1 statistics (`0xe3ff8004`) interleaved on the
+same callback stream during an ordinary operation. Matching-host dispatch also
+classifies this type as statistics rather than enrollment progress or result.
+The reducer therefore accepts it only as deduplicated no-op telemetry: it emits
+no UI feedback, sends no continue, and leaves enrollment active. All other
+unexpected types/versions still freeze, now with a controlled numeric diagnostic
+so no raw event or biometric payload is disclosed.
 
 The incident also closed a recovery gap. The broker now blocks new live
 enrollment while any mutation journal is unfinished. Its dedicated recovery

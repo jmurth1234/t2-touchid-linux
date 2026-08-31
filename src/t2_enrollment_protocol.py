@@ -20,6 +20,7 @@ COMMAND_ENROLL_CONTINUE = 0x0E
 BRIDGE_SERVICE_STATUS = 0xE3FF8000
 SERVICE_STATUS = 0xE3FF8001
 SERVICE_ENROLLMENT_RESULT = 0xE3FF8003
+SERVICE_STATISTICS = 0xE3FF8004
 SERVICE_ACCESSORY_AUTHORIZATION = 0xE3FF800E
 SERVICE_HEADER = struct.Struct("<QIIQ")
 STATUS_PAYLOAD_HEADER = struct.Struct("<I4xQ")
@@ -45,6 +46,7 @@ class EnrollmentState(Enum):
 
 
 class EnrollmentAction(Enum):
+    IGNORE_TELEMETRY = "ignore-telemetry"
     CONTINUE = "continue"
     PROGRESS = "progress"
     REMOVE_AND_RETRY = "remove-and-retry"
@@ -303,8 +305,16 @@ class EnrollmentStateMachine:
             event.envelope_type == SERVICE_STATUS and event.ordinal == 501
         ):
             self._freeze("accessory authorization is unsupported")
+        # Statistics are ambient operation telemetry.  The exact T2 emits
+        # these on the same callback stream during a normal match, and they do
+        # not advance, complete, or select an enrollment identity.
+        if event.envelope_type == SERVICE_STATISTICS and event.version == 1:
+            return EnrollmentTransition(EnrollmentAction.IGNORE_TELEMETRY, self.state)
         if event.envelope_type != SERVICE_STATUS or event.version != 1:
-            self._freeze("unknown enrollment envelope or version")
+            self._freeze(
+                "unknown enrollment envelope "
+                f"0x{event.envelope_type:08x} version {event.version}"
+            )
         try:
             validate_status_payload(event)
         except EnrollmentProtocolError as error:

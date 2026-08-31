@@ -248,6 +248,15 @@ timestamp—not the enrollment status. A generic status message carries its
 length. The corrected parser derives the logical status from that record and
 uses the timestamp only as its operation-local ordering key.
 
+The fourth approved run crossed that corrected common-record parser and then
+froze on an additional service envelope; stable recovery again proved no
+persistent delta. The exact non-mutating control had already shown version-1
+statistics (`0xe3ff8004`) interleaved on the same callback stream during a
+normal operation. Statistics neither select an identity nor advance enrollment,
+so the reducer now deduplicates and ignores only that proven telemetry type.
+Every other unexpected envelope/version remains fail-closed, and its numeric
+type/version is included in the controlled diagnostic for the next boundary.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,

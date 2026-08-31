@@ -150,6 +150,30 @@ class EnrollmentProtocolTests(unittest.TestCase):
                 self.assertFalse(transition.continue_required)
                 self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
 
+    def test_statistics_telemetry_is_ignored_without_advancing_enrollment(self):
+        machine = self.machine()
+        transition = self.accept(
+            machine,
+            event(1, enrollment.SERVICE_STATISTICS, 1, 0, bytes(28)),
+        )
+        self.assertEqual(
+            transition.action, enrollment.EnrollmentAction.IGNORE_TELEMETRY
+        )
+        self.assertFalse(transition.continue_required)
+        self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
+
+        for version in (0, 2):
+            with self.subTest(version=version):
+                rejected = self.machine()
+                with self.assertRaisesRegex(
+                    enrollment.EnrollmentProtocolError,
+                    r"envelope 0xe3ff8004 version",
+                ):
+                    self.accept(
+                        rejected,
+                        event(1, enrollment.SERVICE_STATISTICS, version, 0),
+                    )
+
     def test_terminal_failures_remain_distinct_and_67_is_generic(self):
         cases = {
             66: (enrollment.EnrollmentAction.CANCELLED, enrollment.EnrollmentState.CANCELLED),

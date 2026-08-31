@@ -176,6 +176,7 @@ class EnrollmentOperation:
                     self._outcome_unknown("terminal", "protocol-error", error)
 
                 if transition.action not in {
+                    protocol.EnrollmentAction.IGNORE_TELEMETRY,
                     protocol.EnrollmentAction.IDENTITY_OBSERVED,
                     protocol.EnrollmentAction.CANCELLED,
                     protocol.EnrollmentAction.FAILED,
