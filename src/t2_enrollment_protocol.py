@@ -350,7 +350,7 @@ class EnrollmentStateMachine:
                     "invalid SKS lock-state auxiliary event"
                 ) from error
             return EnrollmentTransition(EnrollmentAction.IGNORE_AUXILIARY, self.state)
-        if event.envelope_type != SERVICE_STATUS or event.version != 1:
+        if event.envelope_type != SERVICE_STATUS or event.version not in (1, 2):
             self._freeze(
                 "unknown enrollment envelope "
                 f"0x{event.envelope_type:08x} version {event.version}"
@@ -362,6 +362,13 @@ class EnrollmentStateMachine:
             raise EnrollmentProtocolError("invalid generic status event") from error
 
         status = event.ordinal
+        # The exact bridge wrapper uses the same ordinal/detail-length record
+        # for both versions. Matching host dispatch explicitly accepts version
+        # 2 for progress statuses and forwards its opaque alignment details.
+        # Linux needs only the validated ordinal and continue cadence, so it
+        # discards those details. Other version-2 status classes remain closed.
+        if event.version == 2 and not 100 <= status <= 355:
+            self._freeze("unsupported version-2 enrollment status")
         if status == 66:
             self.state = EnrollmentState.CANCELLED
             return EnrollmentTransition(EnrollmentAction.CANCELLED, self.state)

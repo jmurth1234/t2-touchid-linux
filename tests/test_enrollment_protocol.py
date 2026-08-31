@@ -106,6 +106,19 @@ class EnrollmentProtocolTests(unittest.TestCase):
             self.assertTrue(transition.continue_required)
             self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
 
+    def test_version_two_progress_validates_details_and_continues(self):
+        detail = bytes(range(12))
+        payload = enrollment.STATUS_PAYLOAD_HEADER.pack(263, len(detail)) + detail
+        raw = enrollment.SERVICE_HEADER.pack(
+            0, enrollment.SERVICE_STATUS, 2, 7
+        ) + payload
+        parsed = enrollment.parse_service_event(raw)
+        transition = self.accept(self.machine(), parsed)
+        self.assertEqual(transition.action, enrollment.EnrollmentAction.PROGRESS)
+        self.assertEqual(transition.progress_percent, 63)
+        self.assertTrue(transition.continue_required)
+        self.assertNotIn(detail.hex(), repr(transition))
+
     def test_status_70_continues_without_progress(self):
         transition = self.accept(
             self.machine(), event(1, enrollment.SERVICE_STATUS, 1, 70)
@@ -405,7 +418,8 @@ class EnrollmentProtocolTests(unittest.TestCase):
         mismatched_status = (101).to_bytes(4, "little") + bytes(12)
         mismatched_length = (100).to_bytes(4, "little") + bytes(4) + (1).to_bytes(8, "little")
         cases = (
-            event(1, enrollment.SERVICE_STATUS, 2, 100),
+            event(1, enrollment.SERVICE_STATUS, 3, 100),
+            event(1, enrollment.SERVICE_STATUS, 2, 90),
             event(1, enrollment.SERVICE_STATUS, 1, 100, b"truncated"),
             event(1, enrollment.SERVICE_STATUS, 1, 100, mismatched_status),
             event(1, enrollment.SERVICE_STATUS, 1, 100, mismatched_length),

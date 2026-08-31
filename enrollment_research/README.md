@@ -355,6 +355,15 @@ sends 72 through the Touch ID and enrollment subclasses without an action and
 then directly to the generic common return path. It is now the third explicit
 silent phase no-op; other unrecovered ordinals remain fail-closed.
 
+The next approved run crossed those phase events and stopped on a version-2
+generic status envelope after finger contact; stable recovery again proved no
+persistent delta. The exact bridge wrapper preserves one common ordinal and
+detail-length record across versions, while matching host dispatch explicitly
+accepts version 2 for progress ordinals 100 through 355 and forwards its opaque
+alignment detail. The reducer now validates that common framing, discards the
+detail, and preserves the established percentage/continue cadence only for
+that recovered range. Every other version-2 status remains fail-closed.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,

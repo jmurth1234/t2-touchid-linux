@@ -491,7 +491,9 @@ Mesa enrollment statuses actionable:
   computes `100 * (status - 100) / 255`, reports that percentage, and
   immediately issues `enrollContinue` (wire command `0x0e`). The matching T2
   daemon's parsed status `0x107` (263) is therefore approximately **63%**, not
-  a terminal result.
+  a terminal result. The matching host dispatch accepts both version 1 and
+  version 2 for this range; version 2 forwards opaque alignment detail using
+  the same outer ordinal/length record.
 - Status **70** also issues `enrollContinue`, but without reporting a new
   percentage.
 - Status **90** is a deliberate no-op phase message on the exact 24G830 path.
@@ -699,7 +701,7 @@ stops at `SEP-identity-observed` pending persistence and inventory reconciliatio
 
 | Observed event | Required transition | Automatic `0x0e` continue | External result boundary |
 |---|---|---:|---|
-| `0xe3ff8001`, ordinal 100..355 | Active -> progress; compute `floor(100 * (ordinal-100) / 255)` | yes, exactly once for that accepted event | progress only; never success |
+| `0xe3ff8001` v1/v2, ordinal 100..355 | Active -> progress after validating the shared ordinal/detail-length record; compute `floor(100 * (ordinal-100) / 255)` | yes, exactly once for that accepted event | progress only; never success; v2 detail is discarded |
 | ordinal 63 | Active -> finger-present feedback | no | presence/animation only; not capture success |
 | ordinal 64 | Active -> finger-removed/waiting feedback | no | presence/animation only; not a retry or terminal result |
 | `0xe3ff8001`, ordinal 70 | Active -> continue-without-new-progress | yes, exactly once | no terminal result |
@@ -5399,6 +5401,18 @@ the enrollment progress/terminal branches for 72, then the generic operation
 jump table sends it directly to its common return path. Linux therefore accepts
 72 as a third silent phase no-op without sending continue or emitting feedback;
 all other unrecovered ordinals remain fail-closed.
+
+The next approved attempt crossed those phase boundaries and stopped on a
+version-2 generic status envelope after contact. Fresh stable reconciliation
+again proved no persistent identity or Catacomb delta. Exact bridgeOS
+`bkremoted` copies the same 40-byte common service record for both versions:
+the ordinal and appended-data length remain in their recovered positions, and
+any detail follows that record unchanged. Matching host dispatch explicitly
+accepts version 2 for ordinals 100 through 355 and forwards its opaque alignment
+detail to the enrollment client. Linux now accepts version 2 only for that
+progress range, validates the declared detail length, discards the detail, and
+sends the same exactly-once continue as version 1. Other version-2 statuses and
+all unsupported versions remain fail-closed.
 
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.
