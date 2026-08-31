@@ -57,6 +57,7 @@ def _enrollment_entry(records) -> MutationEntry:
     complete = (
         phase
         in {
+            t2_enrollment_journal.EnrollmentPhase.BASELINE,
             t2_enrollment_journal.EnrollmentPhase.ABORTED_BEFORE_START,
             t2_enrollment_journal.EnrollmentPhase.POST_REBOOT_VERIFIED,
         }
@@ -120,4 +121,3 @@ def blocks_new_mutation(root: Path, *, excluding_kind: str | None = None) -> boo
         and (excluding_kind is None or entry.kind != excluding_kind)
         for entry in scan(root)
     )
-

@@ -14,6 +14,21 @@ from tests.test_mutation_journal import baseline
 
 
 class MutationRegistryTests(unittest.TestCase):
+    def test_baseline_only_enrollment_has_no_mutating_intent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            path = root / "00000000-0000-0000-0000-000000000070.jsonl"
+            mutation.create(
+                path,
+                "enroll",
+                baseline(),
+                operation_id="00000000-0000-0000-0000-000000000070",
+            )
+            entry = registry.scan(root)[0]
+            self.assertEqual(entry.phase, "baseline-reconciled")
+            self.assertFalse(entry.blocks_new_mutation)
+
     def test_routes_completed_enrollment_and_pending_rename_without_ids(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
