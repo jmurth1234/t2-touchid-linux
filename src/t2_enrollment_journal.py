@@ -327,7 +327,12 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             phase = (
                 EnrollmentPhase.PERSISTENCE_READY
                 if persistence.phase is persistence_journal.PersistencePhase.COMPLETE
-                else EnrollmentPhase.PERSISTING
+                else (
+                    EnrollmentPhase.OUTCOME_UNKNOWN
+                    if persistence.phase
+                    is persistence_journal.PersistencePhase.OUTCOME_UNKNOWN
+                    else EnrollmentPhase.PERSISTING
+                )
             )
             continue
 

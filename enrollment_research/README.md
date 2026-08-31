@@ -75,6 +75,11 @@ only secure-blob and final-file digests, forces early confirms before advancing,
 and forces host batch commit before the final confirm. It cannot become
 `persistence-ready` until stable SEP/host generation equality and independent
 archive read-back are journaled. No raw secure blob may enter the journal.
+The dependency-injected operation core now executes this ordering against fake
+transport and temporary host-store interfaces, wipes its secure and encoded
+buffers, and freezes post-dispatch transport, codec, host-store, journal, or
+read-back ambiguity as outcome-unknown. There is still no concrete SEP/Bridge
+persistence transport and no user-facing command.
 
 The pure E3 reconciliation layer is executable too. Given already-collected
 host and same-connection SEP snapshots, it rejects mapping or binding drift,

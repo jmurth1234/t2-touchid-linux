@@ -1237,6 +1237,19 @@ generation equality plus independent archive read-back. Skips, reordering,
 descriptor substitution, secure-blob digest substitution, and staged snapshot
 substitution fail closed.
 
+The non-exposed `t2_enrollment_persistence_operation.py` core composes those
+rules through injected SEP transport, encoder, host store, and read-back
+interfaces. It syncs each intent before dispatch, accepts complete output only
+as a wipeable bytearray, stages each encoded component durably before any early
+confirm, commits the complete host batch before the final confirm, and wipes
+both secure and encoded buffers on every path. Any post-dispatch transport,
+codec, store, journal, or read-back ambiguity is best-effort journaled as
+`CATACOMB_PERSISTENCE_OUTCOME_UNKNOWN`; it is never retried or reported as E3.
+The Linux-local `CatacombStore` now supports the same incremental staging order
+while retaining discard-only `prepare/` and roll-forward-only `commit/`
+recovery. All current operation tests use fake transport and temporary copied
+fixtures. No live command or Bridge persistence adapter exists.
+
 The non-exposed `t2_enrollment_reconciliation.py` classifier makes the E3
 decision executable without adding live I/O. It requires a double-collected,
 same-generation SEP snapshot; exact protected mapping, account, bag, Catacomb

@@ -57,11 +57,35 @@ class CatacombStoreTests(unittest.TestCase):
         self.assert_root_is(self.old)
         self.assertFalse((self.root / "prepare").exists())
 
+    def test_bulk_stage_prevalidates_every_component_before_creating_prepare(self):
+        invalid = {**self.new, "master.cat": b"not-a-catacomb"}
+        with self.assertRaisesRegex(store_module.CatacombStoreError, "invalid staged"):
+            self.store.stage(invalid)
+        self.assertFalse((self.root / "prepare").exists())
+        self.assert_root_is(self.old)
+
     def test_commit_promotes_all_components(self):
         hashes = self.store.stage(self.new)
         self.store.cross_commit_boundary(hashes)
         self.assert_root_is(self.new)
         self.assertFalse((self.root / "commit").exists())
+
+    def test_components_can_be_staged_durably_in_protocol_order(self):
+        expected_names = set(self.new)
+        hashes = {}
+        self.store.begin_stage(expected_names)
+        for name in ("user_000001f5.cat", "master.cat", "biolockout.cat"):
+            hashes[name] = self.store.stage_component(
+                name, bytearray(self.new[name]), expected_names
+            )
+        with self.assertRaisesRegex(
+            store_module.CatacombStoreError, "duplicated"
+        ):
+            self.store.stage_component(
+                "master.cat", bytearray(self.new["master.cat"]), expected_names
+            )
+        self.store.cross_commit_boundary(hashes)
+        self.assert_root_is(self.new)
 
     def test_crash_after_commit_rename_rolls_forward(self):
         hashes = self.store.stage(self.new)

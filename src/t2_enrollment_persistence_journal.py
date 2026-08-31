@@ -33,6 +33,7 @@ class PersistencePhase(Enum):
     FINAL_CONFIRM_INTENT = "final-confirm-intent"
     ATTESTATION_READY = "attestation-ready"
     COMPLETE = "complete"
+    OUTCOME_UNKNOWN = "outcome-unknown"
 
 
 @dataclass(frozen=True, repr=False)
@@ -252,6 +253,54 @@ class PersistenceTracker:
             return True
         if self.phase is PersistencePhase.NOT_STARTED:
             raise PersistenceJournalError("Catacomb persistence has no immutable plan")
+
+        if milestone == "CATACOMB_PERSISTENCE_OUTCOME_UNKNOWN":
+            if self.phase in (
+                PersistencePhase.COMPONENT_READY,
+                PersistencePhase.COMPLETE,
+                PersistencePhase.OUTCOME_UNKNOWN,
+            ):
+                raise PersistenceJournalError(
+                    "persistence outcome-unknown marker is out of order"
+                )
+            evidence = self._component_evidence(
+                value,
+                milestone,
+                {
+                    "stage",
+                    "reason",
+                    "sep_mutation_possible",
+                    "host_commit_possible",
+                },
+            )
+            if evidence["stage"] not in {
+                "prepare",
+                "complete",
+                "encode",
+                "host-stage",
+                "early-confirm",
+                "host-commit",
+                "final-confirm",
+                "readback",
+            }:
+                raise PersistenceJournalError("persistence failure stage is invalid")
+            if evidence["reason"] not in {
+                "transport-error",
+                "journal-error",
+                "codec-error",
+                "host-store-error",
+                "readback-error",
+            }:
+                raise PersistenceJournalError("persistence failure reason is invalid")
+            if (
+                evidence["sep_mutation_possible"] is not True
+                or not isinstance(evidence["host_commit_possible"], bool)
+            ):
+                raise PersistenceJournalError(
+                    "persistence ambiguity flags are invalid"
+                )
+            self.phase = PersistencePhase.OUTCOME_UNKNOWN
+            return True
 
         if milestone == "CATACOMB_PREPARE_INTENT":
             if self.phase is not PersistencePhase.COMPONENT_READY:

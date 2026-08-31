@@ -42,13 +42,14 @@ def component_names(apple_uid: int) -> set[str]:
     return {"master.cat", "biolockout.cat", f"user_{apple_uid:08x}.cat"}
 
 
-def validate_component(name: str, data: bytes, apple_uid: int) -> None:
+def validate_component(name: str, data: bytes | bytearray, apple_uid: int) -> None:
+    validated = bytes(data) if isinstance(data, bytearray) else data
     if name == "master.cat":
-        decode_master_catacomb(data)
+        decode_master_catacomb(validated)
     elif name == "biolockout.cat":
-        decode_biolockout_catacomb(data)
+        decode_biolockout_catacomb(validated)
     elif name == f"user_{apple_uid:08x}.cat":
-        decode_user_catacomb(data, apple_uid)
+        decode_user_catacomb(validated, apple_uid)
     else:
         raise CatacombStoreError(f"unexpected Catacomb component name: {name}")
 
@@ -96,26 +97,54 @@ class CatacombStore:
         finally:
             os.close(descriptor)
 
-    def stage(self, components: dict[str, bytes], hook: FailureHook | None = None) -> dict[str, str]:
-        if not components or not set(components) <= self.allowed_names:
+    def begin_stage(
+        self, expected_names: set[str], hook: FailureHook | None = None
+    ) -> None:
+        if not expected_names or not expected_names <= self.allowed_names:
             raise CatacombStoreError("staged component set is empty or invalid")
         if os.path.lexists(self.root / "prepare") or os.path.lexists(self.root / "commit"):
             raise CatacombStoreError("an incomplete Catacomb transaction already exists")
-        for name, data in components.items():
-            try:
-                validate_component(name, data, self.apple_uid)
-            except CatacombCodecError as error:
-                raise CatacombStoreError(f"invalid staged {name}: {error}") from error
         prepare = self.root / "prepare"
         prepare.mkdir(mode=0o700)
         self._sync_directory(self.root)
         if hook:
             hook("prepare_created")
-        for name in sorted(components):
-            self._write_exclusive(prepare / name, components[name])
-            if hook:
-                hook(f"component_written:{name}")
+
+    def stage_component(
+        self,
+        name: str,
+        data: bytes | bytearray,
+        expected_names: set[str],
+        hook: FailureHook | None = None,
+    ) -> str:
+        if name not in expected_names or not expected_names <= self.allowed_names:
+            raise CatacombStoreError("staged component target is invalid")
+        prepare = self.root / "prepare"
+        existing = self._directory_entries(prepare)
+        if not existing <= expected_names or name in existing:
+            raise CatacombStoreError("staged component is unexpected or duplicated")
+        try:
+            validate_component(name, data, self.apple_uid)
+        except CatacombCodecError as error:
+            raise CatacombStoreError(f"invalid staged {name}: {error}") from error
+        self._write_exclusive(prepare / name, data)
         self._sync_directory(prepare)
+        if hook:
+            hook(f"component_written:{name}")
+        return sha256(data)
+
+    def stage(self, components: dict[str, bytes], hook: FailureHook | None = None) -> dict[str, str]:
+        expected_names = set(components)
+        if not components or not expected_names <= self.allowed_names:
+            raise CatacombStoreError("staged component set is empty or invalid")
+        for name, data in components.items():
+            try:
+                validate_component(name, data, self.apple_uid)
+            except CatacombCodecError as error:
+                raise CatacombStoreError(f"invalid staged {name}: {error}") from error
+        self.begin_stage(expected_names, hook)
+        for name in sorted(components):
+            self.stage_component(name, components[name], expected_names, hook)
         if hook:
             hook("prepare_synced")
         return {name: sha256(data) for name, data in components.items()}

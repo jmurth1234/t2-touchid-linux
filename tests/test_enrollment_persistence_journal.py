@@ -3,6 +3,7 @@ import hashlib
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -169,7 +170,7 @@ class EnrollmentPersistenceJournalTests(unittest.TestCase):
                 "envelope_type": enrollment.SERVICE_ENROLLMENT_RESULT,
                 "event_version": 2,
                 "user_id": 501,
-                "identity_uuid": "00000000-0000-0000-0000-000000000008",
+                "identity_uuid": str(uuid.UUID(int=8)),
             },
         )
         return path, operation_id

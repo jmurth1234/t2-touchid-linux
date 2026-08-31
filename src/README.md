@@ -121,6 +121,15 @@ journaled host-batch commit before final confirm. Only a matching stable
 SEP/host generation and independent archive read-back can reach
 `persistence-ready`. The journal stores lengths and hashes, never secure bytes.
 
+`t2_enrollment_persistence_operation.py` composes that journal with injected
+prepare/complete/confirm, archive-encoder, host-store, and stable-read-back
+interfaces. Intent is synced before every external dispatch, each component is
+durably staged in protocol order, the host batch crosses its commit boundary
+before the final SEP confirm, and secure/archive bytearrays are wiped on every
+exit. A transport, codec, store, journal, or read-back ambiguity after SEP
+dispatch becomes `CATACOMB_PERSISTENCE_OUTCOME_UNKNOWN`. Tests use only fake
+transport and temporary Catacomb copies; no live adapter or command exists.
+
 `t2_enrollment_reconciliation.py` is the pure E3 classifier. It accepts only a
 stable same-generation SEP inventory and a strict host Catacomb read-back,
 requires the mapping, account, bag, existing identities, entity numbers,
