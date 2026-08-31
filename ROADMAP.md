@@ -59,8 +59,8 @@ evidence, not intent.
 
 - [x] Document threat models for PAM and host-key encrypted credentials.
 - [x] Add malformed SEP/BridgeXPC response tests.
-- [ ] Enable the prepared GitHub Actions CI template (requires a GitHub token
-      with `workflow` scope).
+- [x] Enable GitHub Actions CI across Python 3.12 and 3.14 with pinned actions,
+      unit tests, shell checks, userspace build, and both privacy scans.
 - [x] Produce an experimental `v0.1.0` release checklist.
 
 ## 9. Linux identity management

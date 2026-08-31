@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
 OUTPUT="$SCRIPT_DIR/t2-touchid-catacomb.tar.gz"
 DIAGNOSTIC="$SCRIPT_DIR/t2-touchid-catacomb-diagnostic.tar.gz"
 WORK_DIR="$(mktemp -d /tmp/t2-touchid-catacomb.XXXXXX)"
@@ -95,8 +95,8 @@ elif [[ -d /Library/Catacomb ]]; then
   echo "Created: $OUTPUT"
 else
   echo "No TemplateList.cat file was found. Creating a diagnostic archive."
-  sudo launchctl print system/com.apple.biometrickitd \
-    > "$WORK_DIR/launchctl-biometrickitd.txt" 2>&1 || true
+  sudo launchctl print system/com.apple.biometrickitd 2>&1 \
+    | /usr/bin/tee "$WORK_DIR/launchctl-biometrickitd.txt" >/dev/null || true
   (sudo find /private/var /Library \
     -type d -name Catacomb -print 2>/dev/null || true) \
     | sort -u > "$WORK_DIR/catacomb-directories.txt"

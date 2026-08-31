@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
 OUTPUT="$SCRIPT_DIR/t2-keybags.tar.gz"
 WORK_DIR="$(mktemp -d /tmp/t2-keybags.XXXXXX)"
 CANDIDATES="$WORK_DIR/state/candidates.txt"
