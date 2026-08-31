@@ -349,6 +349,12 @@ change, or command, and the generic jump table sends it directly to the common
 return path. The reducer therefore accepts 55 as a second silent phase no-op
 while continuing to fail closed on every other unrecovered ordinal.
 
+The subsequent approved run emitted status 72 at the same live boundary;
+stable recovery again proved no persistent delta. The exact handler chain also
+sends 72 through the Touch ID and enrollment subclasses without an action and
+then directly to the generic common return path. It is now the third explicit
+silent phase no-op; other unrecovered ordinals remain fail-closed.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,

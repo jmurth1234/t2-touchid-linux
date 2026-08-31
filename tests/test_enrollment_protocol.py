@@ -130,7 +130,7 @@ class EnrollmentProtocolTests(unittest.TestCase):
 
     def test_exact_build_phase_noops_do_not_continue(self):
         machine = self.machine()
-        for sequence, status in enumerate((55, 90), start=1):
+        for sequence, status in enumerate((55, 72, 90), start=1):
             with self.subTest(status=status):
                 phase = self.accept(
                     machine,
@@ -144,7 +144,7 @@ class EnrollmentProtocolTests(unittest.TestCase):
                 self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
 
         progress = self.accept(
-            machine, event(3, enrollment.SERVICE_STATUS, 1, 100)
+            machine, event(4, enrollment.SERVICE_STATUS, 1, 100)
         )
         self.assertEqual(progress.action, enrollment.EnrollmentAction.PROGRESS)
         self.assertTrue(progress.continue_required)
