@@ -2935,6 +2935,38 @@ avoid guessing after most alias failures:
   alias, and alias absence can be verified independently afterward if unload is
   deliberately used.
 
+Matching 25B77 AppleKeyStore kext disassembly now closes the raw transport gap
+for the read-only UUID query. `AppleKeyStore::copy_keybag_uuid` enters generated
+client `__ipc_copy_keybag_uuid`; that client serializes a zero result word,
+64-bit owning session, and signed 32-bit handle, then invokes the endpoint
+transport with literal operation **`0x06`**. The server-side
+`_ipc_copy_keybag_uuid` resolves exactly that session/handle through
+`keybag_for_handle`, copies 16 bytes from the resolved keybag record, and returns
+not-found status `-3` when resolution fails. Its response codec is one result
+word plus one length-prefixed 16-byte blob. This is primary evidence for a
+narrow read-only allowlist, not a guessed mapping from macOS selector `0x17`.
+
+The existing live operation-`0x19` selector-0 result is DER, not an opaque
+property list. The captured dictionary is a canonical SET of ten two-item
+sequences: `bh`, `mua`, `sb`, `sfa`, `sgs`, `sls`, `sms`, `srcd`, `ss`, and
+`uuuid`. Matching kext constants identify `sls` as state lock-state, `ss` as
+the state word, and `uuuid` as the private configured user UUID; it is not the
+bag UUID. The new decoder therefore obtains the bag UUID only from operation
+`0x06`, validates the queried signed handle and `sls` independently from the
+DER state, and never mislabels `uuuid` as keybag identity.
+
+The non-exposed concrete observer brackets one strict selector-0 state read
+with two operation-`0x06` UUID reads under the caller's machine-wide lease.
+Only exact UUID equality, exact queried-handle equality, canonical DER, private
+transient file metadata, and a bounded known lock-state word produce alias
+evidence. Double absence produces structural absence; any appearance,
+disappearance, rebinding, malformed output, or command ambiguity fails closed.
+The activation adapter then composes this observer with the already proven
+load, make-system/bind, and unlock commands. It transfers the wipeable password
+view through an anonymous pipe, never argv or environment. This code is not a
+public multi-user feature: operation `0x06` still needs read-only live validation
+after the rebuilt pinned module is installed and loaded at reboot.
+
 The safest host-side activation is not to reuse `-501` for every Linux user.
 Each already-provisioned Apple user retains its Apple UID-derived alias
 (`-UID`), so switching from UID 501 to 502 selects `-502` rather than rebinding

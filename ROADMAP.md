@@ -82,6 +82,12 @@ evidence, not intent.
       load/bind/unlock operation core with secret wiping and no retry.
 - [x] Add fresh-generation, read-only activation recovery that never retries
       mutations or guesses how to clean up an unknown temporary handle.
+- [x] Recover and implement exact read-only endpoint-7 bag-UUID operation
+      `0x06`, strict keybag-state decoding, and stable double-read observation.
+- [x] Compose the observer with the existing load/bind/unlock commands through
+      a non-exposed adapter that pipes and never logs password bytes.
+- [ ] Validate operation `0x06` and the read-only alias observer on hardware
+      after loading the rebuilt pinned module at reboot.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
       verification on the proven machine.
 - [ ] Implement Linux-native enrollment/unenrollment policy for multiple users.

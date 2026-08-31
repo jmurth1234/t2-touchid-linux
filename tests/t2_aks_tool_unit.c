@@ -57,6 +57,22 @@ int main(void)
 						 &request_length) == -1);
 
 	{
+		unsigned char uuid_request[16];
+
+		assert(build_copy_keybag_uuid_request(1, 9, uuid_request) == 0);
+		assert(get_le32(uuid_request) == 0);
+		assert(get_le64(uuid_request + 4) == 1);
+		assert((int32_t)get_le32(uuid_request + 12) == 9);
+		assert(build_copy_keybag_uuid_request(1, -501,
+						 uuid_request) == 0);
+		assert((int32_t)get_le32(uuid_request + 12) == -501);
+		assert(build_copy_keybag_uuid_request(2, 9,
+						 uuid_request) == -1);
+		assert(build_copy_keybag_uuid_request(1, 0,
+						 uuid_request) == -1);
+	}
+
+	{
 		unsigned char state_request[24];
 
 		assert(build_get_device_state_v1_request(1, 9, 0,

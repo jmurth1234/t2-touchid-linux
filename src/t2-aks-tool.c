@@ -164,6 +164,129 @@ static int parse_u64(const char *text, uint64_t *value)
 	return 0;
 }
 
+static int parse_handle(const char *text, int32_t *value)
+{
+	char *end = NULL;
+	long parsed;
+
+	errno = 0;
+	parsed = strtol(text, &end, 0);
+	if (errno || !end || *end || !parsed || parsed < INT32_MIN ||
+	    parsed > INT32_MAX)
+		return -1;
+	*value = (int32_t)parsed;
+	return 0;
+}
+
+static int write_private_output(const char *path, const unsigned char *data,
+				size_t length)
+{
+	int flags = O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC;
+	size_t offset = 0;
+	int output;
+
+#ifdef O_NOFOLLOW
+	flags |= O_NOFOLLOW;
+#endif
+	output = open(path, flags, 0600);
+	if (output < 0) {
+		perror("open output");
+		return -1;
+	}
+	while (offset < length) {
+		ssize_t written = write(output, data + offset, length - offset);
+
+		if (written < 0 && errno == EINTR)
+			continue;
+		if (written <= 0) {
+			perror("write output");
+			close(output);
+			unlink(path);
+			return -1;
+		}
+		offset += (size_t)written;
+	}
+	if (close(output)) {
+		perror("close output");
+		unlink(path);
+		return -1;
+	}
+	return 0;
+}
+
+static int build_copy_keybag_uuid_request(uint64_t session, int32_t handle,
+					  unsigned char request[16])
+{
+	if (session != 1 || !handle || !request)
+		return -1;
+	memset(request, 0, 16);
+	put_le64(request + 4, session);
+	put_le32(request + 12, (uint32_t)handle);
+	return 0;
+}
+
+static int copy_keybag_uuid(int fd, const char *session_text,
+			    const char *handle_text, const char *output_path)
+{
+	unsigned char request[16];
+	unsigned char response[24] = { 0 };
+	struct t2_aks_ioc_exchange exchange = {
+		.operation = 0x06,
+		.request_length = sizeof(request),
+		.response_capacity = sizeof(response),
+		.request = (uintptr_t)request,
+		.response = (uintptr_t)response,
+	};
+	uint64_t session;
+	int32_t handle;
+	uint32_t status, blob_length;
+
+	if (parse_u64(session_text, &session) ||
+	    parse_handle(handle_text, &handle) ||
+	    build_copy_keybag_uuid_request(session, handle, request)) {
+		fprintf(stderr, "invalid copy-keybag-uuid target\n");
+		return 2;
+	}
+	if (ioctl(fd, T2_AKS_IOC_EXCHANGE, &exchange) < 0) {
+		if (exchange.sep_status == -3) {
+			printf("present=false\n");
+			return 3;
+		}
+		if (exchange.sep_status)
+			fprintf(stderr, "copy-keybag-uuid: SEP status %d\n",
+				exchange.sep_status);
+		else
+			perror("T2_AKS_IOC_EXCHANGE");
+		return 1;
+	}
+	if (exchange.response_length != sizeof(response)) {
+		fprintf(stderr, "invalid copy-keybag-uuid response length: %u\n",
+			exchange.response_length);
+		return 1;
+	}
+	status = get_le32(response);
+	blob_length = get_le32(response + 4);
+	if (status == (uint32_t)(int32_t)-3) {
+		printf("present=false\n");
+		return 3;
+	}
+	if (status || blob_length != 16) {
+		fprintf(stderr,
+			"invalid copy-keybag-uuid response: status=%#x blob_length=%u\n",
+			status, blob_length);
+		return 1;
+	}
+	if (!memcmp(response + 8, (unsigned char[16]) { 0 }, 16)) {
+		fprintf(stderr, "copy-keybag-uuid returned a zero UUID\n");
+		return 1;
+	}
+	if (write_private_output(output_path, response + 8, 16))
+		return 1;
+	printf("present=true uuid_length=16 response_length=%u\n",
+	       exchange.response_length);
+	return 0;
+}
+
 static int set_system_keybag(int fd, const char *session_text,
 			     const char *handle_text, const char *special_text)
 {
@@ -619,8 +742,6 @@ static int get_device_state_v1(int fd, const char *session_text,
 	long handle;
 	unsigned long selector;
 	uint32_t codec_version, blob_length;
-	int output;
-	ssize_t written;
 
 	if (parse_u64(session_text, &session) || !session) {
 		fprintf(stderr, "invalid session: %s\n", session_text);
@@ -656,26 +777,16 @@ static int get_device_state_v1(int fd, const char *session_text,
 	}
 	codec_version = get_le32(response);
 	blob_length = get_le32(response + 4);
-	if (codec_version != 1 || blob_length > exchange.response_length - 8) {
+	if (codec_version != 1 || blob_length > sizeof(response) - 8 ||
+	    exchange.response_length != 8 + ((blob_length + 3) & ~3U)) {
 		fprintf(stderr,
 			"invalid device-state-v1 response: codec_version=%u blob_length=%u response_length=%u\n",
 			codec_version, blob_length,
 			exchange.response_length);
 		return 1;
 	}
-	output = open(output_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
-		      0600);
-	if (output < 0) {
-		perror("open output");
+	if (write_private_output(output_path, response + 8, blob_length))
 		return 1;
-	}
-	written = write(output, response + 8, blob_length);
-	if (written < 0 || (uint32_t)written != blob_length) {
-		perror("write output");
-		close(output);
-		return 1;
-	}
-	close(output);
 	printf("codec_version=1 blob_length=%u response_length=%u\n",
 	       blob_length, exchange.response_length);
 	return 0;
@@ -698,8 +809,6 @@ static int get_device_state(int fd, const char *handle_text,
 	unsigned long selector;
 	uint32_t status;
 	uint32_t blob_length;
-	int output;
-	ssize_t written;
 
 	errno = 0;
 	handle = strtoll(handle_text, &end, 0);
@@ -731,19 +840,8 @@ static int get_device_state(int fd, const char *handle_text,
 			status, blob_length, exchange.response_length);
 		return 1;
 	}
-	output = open(output_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
-		      0600);
-	if (output < 0) {
-		perror("open output");
+	if (write_private_output(output_path, response + 8, blob_length))
 		return 1;
-	}
-	written = write(output, response + 8, blob_length);
-	if (written < 0 || (uint32_t)written != blob_length) {
-		perror("write output");
-		close(output);
-		return 1;
-	}
-	close(output);
 	printf("status=0 blob_length=%u response_length=%u\n", blob_length,
 	       exchange.response_length);
 	return 0;
@@ -763,6 +861,7 @@ int main(int argc, char **argv)
 	      (argc == 4 && (!strcmp(argv[1], "verify-password-only") ||
 	                     !strcmp(argv[1], "verify-password-only-stdin"))) ||
 	      (argc == 5 && !strcmp(argv[1], "verify-password-acm-matrix")) ||
+	      (argc == 5 && !strcmp(argv[1], "copy-keybag-uuid")) ||
 	      (argc == 5 && !strcmp(argv[1], "get-device-state")) ||
 	      (argc == 6 && !strcmp(argv[1], "get-device-state-v1")))) {
 		fprintf(stderr,
@@ -775,10 +874,11 @@ int main(int argc, char **argv)
 			"       %s verify-password-only SESSION HANDLE\n"
 			"       %s verify-password-only-stdin SESSION HANDLE\n"
 			"       %s verify-password-acm-matrix SESSION SPECIAL POSITIVE < CONTEXT_16_BYTES\n"
+			"       %s copy-keybag-uuid SESSION HANDLE OUTPUT\n"
 			"       %s get-device-state HANDLE SELECTOR OUTPUT\n"
 			"       %s get-device-state-v1 SESSION HANDLE SELECTOR OUTPUT\n",
 			argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0],
-			argv[0], argv[0], argv[0], argv[0]);
+			argv[0], argv[0], argv[0], argv[0], argv[0]);
 		return 2;
 	}
 	fd = open("/dev/t2-aks", O_RDWR | O_CLOEXEC);
@@ -804,6 +904,8 @@ int main(int argc, char **argv)
 		ret = verify_password_only(fd, argv[2], argv[3], 1);
 	else if (!strcmp(argv[1], "verify-password-acm-matrix"))
 		ret = verify_password_acm_matrix(fd, argv[2], argv[3], argv[4]);
+	else if (!strcmp(argv[1], "copy-keybag-uuid"))
+		ret = copy_keybag_uuid(fd, argv[2], argv[3], argv[4]);
 	else if (!strcmp(argv[1], "get-device-state-v1"))
 		ret = get_device_state_v1(fd, argv[2], argv[3], argv[4], argv[5]);
 	else

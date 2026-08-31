@@ -33,6 +33,21 @@ t2_aks_wire_get_le64(const t2_aks_wire_u8 *value)
 }
 
 /*
+ * Raw operation 0x06 is the matching AppleKeyStore kext's read-only
+ * copy_keybag_uuid IPC.  Linux permits only the proven session-1 request:
+ * zero result placeholder, owning session, and one nonzero signed handle.
+ */
+static inline bool
+t2_aks_copy_keybag_uuid_request_allowed(const t2_aks_wire_u8 *request,
+					 size_t length)
+{
+	return request && length == 16 &&
+	       t2_aks_wire_get_le32(request) == 0 &&
+	       t2_aks_wire_get_le64(request + 4) == 1 &&
+	       t2_aks_wire_get_le32(request + 12) != 0;
+}
+
+/*
  * Root-only operation 0x21 is intentionally narrower than the Apple ABI.
  * It accepts selector-42 plaintext verification with either the exact
  * 16-byte ACM external form or the zero-context stage-isolation diagnostic.

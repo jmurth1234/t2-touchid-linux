@@ -24,7 +24,8 @@ After OOL registration the module also creates `/dev/t2-aks` as a mode-0600
 root-only exchange device. The kernel, rather than userspace, owns header
 generation, transaction matching, SHA-256 verification, size bounds, and
 request-buffer scrubbing. It accepts only the recovered AppleKeyStore opcodes
-`0x03` (load keybag), `0x04` (change lock state), `0x19` (get device state),
+`0x03` (load keybag), `0x04` (change lock state), `0x06` (copy one live keybag
+UUID), `0x19` (get device state),
 `0x21` (verify secret with either a 16-byte ACM context or the bounded
 password-only diagnostic), and `0x4d` (capabilities);
 every other opcode is rejected. Operation `0x21` is additionally restricted to
@@ -37,6 +38,13 @@ implements the recovered 24-byte operation-`0x19` codec. Its output can contain
 a private keybag UUID, is created mode `0600`, and must never be committed or
 published. Decode only a private copy, redact identifiers in notes, and remove
 the raw output when the observation is complete.
+
+The read-only `copy-keybag-uuid SESSION HANDLE OUTPUT` command implements the
+matching kext's exact raw endpoint operation `0x06`: a zero result placeholder,
+session `1`, and one nonzero signed handle. The kernel rejects every other body.
+Success writes exactly 16 UUID bytes to a newly created mode-0600 file and never
+prints the UUID; an absent handle returns exit status 3 and creates no file.
+Output paths are no-follow/exclusive and existing files are never overwritten.
 
 Operation `0x21` codec v1 contains the password and 16-byte ACM
 external-context blobs followed by one 64-bit device-options value. Exact
@@ -92,8 +100,17 @@ becomes a terminal reconciliation-required record. Recovery requires a fresh
 runtime generation and an unchanged exact mapping, performs one read-only alias
 observation, and never retries a password, bind, unlock, or unknown handle. It
 can close only as observed ready, observed not-ready, blocked, or quarantined.
-No implementation of the transport protocol, live observer, PolicyKit action,
-or CLI is present.
+`t2_aks_state.py` strictly decodes the exact ten-field DER keybag-state schema
+observed on the proven build, including canonical SET ordering, integer
+encoding, queried handle, lock state, and private user UUID. `t2_aks_observer.py`
+brackets that state with two operation-`0x06` bag-UUID reads, stores raw output
+only inside a private transient directory, and deletes it immediately.
+`t2_aks_transport.py` composes that observer with the existing load, bind, and
+unlock commands; password bytes traverse a pipe and command output must match
+the exact typed reply. These modules provide the concrete dependency boundary,
+but no PolicyKit action, mapping consumer, recovery CLI, or public activation
+command is present. Hardware validation of operation `0x06` requires installing
+the rebuilt pinned module and rebooting before this adapter can be enabled.
 
 The `t2-touchid-manage` rename path resolves one slot only after that
 reconciliation gate,

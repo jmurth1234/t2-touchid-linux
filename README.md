@@ -104,6 +104,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
   lock-state evidence; it emits no AKS operation.
 - `src/t2_user_activation_{journal,operation,recovery}.py`: transport-free
   durable activation, execution, and read-only recovery core; no CLI exists.
+- `src/t2_aks_{state,observer,transport}.py`: strict operation-`0x19` state
+  decoding plus an exact, non-exposed AKS observation/command adapter.
 - `systemd/`: system and audible-feedback units.
 - `pam/`: clamshell-safe Omarchy PAM templates.
 - `tools/macos/`: private export helpers; outputs must never be committed.
@@ -330,8 +332,17 @@ read-back, or post-mutation journal failure becomes outcome-unknown without a
 retry. Its recovery core requires a fresh runtime generation and the exact
 protected mapping, performs one read-only alias observation, and never retries
 or cleans up an unknown handle. It closes only as observed ready, observed
-not-ready, blocked, or quarantined. There is still no concrete transport,
-public command, or automatic recovery path.
+not-ready, blocked, or quarantined.
+
+The concrete adapter now uses the matching kext's exact read-only endpoint-7
+operation `0x06` to double-read a handle's live bag UUID and strictly decodes
+the proven operation-`0x19` DER state dictionary around that read. Any alias,
+UUID, handle, file-mode, schema, or lock-state instability fails closed. The
+same adapter composes the existing load/bind/unlock commands and sends password
+bytes through a pipe, never argv or the environment. It remains non-exposed:
+there is no public activation command or automatic recovery path, and the new
+kernel allowlist still needs its first read-only hardware validation after the
+updated pinned module is loaded by a reboot.
 
 Rename one current identity label (this does not alter its fingerprint
 template or fprintd's compatibility-slot name):

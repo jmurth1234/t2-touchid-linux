@@ -39,7 +39,28 @@ static size_t make_request(unsigned char request[176], size_t password_length,
 int main(void)
 {
 	unsigned char request[176];
+	unsigned char uuid_request[16] = { 0 };
 	size_t length, index;
+
+	put_le64(uuid_request + 4, 1);
+	put_le32(uuid_request + 12, (uint32_t)-501);
+	assert(t2_aks_copy_keybag_uuid_request_allowed(uuid_request,
+							 sizeof(uuid_request)));
+	assert(!t2_aks_copy_keybag_uuid_request_allowed(uuid_request, 15));
+	assert(!t2_aks_copy_keybag_uuid_request_allowed(uuid_request, 17));
+	put_le32(uuid_request, 1);
+	assert(!t2_aks_copy_keybag_uuid_request_allowed(uuid_request,
+							 sizeof(uuid_request)));
+	put_le32(uuid_request, 0);
+	put_le64(uuid_request + 4, 2);
+	assert(!t2_aks_copy_keybag_uuid_request_allowed(uuid_request,
+							 sizeof(uuid_request)));
+	put_le64(uuid_request + 4, 1);
+	put_le32(uuid_request + 12, 0);
+	assert(!t2_aks_copy_keybag_uuid_request_allowed(uuid_request,
+							 sizeof(uuid_request)));
+	assert(!t2_aks_copy_keybag_uuid_request_allowed(NULL,
+							 sizeof(uuid_request)));
 
 	length = make_request(request, 5, 0);
 	assert(length == 40);

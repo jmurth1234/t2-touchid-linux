@@ -329,6 +329,7 @@ static bool t2_aks_operation_allowed(u8 operation)
 	switch (operation) {
 	case 0x03: /* load_keybag */
 	case 0x04: /* change_lock_state */
+	case 0x06: /* read-only copy_keybag_uuid */
 	case 0x0d: /* make_system_keybag */
 	case 0x19: /* get_device_state */
 	case 0x21: /* bounded verify_secret_v1, with optional ACM context */
@@ -358,6 +359,10 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 
 	*sep_status_out = 0;
 	if (!t2_aks_operation_allowed(operation))
+		return -EACCES;
+	if (operation == 0x06 &&
+	    !t2_aks_copy_keybag_uuid_request_allowed(request_body,
+						request_body_length))
 		return -EACCES;
 	if (operation == 0x21 &&
 	    !t2_aks_verify_secret_v1_request_allowed(request_body,
@@ -516,6 +521,9 @@ out_set_length:
 	if (copy_to_user(user_argument, &exchange, sizeof(exchange)))
 		ret = -EFAULT;
 out_unlock:
+	/* The reply may contain a private keybag UUID or state dictionary. */
+	memzero_explicit(sep->ool_in, T2_SEP_OOL_SIZE);
+	memzero_explicit(sep->ool_out, T2_SEP_OOL_SIZE);
 	mutex_unlock(&sep->exchange_lock);
 out_free:
 	if (request) {
