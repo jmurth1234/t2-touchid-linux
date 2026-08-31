@@ -156,13 +156,23 @@ as success, and stop at `SEP-identity-observed`. The adapter permanently poisons
 itself after an ambiguous dispatch or receive. The adapter itself owns no
 socket, and there is no fprintd enrollment route or Catacomb mutation command.
 
-The next same-connection layer is also implemented without a live command. A
-single owner initializes and pins one Bridge socket; a private collector obtains
-both E0 snapshots without closing it; and a coordinator creates the journal,
-runs the ACM-scoped enrollment callback, and requires a typed finalizer on that
-same generation. An observed SEP identity is never reported complete unless the
-finalizer attests persistence readiness and reconciliation. Any finalizer error
-invalidates the Bridge generation while mandatory ACM deletion still runs.
+The next same-connection layer is also implemented without exposing a live
+mutation command. A single owner initializes and pins one Bridge socket; a
+private collector obtains both E0 snapshots without closing it; and a
+coordinator creates the journal, runs the ACM-scoped enrollment callback, and
+requires a typed finalizer on that same generation. An observed SEP identity is
+never reported complete unless the finalizer attests persistence readiness and
+reconciliation. Any finalizer error invalidates the Bridge generation while
+mandatory ACM deletion still runs.
+
+The complete same-socket E0 collector was exercised read-only on the target T2
+on 2026-08-31. Both private snapshots were byte-for-byte equal, protocol 2 was
+attested, one existing identity reconciled, and the connection generation was
+retained through the second collection. Live replies also established two host
+details that the implementation now preserves: these inventory commands retain
+their version-1 command wrapper under biometric protocol 2, and device maximum
+capacity (`0x0f`) cannot be combined arithmetically with configured-user free
+capacity (`0x41`). No biometric or Catacomb mutation was performed.
 
 The proven machine's copied macOS archive now passes the executable fixture
 check for the user, master, and bio-lockout components: original strict schemas,

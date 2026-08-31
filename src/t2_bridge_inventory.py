@@ -66,7 +66,9 @@ def _collect_once(
         data = uid if static_data is None else static_data
         reply, events = lease.biometric_command(
             command,
-            version=2,
+            # These inventory codecs retain command-wrapper version 1 even
+            # when command 0x51 attests biometric protocol version 2.
+            version=1,
             value=0,
             data=data,
             output_capacity=capacity,
@@ -81,7 +83,7 @@ def _collect_once(
             for _attempt in range(2):
                 retry, retry_events = lease.biometric_command(
                     command,
-                    version=2,
+                    version=1,
                     value=0,
                     data=data,
                     output_capacity=capacity,
@@ -167,7 +169,10 @@ def collect_stable_private_inventory(
             raise BridgeInventoryError("SKS state reply is invalid")
         maximum = struct.unpack("<I", maximum_output)[0]
         free = struct.unpack("<I", free_output)[0]
-        if maximum > 64 or free > maximum or len(user_records) + free != maximum:
+        # Command 0x0f is device maximum while 0x41 is scoped to the selected
+        # user/accessory group. Live hardware confirms they are bounded but do
+        # not satisfy a simple per-user used + free == device maximum equation.
+        if maximum > 64 or free > maximum or len(user_records) > maximum:
             raise BridgeInventoryError("identity capacity is inconsistent")
 
         boot_uuid = lease.peer_boot_uuid

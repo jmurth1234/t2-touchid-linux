@@ -30,7 +30,7 @@ def inventory_reply(command: int) -> list[object]:
         0x51: [0, identity + group],
         0x0F: [0, struct.pack("<I", 5)],
         0x42: [0, identity],
-        0x41: [0, struct.pack("<I", 4)],
+        0x41: [0, struct.pack("<I", 2)],
         0x38: [0, uuid.UUID(CATACOMB).bytes],
         0x3A: [0, b"\x01" + b"h" * 32],
         0x3C: [0, bytes(16)],

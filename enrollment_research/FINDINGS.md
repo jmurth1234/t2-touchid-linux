@@ -2047,6 +2047,21 @@ records, and preserve raw error codes. It has no rollback phase because every
 listed command is read-only. This is the evidence-producing precursor to a
 multi-user mapping database, not that database itself.
 
+Live target-hardware validation on 2026-08-31 completed both full private
+collections on one retained Bridge socket and one canonical connection
+generation. The snapshots were equal and reconciled one protocol-v2 identity.
+The live wire also corrected two previously unproven host assumptions:
+
+- the inventory requests use command-wrapper version 1 even after command
+  `0x51` establishes biometric protocol version 2; and
+- `0x0f` returned device maximum 5 while `0x41` returned configured-user free
+  capacity 2 with one configured-user identity, so `used + free == maximum` is
+  not a valid cross-scope invariant.
+
+The collector therefore validates each bounded count separately and uses the
+protocol-v2 record layout as the protocol attestation. This experiment was
+read-only and neither dispatched enrollment nor changed Catacomb state.
+
 ### Race-safe inventory snapshot protocol
 
 Those commands are individually read-only but are not one atomic SEP snapshot.

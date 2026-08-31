@@ -54,7 +54,7 @@ def snapshot(hash_byte: bytes = b"h") -> dict[int, list[object]]:
         0x51: [0, identity + group],
         0x0F: [0, struct.pack("<I", 5)],
         0x42: [0, identity],
-        0x41: [0, struct.pack("<I", 4)],
+        0x41: [0, struct.pack("<I", 2)],
         0x38: [0, uuid.UUID(int=45).bytes],
         0x3A: [0, b"\x01" + hash_byte * 32],
         0x3C: [0, bytes(16)],
@@ -69,12 +69,12 @@ class BridgeInventoryTests(unittest.TestCase):
         self.assertEqual(result["connection_generation"], GENERATION)
         self.assertEqual(result["bridge_boot_uuid"], BOOT)
         self.assertEqual(result["maximum_capacity"], 5)
-        self.assertEqual(result["configured_user_free_capacity"], 4)
+        self.assertEqual(result["configured_user_free_capacity"], 2)
         self.assertEqual(len(result["per_user_identity_records"]), 1)
         self.assertTrue(result["double_collection_equal"])
         self.assertFalse(lease.invalidated)
         self.assertEqual(len(lease.seen), 18)
-        self.assertTrue(all(call[1] == 2 for call in lease.seen))
+        self.assertTrue(all(call[1] == 1 for call in lease.seen))
 
     def test_changed_second_snapshot_invalidates_generation(self):
         lease = FakeLease([snapshot(), snapshot(b"x")])
