@@ -36,10 +36,12 @@ import t2_catacomb_codec
 import t2_catacomb_local
 import t2_catacomb_store
 import t2_enrollment_finalizer
+import t2_enrollment_persistence_journal
 import t2_identity_inventory
 import t2_identity_rename
 import t2_identity_rename_journal
 import t2_identity_rename_operation
+import t2_identity_rename_recovery
 import t2_identity_rename_reconciliation
 import t2_mutation_journal
 import t2_mutation_registry
@@ -328,6 +330,7 @@ def status() -> dict[str, object]:
         "rename_pending_count": pending,
         "rename_pending_phases": dict(sorted(phases.items())),
         "post_reboot_pending_count": post_reboot,
+        "rename_recovery_candidate": pending == 1 and post_reboot == 0,
         "new_mutation_blocked": any(item.blocks_new_mutation for item in entries),
         "identifiers_redacted": True,
     }
@@ -503,6 +506,154 @@ def run_post_reboot_verification(
     }
 
 
+def _recovery_component_expectations(history) -> tuple[set[str], dict[str, str]]:
+    persistence = history.persistence
+    batch_index = persistence.batch_index
+    if (
+        batch_index is None
+        or not 0 <= batch_index < len(persistence.batches)
+    ):
+        raise IdentityManagementError(
+            "interrupted rename has no journaled Catacomb batch"
+        )
+    names = {name for name, _descriptor in persistence.batches[batch_index]}
+    hashes = dict(persistence.staged_files)
+    if not names or not set(hashes) <= names:
+        raise IdentityManagementError(
+            "interrupted rename has inconsistent staged components"
+        )
+    return names, hashes
+
+
+def run_recovery(configuration: dict[str, object]) -> dict[str, object]:
+    candidates = [
+        item
+        for item in rename_journals()
+        if item[1].phase
+        in {
+            t2_identity_rename_journal.IdentityRenamePhase.INTENT,
+            t2_identity_rename_journal.IdentityRenamePhase.PERSISTING,
+            t2_identity_rename_journal.IdentityRenamePhase.PERSISTENCE_READY,
+            t2_identity_rename_journal.IdentityRenamePhase.OUTCOME_UNKNOWN,
+        }
+    ]
+    if len(candidates) != 1:
+        raise IdentityManagementError(
+            "rename recovery requires exactly one interrupted rename"
+        )
+    path, history = candidates[0]
+    if (
+        history.baseline["apple_uid"] != configuration["apple_uid"]
+        or history.baseline["mapping_generation"]
+        != configuration["mapping_generation"]
+    ):
+        raise IdentityManagementError("rename recovery belongs to another mapping")
+    keybag_runtime(configuration["special_bag"])
+    store = t2_catacomb_store.CatacombStore(
+        STORE_ROOT, configuration["apple_uid"]
+    )
+    prepare_pending = os.path.lexists(STORE_ROOT / "prepare")
+    commit_pending = os.path.lexists(STORE_ROOT / "commit")
+    if prepare_pending and commit_pending:
+        raise IdentityManagementError("both local transaction directions are present")
+    observed_action = (
+        "prepare-discarded"
+        if prepare_pending
+        else "commit-rolled-forward"
+        if commit_pending
+        else "no-local-transaction"
+    )
+    recovery_expectations = None
+    if prepare_pending or commit_pending:
+        recovery_expectations = _recovery_component_expectations(history)
+    if commit_pending:
+        expected_names, expected_hashes = recovery_expectations
+        if (
+            set(expected_hashes) != expected_names
+            or history.persistence.phase
+            is not t2_enrollment_persistence_journal.PersistencePhase.BATCH_COMMIT_INTENT
+        ):
+            raise IdentityManagementError(
+                "commit recovery lacks a complete journaled commit boundary"
+            )
+    action = history.recovery_action
+    if action is None:
+        history = t2_identity_rename_journal.append_checked(
+            path,
+            history.operation_id,
+            "RENAME_RECOVERY_INTENT",
+            {
+                "action": observed_action,
+                "mapping_generation": configuration["mapping_generation"],
+                "host_commit_possible": observed_action != "prepare-discarded",
+                "mutation_possible": True,
+            },
+        )
+        action = observed_action
+    elif (
+        observed_action != action
+        and observed_action != "no-local-transaction"
+    ):
+        raise IdentityManagementError(
+            "local transaction direction differs from its recovery journal"
+        )
+
+    if action == "prepare-discarded" and prepare_pending:
+        expected_names, expected_hashes = recovery_expectations
+        store.discard_prepare(expected_names, expected_hashes)
+    elif action == "commit-rolled-forward" and commit_pending:
+        expected_names, expected_hashes = recovery_expectations
+        if store.recover(expected_hashes) != "commit-rolled-forward":
+            raise IdentityManagementError("commit transaction did not roll forward")
+    elif action == "no-local-transaction" and (prepare_pending or commit_pending):
+        raise IdentityManagementError(
+            "journal expects no local transaction but one is present"
+        )
+
+    host = t2_enrollment_finalizer.read_local_host_snapshot(
+        store, history.baseline
+    )
+    components = store.read_committed_components()
+    local = t2_catacomb_codec.decode_user_catacomb(
+        components[f'user_{configuration["apple_uid"]:08x}.cat'],
+        configuration["apple_uid"],
+    )
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"], configuration["interface"], _port(), timeout=60
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        observed = t2_identity_rename_recovery.classify(
+            t2_identity_rename_journal.read(path),
+            local=local,
+            host=host,
+            live=live,
+            mapping_generation=configuration["mapping_generation"],
+        )
+        final = t2_identity_rename_recovery.append_reconciled(
+            path,
+            history.operation_id,
+            observed,
+            mapping_generation=configuration["mapping_generation"],
+        )
+    expected_phase = (
+        t2_identity_rename_journal.IdentityRenamePhase.RECONCILED
+        if observed.outcome == "committed"
+        else t2_identity_rename_journal.IdentityRenamePhase.ABORTED
+    )
+    if final.phase is not expected_phase:
+        raise IdentityManagementError("rename recovery did not reach a terminal state")
+    return {
+        "schema_version": 1,
+        "rename_recovery_succeeded": True,
+        "outcome": observed.outcome,
+        "identity_count": observed.identity_count,
+        "post_reboot_verification_required": observed.outcome == "committed",
+        "identifiers_redacted": True,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -519,6 +670,12 @@ def main() -> int:
     subparsers.add_parser(
         "verify-post-reboot", help="verify a reconciled rename after reboot"
     )
+    recover = subparsers.add_parser(
+        "recover", help="reconcile one interrupted rename without replay"
+    )
+    recover.add_argument(
+        "--acknowledge-interrupted-rename-recovery", action="store_true"
+    )
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("run through sudo from the mapped desktop user")
@@ -527,6 +684,10 @@ def main() -> int:
         and args.acknowledge_local_catacomb_persistence
     ):
         parser.error("both rename mutation acknowledgements are required")
+    if args.command == "recover" and not (
+        args.acknowledge_interrupted_rename_recovery
+    ):
+        parser.error("interrupted-rename recovery acknowledgement is required")
     try:
         configuration = runtime_configuration()
         _private_root_owned(STATE_ROOT, directory=True)
@@ -538,6 +699,9 @@ def main() -> int:
                 result = status()
             elif args.command == "verify-post-reboot":
                 result = run_post_reboot_verification(configuration)
+            elif args.command == "recover":
+                with sleep_inhibitor():
+                    result = run_recovery(configuration)
             else:
                 with sleep_inhibitor():
                     result = run_rename(
@@ -560,6 +724,7 @@ def main() -> int:
         t2_identity_rename.IdentityRenameError,
         t2_identity_rename_journal.IdentityRenameJournalError,
         t2_identity_rename_operation.IdentityRenameOperationError,
+        t2_identity_rename_recovery.IdentityRenameRecoveryError,
         t2_identity_rename_reconciliation.IdentityRenameReconciliationError,
         t2_mutation_journal.JournalError,
         t2_mutation_registry.MutationRegistryError,

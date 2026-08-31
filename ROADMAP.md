@@ -63,6 +63,16 @@ evidence, not intent.
       with `workflow` scope).
 - [x] Produce an experimental `v0.1.0` release checklist.
 
+## 9. Linux identity management
+
+- [x] List truthful reconciled labels without exposing biometric identifiers.
+- [x] Resolve ephemeral management slots only against a fresh stable inventory.
+- [x] Journal and persist a label-only rename with independent read-back.
+- [x] Recover interrupted rename transactions without replaying SEP mutation.
+- [x] Require a different boot and Bridge generation before closing a rename.
+- [ ] Implement reconciled single-identity deletion.
+- [ ] Implement Linux-native enrollment/unenrollment policy for multiple users.
+
 ## Hardware/root-only gates
 
 These require an interactive user or a reboot and cannot be inferred from unit

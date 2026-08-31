@@ -177,6 +177,96 @@ class IdentityRenameJournalTests(unittest.TestCase):
                 },
             )
 
+    def test_recovery_intent_can_close_as_committed_or_no_change(self):
+        for committed, action in (
+            (False, "prepare-discarded"),
+            (True, "no-local-transaction"),
+        ):
+            with self.subTest(committed=committed), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "rename.jsonl"
+                operation_id, _record = mutation.create(path, "rename", self.value)
+                rename_journal.append_checked(
+                    path, operation_id, "RENAME_INTENT", self.intent
+                )
+                history = rename_journal.append_checked(
+                    path,
+                    operation_id,
+                    "RENAME_RECOVERY_INTENT",
+                    {
+                        "action": action,
+                        "mapping_generation": self.value["mapping_generation"],
+                        "host_commit_possible": action != "prepare-discarded",
+                        "mutation_possible": True,
+                    },
+                )
+                self.assertEqual(
+                    history.phase, rename_journal.IdentityRenamePhase.OUTCOME_UNKNOWN
+                )
+                milestone = (
+                    "RENAME_RECOVERY_RECONCILED_COMMITTED"
+                    if committed
+                    else "RENAME_RECOVERY_RECONCILED_NO_CHANGE"
+                )
+                history = rename_journal.append_checked(
+                    path,
+                    operation_id,
+                    milestone,
+                    {
+                        "connection_generation": str(uuid.UUID(int=7001)),
+                        "identity_uuid": self.target["uuid"],
+                        "name_sha256": (
+                            self.intent["new_name_sha256"]
+                            if committed
+                            else self.intent["previous_name_sha256"]
+                        ),
+                        "snapshot_sha256": "8" * 64,
+                        "mapping_generation": self.value["mapping_generation"],
+                        "identity_count": len(self.value["identity_records"]),
+                        "identity_set_unchanged": True,
+                        "local_live_equal": True,
+                        "sep_clean": True,
+                        "host_reconciled": True,
+                        "recovery_action": action,
+                    },
+                )
+                self.assertEqual(
+                    history.phase,
+                    rename_journal.IdentityRenamePhase.RECONCILED
+                    if committed
+                    else rename_journal.IdentityRenamePhase.ABORTED,
+                )
+
+    def test_roll_forward_cannot_be_claimed_as_no_change(self):
+        self.append("RENAME_INTENT", self.intent)
+        self.append(
+            "RENAME_RECOVERY_INTENT",
+            {
+                "action": "commit-rolled-forward",
+                "mapping_generation": self.value["mapping_generation"],
+                "host_commit_possible": True,
+                "mutation_possible": True,
+            },
+        )
+        with self.assertRaisesRegex(
+            rename_journal.IdentityRenameJournalError, "cannot reconcile"
+        ):
+            self.append(
+                "RENAME_RECOVERY_RECONCILED_NO_CHANGE",
+                {
+                    "connection_generation": str(uuid.UUID(int=7002)),
+                    "identity_uuid": self.target["uuid"],
+                    "name_sha256": self.intent["previous_name_sha256"],
+                    "snapshot_sha256": "8" * 64,
+                    "mapping_generation": self.value["mapping_generation"],
+                    "identity_count": len(self.value["identity_records"]),
+                    "identity_set_unchanged": True,
+                    "local_live_equal": True,
+                    "sep_clean": True,
+                    "host_reconciled": True,
+                    "recovery_action": "commit-rolled-forward",
+                },
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

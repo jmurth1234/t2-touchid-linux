@@ -236,7 +236,46 @@ double-read, and requires exact equality between the local, configured-user,
 and global built-in identity sets. It prints only current-list slot numbers and
 labels; UUIDs, entities, Catacomb identifiers, and biometric data remain
 redacted. A slot number is valid only for that reconciled invocation and is the
-intended future selector for rename and single-print deletion.
+selector used by identity management commands.
+
+Rename one current identity label (this does not alter its fingerprint
+template or fprintd's compatibility-slot name):
+
+```sh
+sudo t2-touchid-manage status
+sudo t2-touchid-identities
+sudo t2-touchid-manage rename \
+  --slot 2 \
+  --name "New label" \
+  --acknowledge-identity-label-mutation \
+  --acknowledge-local-catacomb-persistence
+```
+
+The broker resolves the slot only against a fresh reconciled list, holds the
+global operation lock and a verified sleep inhibitor, writes durable intent
+before dispatch, persists exactly the selected user's Catacomb, and performs
+same-connection independent read-back. A successful rename remains the only
+blocking mutation until it survives a different Linux boot and Bridge
+connection:
+
+```sh
+sudo t2-touchid-manage verify-post-reboot
+```
+
+If the process or machine stops during persistence, do not replay the rename.
+The recovery command follows only the already-journaled direction: discard a
+validated pre-commit `prepare/`, roll a complete post-boundary `commit/`
+forward, or inspect the clean committed root. It then uses a fresh stable SEP
+inventory to close the operation only as provably unchanged or provably
+committed:
+
+```sh
+sudo t2-touchid-manage recover \
+  --acknowledge-interrupted-rename-recovery
+```
+
+Any third or ambiguous state remains blocked. Single-identity deletion and
+Linux-native enrollment management are not exposed by this command yet.
 
 This read-only command performs two exact back-to-back collections and fails if
 the private global/per-user identity records, capacity replies, Catacomb

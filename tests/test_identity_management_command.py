@@ -116,6 +116,25 @@ class IdentityManagementCommandTests(unittest.TestCase):
             ):
                 MODULE.run_post_reboot_verification({})
 
+    def test_recovery_requires_exactly_one_candidate(self):
+        with mock.patch.object(MODULE, "rename_journals", return_value=[]):
+            with self.assertRaisesRegex(
+                MODULE.IdentityManagementError, "exactly one"
+            ):
+                MODULE.run_recovery({})
+
+    def test_recovery_component_expectations_are_journal_bound(self):
+        history = SimpleNamespace(
+            persistence=SimpleNamespace(
+                batch_index=0,
+                batches=((('user_000001f5.cat', 'd' * 64),),),
+                staged_files=(("user_000001f5.cat", "e" * 64),),
+            )
+        )
+        names, hashes = MODULE._recovery_component_expectations(history)
+        self.assertEqual(names, {"user_000001f5.cat"})
+        self.assertEqual(hashes, {"user_000001f5.cat": "e" * 64})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,6 +38,7 @@ class IdentityRenameHistory:
     new_name_sha256: str | None
     persistence: persistence_journal.PersistenceHistory
     reconciled_snapshot_sha256: str | None
+    recovery_action: str | None
     record_count: int
     head_hash: str
 
@@ -86,6 +87,7 @@ def validate_history(records: list[dict[str, Any]]) -> IdentityRenameHistory:
     old_name_hash: str | None = None
     new_name_hash: str | None = None
     reconciled_hash: str | None = None
+    recovery_action: str | None = None
     persistence = persistence_journal.PersistenceTracker(
         baseline, plan_kind="identity-metadata"
     )
@@ -213,6 +215,106 @@ def validate_history(records: list[dict[str, Any]]) -> IdentityRenameHistory:
             phase = IdentityRenamePhase.RECONCILED
             continue
 
+        if milestone == "RENAME_RECOVERY_INTENT":
+            if phase not in {
+                IdentityRenamePhase.INTENT,
+                IdentityRenamePhase.PERSISTING,
+                IdentityRenamePhase.PERSISTENCE_READY,
+                IdentityRenamePhase.OUTCOME_UNKNOWN,
+            } or recovery_action is not None:
+                raise IdentityRenameJournalError("rename recovery intent is out of order")
+            evidence = _exact(
+                evidence,
+                {
+                    "action",
+                    "mapping_generation",
+                    "host_commit_possible",
+                    "mutation_possible",
+                },
+                milestone,
+            )
+            action = evidence["action"]
+            if action not in {
+                "prepare-discarded",
+                "commit-rolled-forward",
+                "no-local-transaction",
+            }:
+                raise IdentityRenameJournalError("rename recovery action is invalid")
+            _sha256(evidence["mapping_generation"], "mapping generation")
+            if (
+                evidence["mapping_generation"] != baseline["mapping_generation"]
+                or evidence["mutation_possible"] is not True
+                or evidence["host_commit_possible"]
+                != (action != "prepare-discarded")
+            ):
+                raise IdentityRenameJournalError("rename recovery binding is invalid")
+            recovery_action = action
+            phase = IdentityRenamePhase.OUTCOME_UNKNOWN
+            continue
+
+        if milestone in {
+            "RENAME_RECOVERY_RECONCILED_NO_CHANGE",
+            "RENAME_RECOVERY_RECONCILED_COMMITTED",
+        }:
+            if (
+                phase is not IdentityRenamePhase.OUTCOME_UNKNOWN
+                or recovery_action is None
+                or target_uuid is None
+            ):
+                raise IdentityRenameJournalError(
+                    "rename recovery reconciliation is out of order"
+                )
+            evidence = _exact(
+                evidence,
+                {
+                    "connection_generation",
+                    "identity_uuid",
+                    "name_sha256",
+                    "snapshot_sha256",
+                    "mapping_generation",
+                    "identity_count",
+                    "identity_set_unchanged",
+                    "local_live_equal",
+                    "sep_clean",
+                    "host_reconciled",
+                    "recovery_action",
+                },
+                milestone,
+            )
+            for field in ("connection_generation", "identity_uuid"):
+                _uuid(evidence[field], field)
+            for field in ("name_sha256", "snapshot_sha256", "mapping_generation"):
+                _sha256(evidence[field], field)
+            committed = milestone.endswith("COMMITTED")
+            expected_name = new_name_hash if committed else old_name_hash
+            if (
+                evidence["connection_generation"]
+                == baseline["connection_generation"]
+                or evidence["identity_uuid"] != target_uuid
+                or evidence["name_sha256"] != expected_name
+                or evidence["mapping_generation"] != baseline["mapping_generation"]
+                or evidence["identity_count"] != len(baseline["identity_records"])
+                or evidence["identity_set_unchanged"] is not True
+                or evidence["local_live_equal"] is not True
+                or evidence["sep_clean"] is not True
+                or evidence["host_reconciled"] is not True
+                or evidence["recovery_action"] != recovery_action
+            ):
+                raise IdentityRenameJournalError(
+                    "rename recovery reconciliation is invalid"
+                )
+            if not committed and recovery_action == "commit-rolled-forward":
+                raise IdentityRenameJournalError(
+                    "rolled-forward rename cannot reconcile as unchanged"
+                )
+            reconciled_hash = evidence["snapshot_sha256"]
+            phase = (
+                IdentityRenamePhase.RECONCILED
+                if committed
+                else IdentityRenamePhase.ABORTED
+            )
+            continue
+
         if milestone == "RENAME_POST_REBOOT_VERIFIED":
             if phase is not IdentityRenamePhase.RECONCILED:
                 raise IdentityRenameJournalError("rename post-reboot proof is out of order")
@@ -264,6 +366,7 @@ def validate_history(records: list[dict[str, Any]]) -> IdentityRenameHistory:
         new_name_hash,
         persistence.snapshot(),
         reconciled_hash,
+        recovery_action,
         len(records),
         head_hash,
     )

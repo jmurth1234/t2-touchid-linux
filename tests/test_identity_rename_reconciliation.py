@@ -14,6 +14,7 @@ import t2_catacomb_codec as codec
 import t2_catacomb_protocol
 import t2_identity_rename as rename
 import t2_identity_rename_journal as journal
+import t2_identity_rename_recovery as recovery
 import t2_identity_rename_reconciliation as reconciliation
 import t2_mutation_journal as mutation
 from tests.test_catacomb_codec import fixture
@@ -277,6 +278,86 @@ class IdentityRenameReconciliationTests(unittest.TestCase):
                 linux_boot_uuid=str(uuid.UUID(int=8002)),
                 mapping_generation=self.value["mapping_generation"],
             )
+
+    def test_interrupted_rename_recovery_classifies_committed_state(self):
+        history = journal.append_checked(
+            self.path,
+            self.operation_id,
+            "RENAME_RECOVERY_INTENT",
+            {
+                "action": "no-local-transaction",
+                "mapping_generation": self.value["mapping_generation"],
+                "host_commit_possible": True,
+                "mutation_possible": True,
+            },
+        )
+        live = copy.deepcopy(self.live)
+        live["connection_generation"] = str(uuid.UUID(int=8101))
+        observed = recovery.classify(
+            history,
+            local=self.after,
+            host=self.host,
+            live=live,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(observed.outcome, "committed")
+        final = recovery.append_reconciled(
+            self.path,
+            self.operation_id,
+            observed,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(final.phase, journal.IdentityRenamePhase.RECONCILED)
+
+    def test_interrupted_rename_recovery_classifies_strict_no_change(self):
+        history = journal.append_checked(
+            self.path,
+            self.operation_id,
+            "RENAME_RECOVERY_INTENT",
+            {
+                "action": "prepare-discarded",
+                "mapping_generation": self.value["mapping_generation"],
+                "host_commit_possible": False,
+                "mutation_possible": True,
+            },
+        )
+        host = {
+            "account_uuid": self.value["account_uuid"],
+            "bag_uuid": self.value["bag_uuid"],
+            "identity_records": copy.deepcopy(self.value["identity_records"]),
+            "master_enrollment_count": self.value["master_enrollment_count"],
+            "host_components": copy.deepcopy(self.value["host_components"]),
+        }
+        live = live_for(self.before)
+        live.update(
+            {
+                "connection_generation": str(uuid.UUID(int=8102)),
+                "catacomb": {
+                    "present": True,
+                    "uuid": self.value["sep_catacomb"]["uuid"],
+                    "hash": self.value["sep_catacomb"]["hash"],
+                    "user_states": [
+                        {"kind": "master", "user_id": None, "needs_save": False},
+                        {"kind": "user", "user_id": 501, "needs_save": False},
+                    ],
+                },
+            }
+        )
+        observed = recovery.classify(
+            history,
+            local=self.before,
+            host=host,
+            live=live,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(observed.outcome, "no-change")
+        final = recovery.append_reconciled(
+            self.path,
+            self.operation_id,
+            observed,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(final.phase, journal.IdentityRenamePhase.ABORTED)
 
 
 if __name__ == "__main__":
