@@ -49,6 +49,12 @@ enrollment/export cycle.
 - **Static-confirmed:** `enrollContinue` sends biometric command `0x0e` with no
   input payload. See `biometrickitd.bridge-disasm.txt` around virtual address
   `0x100031cad`.
+- **Static-confirmed:** exact 24G830 `BKEnrollOperation` invokes
+  `-[BiometricKitXPCClient enrollContinue]` for progress and status 70, then
+  discards its integer return. The client method waits for a well-formed XPC
+  reply and returns the remote status, but that number is not an enrollment
+  acceptance boundary. Service callbacks can be delivered while the matching
+  reply is pending and remain authoritative protocol input.
 - **Static-confirmed:** bridge messages include an enrollment-node-v2 event
   (`message_enroll_node_v2_t`) and enrollment info v2. Enrollment is therefore
   asynchronous and multi-touch; a single request/reply is insufficient.
@@ -730,6 +736,13 @@ wire record lacks an explicit monotonic sequence number. It may serialize one
 interactive enrollment at a time and remember accepted envelope/ordinal/raw-
 payload hashes for that operation; ambiguity freezes the operation rather than
 guessing whether SEP is waiting for another `0x0e`.
+
+For `0x0e`, “observed” means that the exact matching Bridge reply was received,
+its framing and empty-output contract validated, and any interleaved service
+events validated and queued. The numeric continue return is journaled but is
+explicitly non-authoritative, matching exact 24G830 host behavior. This exception
+does not weaken start, cancel, persistence, connection-generation, or malformed-
+event handling.
 
 The 100..355 range is a 256-node Apple progress space, not automatically
 fprintd's declared stage count. An adapter must choose and publish a stable
@@ -5446,6 +5459,18 @@ validated no-op ranges are `0..50`, `52..57`, `59`, `69`, `71..73`, `75..77`,
 `79`, `81..84`, `89..92`, `94..97`, `356..500`, and
 `503..UINT32_MAX`. The executable reducer tests those ranges and keeps the nine
 uninterpreted generic state transitions fail-closed.
+
+The next approved attempt crossed those phase boundaries and produced a valid
+23% progress event. Linux dispatched the required `0x0e`, then stopped because
+the matching command reply carried a nonzero return while also delivering
+service events before that reply. Fresh stable reconciliation proved no SEP
+identity or Catacomb delta. Exact 24G830 disassembly closes the semantic gap:
+`BKEnrollOperation` calls `enrollContinue` for both progress and status 70 and
+does not inspect its return value, while `BiometricKitXPCClient` waits for the
+reply and exposes that integer. Linux now validates the matching reply and
+queues every structurally valid interleaved event, journals the bounded return
+as non-authoritative, and continues consuming the event stream. Malformed
+replies/events and connection-generation changes still poison the operation.
 
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.

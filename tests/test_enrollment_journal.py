@@ -90,7 +90,11 @@ class EnrollmentJournalTests(unittest.TestCase):
                 path,
                 operation_id,
                 "ENROLL_CONTINUE_OBSERVED",
-                {"event_sequence": 10, "status": 0},
+                {
+                    "event_sequence": 10,
+                    "status": -1,
+                    "return_status_authoritative": False,
+                },
             )
             result = enrollment.append_checked(
                 path,
@@ -107,6 +111,60 @@ class EnrollmentJournalTests(unittest.TestCase):
             )
             self.assertEqual(result.phase, enrollment.EnrollmentPhase.TERMINAL_IDENTITY)
             self.assertEqual(result.last_event_sequence, 11)
+
+    def test_legacy_zero_continue_observation_remains_readable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create(directory)
+            self.start(path, operation_id)
+            value = baseline()
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "ENROLL_CONTINUE_INTENT",
+                {
+                    "connection_generation": value["connection_generation"],
+                    "event_sequence": 10,
+                    "event_ordinal": 100,
+                    "event_sha256": "b" * 64,
+                },
+            )
+            history = enrollment.append_checked(
+                path,
+                operation_id,
+                "ENROLL_CONTINUE_OBSERVED",
+                {"event_sequence": 10, "status": 0},
+            )
+            self.assertEqual(history.phase, enrollment.EnrollmentPhase.ACTIVE)
+
+    def test_continue_return_cannot_be_marked_authoritative(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create(directory)
+            self.start(path, operation_id)
+            value = baseline()
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "ENROLL_CONTINUE_INTENT",
+                {
+                    "connection_generation": value["connection_generation"],
+                    "event_sequence": 10,
+                    "event_ordinal": 100,
+                    "event_sha256": "b" * 64,
+                },
+            )
+            with self.assertRaisesRegex(
+                enrollment.EnrollmentJournalError, "authoritative"
+            ):
+                enrollment.append_checked(
+                    path,
+                    operation_id,
+                    "ENROLL_CONTINUE_OBSERVED",
+                    {
+                        "event_sequence": 10,
+                        "status": -1,
+                        "return_status_authoritative": True,
+                    },
+                )
 
     def test_cancel_is_intent_dispatch_then_terminal_handshake(self):
         with tempfile.TemporaryDirectory() as directory:

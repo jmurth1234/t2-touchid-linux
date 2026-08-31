@@ -243,17 +243,18 @@ class EnrollmentOperation:
                         )
                     except BaseException as error:
                         self._outcome_unknown("continue", "transport-error", error)
-                    if continue_status != 0:
-                        self._outcome_unknown(
-                            "continue",
-                            "transport-error",
-                            EnrollmentOperationError(
-                                f"continue returned status {continue_status}"
-                            ),
-                        )
+                    # Exact 24G830 BKEnrollOperation deliberately discards the
+                    # return from -enrollContinue. A well-formed matching
+                    # Bridge reply closes the dispatch boundary; service events
+                    # carried before that reply are the authoritative protocol
+                    # input and have already been queued by the transport.
                     self._append_during_active_operation(
                         "ENROLL_CONTINUE_OBSERVED",
-                        {"event_sequence": event.sequence, "status": 0},
+                        {
+                            "event_sequence": event.sequence,
+                            "status": continue_status,
+                            "return_status_authoritative": False,
+                        },
                         stage="continue",
                     )
                     continue

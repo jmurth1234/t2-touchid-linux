@@ -384,6 +384,17 @@ recovered, so they remain fail-closed. Accessory authorization status `501`
 also remains on its separately blocked path. This exhaustive boundary removes
 the need for another live attempt merely to classify a harmless phase ordinal.
 
+The following approved attempt reached a genuine 23% progress event and sent
+the required `0x0e` continue. It stopped because that command returned a
+nonzero integer while service events were delivered before its matching reply;
+stable reconciliation again proved no persistent delta. Exact 24G830
+`BKEnrollOperation` deliberately discards the return from
+`-[BiometricKitXPCClient enrollContinue]`. The reducer therefore treats a
+well-formed matching reply as the dispatch boundary, queues its interleaved
+validated service events, journals the numeric return as non-authoritative, and
+continues. Start, cancel, persistence, malformed-event, and connection-
+generation checks remain fail-closed.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,

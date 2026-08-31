@@ -105,13 +105,23 @@ class EnrollmentBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(bridge.EnrollmentBridgeError, "out of order"):
             transport.start(start_payload())
 
-    def test_nonzero_continue_poisons_active_operation(self):
+    def test_nonzero_continue_return_is_non_authoritative(self):
         lease = FakeLease()
         lease.results = [([0, None], []), ([-1, None], [])]
         transport = self.make(lease)
         transport.start(start_payload())
         self.assertEqual(transport.continue_enrollment(), -1)
-        self.assertEqual(transport.state, bridge.EnrollmentBridgeState.POISONED)
+        self.assertEqual(transport.state, bridge.EnrollmentBridgeState.ACTIVE)
+
+    def test_nonzero_continue_queues_valid_service_events(self):
+        lease = FakeLease()
+        progress = event(2, 159)
+        lease.results = [([0, None], []), ([-1, None], [progress])]
+        transport = self.make(lease)
+        transport.start(start_payload())
+        self.assertEqual(transport.continue_enrollment(), -1)
+        self.assertEqual(transport.state, bridge.EnrollmentBridgeState.ACTIVE)
+        self.assertEqual(transport.next_event(), progress[2])
 
     def test_constructor_rejects_stale_or_noncanonical_generation(self):
         lease = FakeLease()
@@ -236,7 +246,7 @@ class EnrollmentBridgeTests(unittest.TestCase):
             None,
             None,
         ]
-        lease.results = [([0, None], [progress]), ([0, None], [result])]
+        lease.results = [([0, None], [progress]), ([-1, None], [result])]
         transport = self.make(lease)
         value = baseline()
         value["connection_generation"] = GENERATION

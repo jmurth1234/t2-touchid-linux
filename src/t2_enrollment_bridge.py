@@ -129,6 +129,7 @@ class EnrollmentBridgeTransport:
         data: bytes | memoryview,
         *,
         poison_nonzero: bool,
+        status_authoritative: bool = True,
     ) -> int:
         try:
             self._check_generation()
@@ -168,12 +169,12 @@ class EnrollmentBridgeTransport:
             if type(events) is not list:
                 raise EnrollmentBridgeError("Bridge command events are malformed")
             staged_events = [self._event_data(event) for event in events]
-            if status != 0 and staged_events:
+            if status_authoritative and status != 0 and staged_events:
                 raise EnrollmentBridgeError(
                     "rejected enrollment command also emitted service events"
                 )
             self._events.extend(staged_events)
-            if status != 0 and poison_nonzero:
+            if status_authoritative and status != 0 and poison_nonzero:
                 self._poison()
             return status
         except BaseException as error:
@@ -210,7 +211,8 @@ class EnrollmentBridgeTransport:
         return self._dispatch(
             protocol.COMMAND_ENROLL_CONTINUE,
             protocol.build_continue_payload(),
-            poison_nonzero=True,
+            poison_nonzero=False,
+            status_authoritative=False,
         )
 
     def cancel(self) -> int:

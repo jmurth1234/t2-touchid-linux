@@ -128,7 +128,10 @@ command output. Zero-capacity commands accept the equivalent Bridge encodings
 `[status]`, `[status, null]`, `[status, empty-data]`, and the one exact fixed
 `bkremoted` nil-output placeholder; every other string and any nonempty data are
 still rejected. A generation change, malformed reply/event, disconnect, or
-nonzero active-operation reply permanently poisons the adapter. It composes
+nonzero authoritative start/cancel reply permanently poisons or rejects the
+operation. Exact 24G830 discards the numeric `enrollContinue` return, so a
+well-formed matching continue reply queues its interleaved service events and
+journals that return as non-authoritative. It composes
 with the journaled enrollment core in tests, but no live lease, baseline-to-
 authorization coordinator, or enrollment CLI is exposed.
 

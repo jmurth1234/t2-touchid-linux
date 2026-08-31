@@ -23,11 +23,18 @@ def raw_event(sequence: int, envelope: int, version: int, ordinal: int, payload:
 
 
 class FakeTransport:
-    def __init__(self, events: list[bytes], *, start_status: int = 0) -> None:
+    def __init__(
+        self,
+        events: list[bytes],
+        *,
+        start_status: int = 0,
+        continue_status: int = 0,
+    ) -> None:
         self.connection_generation = baseline()["connection_generation"]
         self.protocol_version = 2
         self.events = iter(events)
         self.start_status = start_status
+        self.continue_status = continue_status
         self.start_view: memoryview | None = None
         self.start_calls = 0
         self.continue_calls = 0
@@ -40,7 +47,7 @@ class FakeTransport:
 
     def continue_enrollment(self) -> int:
         self.continue_calls += 1
-        return 0
+        return self.continue_status
 
     def cancel(self) -> int:
         self.cancel_calls += 1
@@ -145,6 +152,37 @@ class EnrollmentOperationTests(unittest.TestCase):
         self.assertEqual(result.outcome, "start-rejected")
         self.assertEqual(records[1]["evidence"]["request_sha256"], digest)
         self.assertNotIn(secret.hex(), journal_text)
+
+    def test_nonzero_continue_return_does_not_override_service_events(self):
+        identity_uuid = uuid.UUID(int=8).bytes
+        result_payload = (501).to_bytes(4, "little") + identity_uuid + bytes(20)
+        transport = FakeTransport(
+            [
+                raw_event(1, protocol.SERVICE_STATUS, 2, 159),
+                raw_event(
+                    2,
+                    protocol.SERVICE_ENROLLMENT_RESULT,
+                    2,
+                    0,
+                    result_payload,
+                ),
+            ],
+            continue_status=-1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            instance, path, _operation_id = self.create(directory, transport)
+            result = instance.run(bytes(range(16)))
+            records = journal.read(path)
+        self.assertEqual(result.outcome, "identity-observed")
+        observation = next(
+            record
+            for record in records
+            if record["milestone"] == "ENROLL_CONTINUE_OBSERVED"
+        )
+        self.assertEqual(observation["evidence"]["status"], -1)
+        self.assertIs(
+            observation["evidence"]["return_status_authoritative"], False
+        )
 
     def test_failed_dispatch_guard_aborts_durably_before_transport_use(self):
         transport = FakeTransport([])

@@ -223,12 +223,37 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
         if milestone == "ENROLL_CONTINUE_OBSERVED":
             if phase is not EnrollmentPhase.CONTINUE_INTENT:
                 raise EnrollmentJournalError("enrollment continue observation is out of order")
-            evidence = _exact(evidence, {"event_sequence", "status"}, milestone)
-            if (
-                _uint(evidence["event_sequence"], "event sequence") != pending_event
-                or _status(evidence["status"], "continue status") != 0
-            ):
+            if isinstance(evidence, dict) and set(evidence) == {
+                "event_sequence",
+                "status",
+            }:
+                # Compatibility with journals written before exact 24G830
+                # return-value handling was recovered.
+                legacy = True
+            else:
+                evidence = _exact(
+                    evidence,
+                    {
+                        "event_sequence",
+                        "status",
+                        "return_status_authoritative",
+                    },
+                    milestone,
+                )
+                legacy = False
+            sequence = _uint(evidence["event_sequence"], "event sequence")
+            status = _status(evidence["status"], "continue status")
+            if sequence != pending_event:
                 raise EnrollmentJournalError("continue observation disagrees with its intent")
+            if legacy:
+                if status != 0:
+                    raise EnrollmentJournalError(
+                        "legacy continue observation has nonzero status"
+                    )
+            elif evidence["return_status_authoritative"] is not False:
+                raise EnrollmentJournalError(
+                    "continue return status was incorrectly treated as authoritative"
+                )
             last_event = pending_event
             pending_event = None
             phase = EnrollmentPhase.ACTIVE
