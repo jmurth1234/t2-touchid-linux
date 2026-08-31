@@ -182,6 +182,95 @@ class IdentityDeleteReconciliationTests(unittest.TestCase):
         with self.assertRaisesRegex(reconciliation.IdentityDeleteReconciliationError, "not clean"):
             self.classify(live=live)
 
+    def reconciled_history(self):
+        result = self.classify()
+        self.append(
+            "CATACOMB_PERSISTENCE_ATTESTED",
+            {
+                "connection_generation": self.value["connection_generation"],
+                "batch_count": 1,
+                "reconciliation_snapshot_sha256": result.snapshot_sha256,
+                "sep_host_generation_equal": True,
+                "independent_archive_readback": True,
+            },
+        )
+        return self.append(
+            "DELETE_RECONCILED",
+            {
+                "connection_generation": self.value["connection_generation"],
+                "identity_uuid": self.plan.identity_uuid,
+                "survivor_snapshot_sha256": self.plan.survivor_snapshot_sha256,
+                "snapshot_sha256": result.snapshot_sha256,
+                "mapping_generation": self.value["mapping_generation"],
+                "identity_count": 1,
+                "target_absent": True,
+                "local_live_equal": True,
+                "host_reconciled": True,
+                "sep_clean": True,
+            },
+        )
+
+    def test_post_reboot_verifier_proves_persistent_absence(self):
+        history = self.reconciled_history()
+        live = copy.deepcopy(self.live)
+        live["connection_generation"] = str(uuid.UUID(int=9101))
+        boot_id = str(uuid.UUID(int=9102))
+        result = reconciliation.verify_post_reboot(
+            history,
+            local=self.after,
+            host=self.host,
+            live=live,
+            linux_boot_uuid=boot_id,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(result.identity_count, 1)
+        final = reconciliation.append_post_reboot_verified(
+            self.path,
+            self.operation_id,
+            local=self.after,
+            host=self.host,
+            live=live,
+            linux_boot_uuid=boot_id,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(
+            final.phase, journal.IdentityDeletePhase.POST_REBOOT_VERIFIED
+        )
+
+    def test_post_reboot_verifier_rejects_same_boot(self):
+        history = self.reconciled_history()
+        live = copy.deepcopy(self.live)
+        live["connection_generation"] = str(uuid.UUID(int=9103))
+        with self.assertRaisesRegex(
+            reconciliation.IdentityDeleteReconciliationError, "did not advance"
+        ):
+            reconciliation.verify_post_reboot(
+                history,
+                local=self.after,
+                host=self.host,
+                live=live,
+                linux_boot_uuid=self.value["linux_boot_uuid"],
+                mapping_generation=self.value["mapping_generation"],
+            )
+
+    def test_post_reboot_verifier_rejects_malformed_host_inventory(self):
+        history = self.reconciled_history()
+        live = copy.deepcopy(self.live)
+        live["connection_generation"] = str(uuid.UUID(int=9104))
+        host = copy.deepcopy(self.host)
+        host["identity_records"][0]["unexpected"] = True
+        with self.assertRaisesRegex(
+            reconciliation.IdentityDeleteReconciliationError, "malformed"
+        ):
+            reconciliation.verify_post_reboot(
+                history,
+                local=self.after,
+                host=host,
+                live=live,
+                linux_boot_uuid=str(uuid.UUID(int=9105)),
+                mapping_generation=self.value["mapping_generation"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

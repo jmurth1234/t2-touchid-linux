@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import t2_catacomb_codec
@@ -23,6 +24,12 @@ class IdentityDeleteReconciliationError(ValueError):
 class IdentityDeleteReconciliation:
     connection_generation: str
     snapshot_sha256: str
+    identity_count: int
+
+
+@dataclass(frozen=True)
+class IdentityDeletePostRebootVerification:
+    connection_generation: str
     identity_count: int
 
 
@@ -202,4 +209,186 @@ def classify(
         live["connection_generation"],
         hashlib.sha256(t2_mutation_journal.canonical(snapshot)).hexdigest(),
         public["identity_count"],
+    )
+
+
+def verify_post_reboot(
+    history: delete_journal.IdentityDeleteHistory,
+    *,
+    local: t2_catacomb_codec.UserCatacomb,
+    host: dict[str, Any],
+    live: dict[str, Any],
+    linux_boot_uuid: str,
+    mapping_generation: str,
+) -> IdentityDeletePostRebootVerification:
+    if (
+        not isinstance(history, delete_journal.IdentityDeleteHistory)
+        or history.phase is not delete_journal.IdentityDeletePhase.RECONCILED
+        or history.target_identity_uuid is None
+        or history.survivor_snapshot_sha256 is None
+        or history.reconciled_snapshot_sha256 is None
+    ):
+        raise IdentityDeleteReconciliationError(
+            "delete journal is not awaiting post-reboot verification"
+        )
+    baseline = history.baseline
+    try:
+        t2_mutation_journal.require_uuid(linux_boot_uuid, "Linux boot UUID")
+    except t2_mutation_journal.JournalError as error:
+        raise IdentityDeleteReconciliationError(str(error)) from error
+    if (
+        linux_boot_uuid == baseline["linux_boot_uuid"]
+        or live.get("connection_generation") == baseline["connection_generation"]
+        or mapping_generation != baseline["mapping_generation"]
+        or local.expected_user_id != baseline["apple_uid"]
+    ):
+        raise IdentityDeleteReconciliationError(
+            "delete post-reboot binding did not advance safely"
+        )
+    try:
+        public = t2_identity_inventory.summarize(local, live)
+    except t2_identity_inventory.IdentityInventoryError as error:
+        raise IdentityDeleteReconciliationError(
+            "deleted local and live identities do not reconcile after reboot"
+        ) from error
+    expected_pairs = {
+        (record["user_id"], record["uuid"], record["entity"])
+        for record in baseline["identity_records"]
+        if record["uuid"] != history.target_identity_uuid
+    }
+    local_pairs = {
+        (identity.user_id, identity.uuid, identity.entity)
+        for identity in local.identities
+    }
+    if (
+        local_pairs != expected_pairs
+        or history.target_identity_uuid
+        in {identity.uuid for identity in local.identities}
+        or t2_identity_delete.survivor_snapshot_sha256(local.identities)
+        != history.survivor_snapshot_sha256
+    ):
+        raise IdentityDeleteReconciliationError(
+            "deletion survivor set changed after reboot"
+        )
+    if (
+        host.get("account_uuid") != baseline["account_uuid"]
+        or host.get("bag_uuid") != baseline["bag_uuid"]
+        or host.get("master_enrollment_count")
+        != baseline["master_enrollment_count"]
+    ):
+        raise IdentityDeleteReconciliationError(
+            "delete binding changed after reboot"
+        )
+    host_records = host.get("identity_records")
+    if not isinstance(host_records, list) or any(
+        not isinstance(record, dict)
+        or set(record) != {"user_id", "uuid", "entity"}
+        for record in host_records
+    ):
+        raise IdentityDeleteReconciliationError(
+            "host identity inventory is malformed after reboot"
+        )
+    host_pairs = {
+        (record["user_id"], record["uuid"], record["entity"])
+        for record in host_records
+    }
+    if host_pairs != expected_pairs:
+        raise IdentityDeleteReconciliationError(
+            "host survivor set changed after reboot"
+        )
+    before = _component_map(baseline["host_components"])
+    after = _component_map(host.get("host_components"))
+    if set(before) != set(after):
+        raise IdentityDeleteReconciliationError(
+            "delete component set changed after reboot"
+        )
+    user_name = f'user_{baseline["apple_uid"]:08x}.cat'
+    staged = dict(history.persistence.staged_files)
+    if set(staged) != {user_name}:
+        raise IdentityDeleteReconciliationError(
+            "delete journal has no unique committed user component"
+        )
+    for name in before:
+        if any(before[name][field] != after[name][field] for field in ("mode", "uid", "gid")):
+            raise IdentityDeleteReconciliationError(
+                "delete component metadata changed after reboot"
+            )
+        expected_hash = staged[user_name] if name == user_name else before[name]["sha256"]
+        if after[name]["sha256"] != expected_hash:
+            raise IdentityDeleteReconciliationError(
+                "delete component contents changed after reboot"
+            )
+    catacomb = live.get("catacomb")
+    states = catacomb.get("user_states") if isinstance(catacomb, dict) else None
+    if (
+        not isinstance(catacomb, dict)
+        or catacomb.get("present") is not True
+        or catacomb.get("uuid") != baseline["sep_catacomb"]["uuid"]
+        or not isinstance(states, list)
+    ):
+        raise IdentityDeleteReconciliationError(
+            "SEP Catacomb binding changed after reboot"
+        )
+    selected = [
+        state for state in states
+        if isinstance(state, dict)
+        and state.get("kind") == "user"
+        and state.get("user_id") == baseline["apple_uid"]
+    ]
+    masters = [
+        state for state in states
+        if isinstance(state, dict) and state.get("kind") == "master"
+    ]
+    if (
+        len(selected) != 1
+        or len(masters) != 1
+        or selected[0].get("needs_save") is not False
+        or masters[0].get("needs_save") is not False
+    ):
+        raise IdentityDeleteReconciliationError(
+            "SEP Catacomb is not clean after reboot"
+        )
+    return IdentityDeletePostRebootVerification(
+        live["connection_generation"], public["identity_count"]
+    )
+
+
+def append_post_reboot_verified(
+    path: Path,
+    operation_id: str,
+    *,
+    local: t2_catacomb_codec.UserCatacomb,
+    host: dict[str, Any],
+    live: dict[str, Any],
+    linux_boot_uuid: str,
+    mapping_generation: str,
+) -> delete_journal.IdentityDeleteHistory:
+    history = delete_journal.read(path)
+    if history.operation_id != operation_id:
+        raise IdentityDeleteReconciliationError(
+            "delete operation ID changed before post-reboot verification"
+        )
+    verified = verify_post_reboot(
+        history,
+        local=local,
+        host=host,
+        live=live,
+        linux_boot_uuid=linux_boot_uuid,
+        mapping_generation=mapping_generation,
+    )
+    return delete_journal.append_checked(
+        path,
+        operation_id,
+        "DELETE_POST_REBOOT_VERIFIED",
+        {
+            "linux_boot_uuid": linux_boot_uuid,
+            "connection_generation": verified.connection_generation,
+            "identity_uuid": history.target_identity_uuid,
+            "survivor_snapshot_sha256": history.survivor_snapshot_sha256,
+            "snapshot_sha256": history.reconciled_snapshot_sha256,
+            "mapping_generation": mapping_generation,
+            "target_absent": True,
+            "local_live_equal": True,
+            "sep_clean": True,
+        },
     )
