@@ -361,8 +361,11 @@ persistent delta. The exact bridge wrapper preserves one common ordinal and
 detail-length record across versions, while matching host dispatch explicitly
 accepts version 2 for progress ordinals 100 through 355 and forwards its opaque
 alignment detail. The reducer now validates that common framing, discards the
-detail, and preserves the established percentage/continue cadence only for
-that recovered range. Every other version-2 status remains fail-closed.
+detail, and preserves the established percentage/continue cadence for that
+recovered range. A subsequent live run proved that version 2 also carries a
+lower status after contact. Matching host dispatch removes the envelope version
+before the same BiometricKit handler, so version 2 is now allowed to reach only
+the already recovered ordinal switch; every unknown ordinal still fails closed.
 
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements

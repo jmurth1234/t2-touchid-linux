@@ -5412,7 +5412,12 @@ accepts version 2 for ordinals 100 through 355 and forwards its opaque alignment
 detail to the enrollment client. Linux now accepts version 2 only for that
 progress range, validates the declared detail length, discards the detail, and
 sends the same exactly-once continue as version 1. Other version-2 statuses and
-all unsupported versions remain fail-closed.
+all unsupported versions initially remained fail-closed. The subsequent live
+attempt proved a structurally valid version-2 record can also carry a lower
+status after contact. Matching host dispatch normalizes the envelope and calls
+the same BiometricKit status path without passing the wire version. Linux now
+allows version 2 through the same already recovered ordinal switch while still
+freezing every unknown ordinal, malformed detail length, and other version.
 
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.

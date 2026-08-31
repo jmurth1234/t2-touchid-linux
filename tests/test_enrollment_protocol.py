@@ -120,44 +120,58 @@ class EnrollmentProtocolTests(unittest.TestCase):
         self.assertNotIn(detail.hex(), repr(transition))
 
     def test_status_70_continues_without_progress(self):
-        transition = self.accept(
-            self.machine(), event(1, enrollment.SERVICE_STATUS, 1, 70)
-        )
-        self.assertEqual(transition.action, enrollment.EnrollmentAction.CONTINUE)
-        self.assertIsNone(transition.progress_percent)
-        self.assertTrue(transition.continue_required)
+        for version in (1, 2):
+            with self.subTest(version=version):
+                transition = self.accept(
+                    self.machine(),
+                    event(1, enrollment.SERVICE_STATUS, version, 70),
+                )
+                self.assertEqual(
+                    transition.action, enrollment.EnrollmentAction.CONTINUE
+                )
+                self.assertIsNone(transition.progress_percent)
+                self.assertTrue(transition.continue_required)
 
     def test_statuses_63_and_64_report_presence_without_continue(self):
-        machine = self.machine()
-        present = self.accept(
-            machine, event(1, enrollment.SERVICE_STATUS, 1, 63)
-        )
-        removed = self.accept(
-            machine, event(2, enrollment.SERVICE_STATUS, 1, 64)
-        )
-        self.assertEqual(present.action, enrollment.EnrollmentAction.FINGER_PRESENT)
-        self.assertEqual(removed.action, enrollment.EnrollmentAction.FINGER_REMOVED)
-        self.assertFalse(present.continue_required)
-        self.assertFalse(removed.continue_required)
-        self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
+        for version in (1, 2):
+            with self.subTest(version=version):
+                machine = self.machine()
+                present = self.accept(
+                    machine, event(1, enrollment.SERVICE_STATUS, version, 63)
+                )
+                removed = self.accept(
+                    machine, event(2, enrollment.SERVICE_STATUS, version, 64)
+                )
+                self.assertEqual(
+                    present.action, enrollment.EnrollmentAction.FINGER_PRESENT
+                )
+                self.assertEqual(
+                    removed.action, enrollment.EnrollmentAction.FINGER_REMOVED
+                )
+                self.assertFalse(present.continue_required)
+                self.assertFalse(removed.continue_required)
+                self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
 
     def test_exact_build_phase_noops_do_not_continue(self):
         machine = self.machine()
-        for sequence, status in enumerate((55, 72, 90), start=1):
-            with self.subTest(status=status):
-                phase = self.accept(
-                    machine,
-                    event(sequence, enrollment.SERVICE_STATUS, 1, status),
-                )
-                self.assertEqual(
-                    phase.action, enrollment.EnrollmentAction.IGNORE_PHASE
-                )
-                self.assertFalse(phase.continue_required)
-                self.assertIsNone(phase.progress_percent)
-                self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
+        sequence = 0
+        for version in (1, 2):
+            for status in (55, 72, 90):
+                sequence += 1
+                with self.subTest(version=version, status=status):
+                    phase = self.accept(
+                        machine,
+                        event(sequence, enrollment.SERVICE_STATUS, version, status),
+                    )
+                    self.assertEqual(
+                        phase.action, enrollment.EnrollmentAction.IGNORE_PHASE
+                    )
+                    self.assertFalse(phase.continue_required)
+                    self.assertIsNone(phase.progress_percent)
+                    self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
 
         progress = self.accept(
-            machine, event(4, enrollment.SERVICE_STATUS, 1, 100)
+            machine, event(sequence + 1, enrollment.SERVICE_STATUS, 2, 100)
         )
         self.assertEqual(progress.action, enrollment.EnrollmentAction.PROGRESS)
         self.assertTrue(progress.continue_required)
@@ -188,15 +202,17 @@ class EnrollmentProtocolTests(unittest.TestCase):
             93: enrollment.EnrollmentAction.DIRTY_SENSOR,
             98: enrollment.EnrollmentAction.RETRY_SCAN,
         }
-        for status, action in cases.items():
-            with self.subTest(status=status):
-                machine = self.machine()
-                transition = self.accept(
-                    machine, event(1, enrollment.SERVICE_STATUS, 1, status)
-                )
-                self.assertEqual(transition.action, action)
-                self.assertFalse(transition.continue_required)
-                self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
+        for version in (1, 2):
+            for status, action in cases.items():
+                with self.subTest(version=version, status=status):
+                    machine = self.machine()
+                    transition = self.accept(
+                        machine,
+                        event(1, enrollment.SERVICE_STATUS, version, status),
+                    )
+                    self.assertEqual(transition.action, action)
+                    self.assertFalse(transition.continue_required)
+                    self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
 
     def test_statistics_telemetry_is_ignored_without_advancing_enrollment(self):
         machine = self.machine()
@@ -308,14 +324,16 @@ class EnrollmentProtocolTests(unittest.TestCase):
             67: (enrollment.EnrollmentAction.FAILED, enrollment.EnrollmentState.FAILED),
             68: (enrollment.EnrollmentAction.TIMED_OUT, enrollment.EnrollmentState.TIMED_OUT),
         }
-        for status, (action, state) in cases.items():
-            with self.subTest(status=status):
-                machine = self.machine()
-                transition = self.accept(
-                    machine, event(1, enrollment.SERVICE_STATUS, 1, status)
-                )
-                self.assertEqual(transition.action, action)
-                self.assertEqual(machine.state, state)
+        for version in (1, 2):
+            for status, (action, state) in cases.items():
+                with self.subTest(version=version, status=status):
+                    machine = self.machine()
+                    transition = self.accept(
+                        machine,
+                        event(1, enrollment.SERVICE_STATUS, version, status),
+                    )
+                    self.assertEqual(transition.action, action)
+                    self.assertEqual(machine.state, state)
 
     def test_v1_result_normalizes_builtin_group_but_is_only_provisional(self):
         identity_uuid = bytes(range(1, 17))
@@ -419,7 +437,7 @@ class EnrollmentProtocolTests(unittest.TestCase):
         mismatched_length = (100).to_bytes(4, "little") + bytes(4) + (1).to_bytes(8, "little")
         cases = (
             event(1, enrollment.SERVICE_STATUS, 3, 100),
-            event(1, enrollment.SERVICE_STATUS, 2, 90),
+            event(1, enrollment.SERVICE_STATUS, 2, 500),
             event(1, enrollment.SERVICE_STATUS, 1, 100, b"truncated"),
             event(1, enrollment.SERVICE_STATUS, 1, 100, mismatched_status),
             event(1, enrollment.SERVICE_STATUS, 1, 100, mismatched_length),
