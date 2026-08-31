@@ -5500,6 +5500,26 @@ single stable-readback UUID and complete persistence on a fresh, durably bound
 Bridge generation. The terminal-event field discrepancy remains under
 investigation; it is not weakened into unconditional acceptance.
 
+Post-reboot verification closed that experiment: both the pre-existing finger
+and the Linux-enrolled finger independently produced `verify-match`, the live
+configured-user and global inventories both reported two identities, and the
+typed mutation journal passed its post-reboot gate with no pending transaction.
+The fprintd compatibility device still lists one logical finger name because
+that slot represents “any built-in identity for the configured Apple user”; it
+is not a hardware identity count.
+
+The normal live path now handles the observed terminal discrepancy without a
+manual recovery command. A structurally valid result with a mismatched embedded
+owner is journaled only as a redacted terminal witness: its UUID and owner value
+are discarded. Before any local persistence, a same-generation stable double
+read must prove exactly one new configured-user built-in identity, equality of
+the per-user and global inventories, unchanged account/keybag/mapping and host
+Catacomb state, stable capacity, and an advanced hash for the same SEP
+Catacomb. Only the independently read identity is adopted. If that proof is
+unavailable, the operation becomes outcome-unknown and requires the existing
+fresh-generation recovery path; it is never converted into success by the
+terminal event alone.
+
 The first recovery persistence attempt then reached user-component confirm and
 received the bridge's exact nil-output sentinel. The adapter had incorrectly
 required byte data even though confirm advertises zero output capacity; this

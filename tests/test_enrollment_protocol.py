@@ -577,15 +577,28 @@ class EnrollmentProtocolTests(unittest.TestCase):
                     self.accept(machine, value)
                 self.assertEqual(machine.state, enrollment.EnrollmentState.FROZEN)
 
-    def test_invalid_result_freezes_the_operation(self):
+    def test_mismatched_result_owner_is_only_a_terminal_witness(self):
         machine = self.machine()
         wrong_user = (502).to_bytes(4, "little") + bytes(range(1, 17))
+        transition = self.accept(
+            machine,
+            event(1, enrollment.SERVICE_ENROLLMENT_RESULT, 1, 0, wrong_user),
+        )
+        self.assertEqual(
+            transition.action, enrollment.EnrollmentAction.RESULT_WITNESSED
+        )
+        self.assertIsNone(transition.identity)
+        self.assertEqual(machine.state, enrollment.EnrollmentState.SEP_RESULT_WITNESSED)
+
+    def test_malformed_result_still_freezes_the_operation(self):
+        machine = self.machine()
+        malformed = (501).to_bytes(4, "little") + bytes(16)
         with self.assertRaisesRegex(
             enrollment.EnrollmentProtocolError, "invalid enrollment-result"
         ):
             self.accept(
                 machine,
-                event(1, enrollment.SERVICE_ENROLLMENT_RESULT, 1, 0, wrong_user),
+                event(1, enrollment.SERVICE_ENROLLMENT_RESULT, 1, 0, malformed),
             )
         self.assertEqual(machine.state, enrollment.EnrollmentState.FROZEN)
 

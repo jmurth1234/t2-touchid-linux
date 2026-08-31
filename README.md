@@ -217,15 +217,31 @@ template UUIDs:
 sudo t2-touchid-inventory
 ```
 
+`fprintd-list` and `fprintd-verify` deliberately expose one configured logical
+finger slot (for example `right-index-finger`). That slot means “authenticate
+against any built-in identity owned by the configured Apple user”; it is not an
+enrollment count. Use `sep_identity_count` from `t2-touchid-inventory` for the
+truthful hardware identity count. Multiple enrolled fingers can therefore all
+match while fprintd continues to list one logical slot.
+
 This read-only command performs two exact back-to-back collections and fails if
 the private global/per-user identity records, capacity replies, Catacomb
 UUID/hash/state, or secure-key-store lock state change between them. It also
 requires protocol-v2 global identities to reconcile with the configured user's
 detail records. It exposes only counts, presence, query status, and equality—not
 identity or Catacomb UUIDs/hashes. Maximum capacity and configured-user free
-capacity remain separate because their arithmetic scope is not yet proven. This
-is the inventory gate for future enrollment and deletion operations; it does
-not mutate biometric state.
+capacity remain separate because their arithmetic scope is not yet proven. The
+command is the read-only inventory gate used by enrollment and deletion
+research; it does not mutate biometric state.
+
+On bridgeOS 23P1072, a completed enrollment may carry an embedded owner field
+that disagrees with the configured Apple user even though the authoritative
+SEP inventories add the identity to that user. Such a result is treated only
+as a terminal completion witness: its UUID is discarded, and enrollment can
+complete only when a stable double-read proves exactly one new built-in
+identity in both the configured-user and global inventories, with unchanged
+account, keybag, mapping, and local Catacomb state. This is the path validated
+by the first Linux enrollment that persisted and matched after reboot.
 
 This machine has no usable TPM, so the credential is encrypted with systemd's
 host key. It protects against casual/offline disclosure without the decrypted

@@ -50,6 +50,7 @@ class FakeLease:
         self.invalidated = False
         self.inventory_commands = 0
         self.enrollment_commands: list[int] = []
+        self.result_user_id = 501
 
     def invalidate(self) -> None:
         self.invalidated = True
@@ -78,7 +79,7 @@ class FakeLease:
             result = enrollment_protocol.SERVICE_HEADER.pack(
                 0, enrollment_protocol.SERVICE_ENROLLMENT_RESULT, 2, 2
             )
-            result += (501).to_bytes(4, "little") + uuid.UUID(int=56).bytes + bytes(20)
+            result += self.result_user_id.to_bytes(4, "little") + uuid.UUID(int=56).bytes + bytes(20)
             return [0, None], [
                 [9, enrollment_protocol.BRIDGE_SERVICE_STATUS, result, None, None]
             ]
@@ -153,9 +154,15 @@ class EnrollmentCoordinatorTests(unittest.TestCase):
         )
 
     def run_coordinator(
-        self, directory: str, finalizer, *, dispatch_allowed=lambda: True
+        self,
+        directory: str,
+        finalizer,
+        *,
+        dispatch_allowed=lambda: True,
+        result_user_id: int = 501,
     ):
         lease = FakeLease()
+        lease.result_user_id = result_user_id
         device = acm_device()
         self.last_lease = lease
         self.last_device = device
@@ -251,6 +258,25 @@ class EnrollmentCoordinatorTests(unittest.TestCase):
         self.assertTrue(self.last_lease.invalidated)
         self.assertEqual(
             self.last_device.commands[-1][0], acm_protocol.OP_CONTEXT_DELETE
+        )
+
+    def test_witnessed_result_requires_persistence_and_normalizes_success(self):
+        finalized = []
+
+        def finalize(result):
+            finalized.append(result.outcome)
+            return coordinator.FinalizationAttestation(GENERATION, True, True)
+
+        with tempfile.TemporaryDirectory() as directory:
+            result, _lease, _device, _bound, path = self.run_coordinator(
+                directory, finalize, result_user_id=502
+            )
+            history = enrollment_journal.read(path)
+        self.assertEqual(finalized, ["result-witnessed"])
+        self.assertEqual(result.outcome, "identity-observed")
+        self.assertTrue(result.persistence_ready)
+        self.assertEqual(
+            history.phase, enrollment_journal.EnrollmentPhase.TERMINAL_WITNESS
         )
 
     def test_finalizer_cannot_switch_bridge_generation(self):

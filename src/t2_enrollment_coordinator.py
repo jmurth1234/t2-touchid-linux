@@ -162,7 +162,10 @@ def run(
                     )
                 if not attestation.reconciliation_complete:
                     raise EnrollmentCoordinatorError("final reconciliation is incomplete")
-                identity_observed = result.outcome == "identity-observed"
+                identity_observed = result.outcome in (
+                    "identity-observed",
+                    "result-witnessed",
+                )
                 if attestation.persistence_ready is not identity_observed:
                     raise EnrollmentCoordinatorError(
                         "persistence attestation disagrees with enrollment outcome"
@@ -182,8 +185,13 @@ def run(
             consume,
         )
         enrollment_result, attestation = consumed
+        public_outcome = (
+            "identity-observed"
+            if enrollment_result.outcome == "result-witnessed"
+            else enrollment_result.outcome
+        )
         return EnrollmentCoordinatorResult(
-            outcome=enrollment_result.outcome,
+            outcome=public_outcome,
             policy_satisfied=final_policy.satisfied,
             persistence_ready=attestation.persistence_ready,
             reconciliation_complete=attestation.reconciliation_complete,

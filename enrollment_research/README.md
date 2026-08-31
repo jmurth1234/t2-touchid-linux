@@ -449,10 +449,8 @@ was performed.
 
 The following remain disabled or unverified:
 
-- final biometric-consumer acceptance, replay, and one-shot behavior for the
-  freshly authorized mode-0 ACM context;
-- command-level fault rehearsal and explicit operator approval of the first live
-  enrollment;
+- broader command-level fault rehearsal beyond the completed, persisted, and
+  post-reboot-verified first live Linux enrollment;
 - broader crash/fault rehearsal around the concrete coordinator boundary;
 - creation of new AppleKeyStore/OpenDirectory/APFS users from Linux;
 - whole-biometric-user removal with command `0x48`;

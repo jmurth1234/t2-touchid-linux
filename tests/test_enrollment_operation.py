@@ -155,6 +155,32 @@ class EnrollmentOperationTests(unittest.TestCase):
         self.assertEqual(records[1]["evidence"]["request_sha256"], digest)
         self.assertNotIn(secret.hex(), journal_text)
 
+    def test_mismatched_result_owner_is_journaled_without_wire_identity(self):
+        wire_identity = uuid.UUID(int=9).bytes
+        result_payload = (502).to_bytes(4, "little") + wire_identity + bytes(20)
+        transport = FakeTransport(
+            [
+                raw_event(
+                    1,
+                    protocol.SERVICE_ENROLLMENT_RESULT,
+                    2,
+                    0,
+                    result_payload,
+                )
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            instance, path, _operation_id = self.create(directory, transport)
+            result = instance.run(bytes(range(16)))
+            history = typed_journal.read(path)
+            journal_text = path.read_text()
+        self.assertEqual(result.outcome, "result-witnessed")
+        self.assertEqual(
+            history.phase, typed_journal.EnrollmentPhase.TERMINAL_WITNESS
+        )
+        self.assertNotIn(str(uuid.UUID(bytes=wire_identity)), journal_text)
+        self.assertNotIn(wire_identity.hex(), journal_text)
+
     def test_nonzero_continue_return_does_not_override_service_events(self):
         identity_uuid = uuid.UUID(int=8).bytes
         result_payload = (501).to_bytes(4, "little") + identity_uuid + bytes(20)

@@ -209,6 +209,7 @@ class EnrollmentOperation:
                     protocol.EnrollmentAction.IGNORE_TELEMETRY,
                     protocol.EnrollmentAction.IGNORE_AUXILIARY,
                     protocol.EnrollmentAction.IGNORE_PHASE,
+                    protocol.EnrollmentAction.RESULT_WITNESSED,
                     protocol.EnrollmentAction.IDENTITY_OBSERVED,
                     protocol.EnrollmentAction.CANCELLED,
                     protocol.EnrollmentAction.FAILED,
@@ -281,6 +282,26 @@ class EnrollmentOperation:
                     )
                     return EnrollmentOperationResult(
                         "identity-observed",
+                        transition,
+                        reconciliation_required=True,
+                    )
+
+                if transition.action is protocol.EnrollmentAction.RESULT_WITNESSED:
+                    self._append_during_active_operation(
+                        "E2_TERMINAL_RESULT_WITNESSED",
+                        {
+                            "connection_generation": self.transport.connection_generation,
+                            "event_sequence": event.sequence,
+                            "envelope_type": event.envelope_type,
+                            "event_version": event.version,
+                            "payload_length": len(event.payload),
+                            "event_sha256": hashlib.sha256(raw_event).hexdigest(),
+                            "embedded_user_matches": False,
+                        },
+                        stage="terminal",
+                    )
+                    return EnrollmentOperationResult(
+                        "result-witnessed",
                         transition,
                         reconciliation_required=True,
                     )

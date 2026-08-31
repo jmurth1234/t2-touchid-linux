@@ -175,6 +175,44 @@ def classify_observed_identity_recovery(
         raise EnrollmentReconciliationError(
             "identity recovery requires a terminal outcome-unknown journal"
         )
+    return _classify_observed_identity(
+        history,
+        host=host,
+        live=live,
+        mapping_generation=mapping_generation,
+        require_fresh_generation=True,
+    )
+
+
+def classify_terminal_result_witness(
+    history: enrollment_journal.EnrollmentHistory,
+    *,
+    host: dict[str, Any],
+    live: dict[str, Any],
+    mapping_generation: str,
+) -> ObservedIdentityRecovery:
+    """Adopt no wire identity; prove exactly one configured-user SEP addition."""
+    if history.phase is not enrollment_journal.EnrollmentPhase.TERMINAL_WITNESS:
+        raise EnrollmentReconciliationError(
+            "identity witness requires a terminal-result-witness journal"
+        )
+    return _classify_observed_identity(
+        history,
+        host=host,
+        live=live,
+        mapping_generation=mapping_generation,
+        require_fresh_generation=False,
+    )
+
+
+def _classify_observed_identity(
+    history: enrollment_journal.EnrollmentHistory,
+    *,
+    host: dict[str, Any],
+    live: dict[str, Any],
+    mapping_generation: str,
+    require_fresh_generation: bool,
+) -> ObservedIdentityRecovery:
     baseline = history.baseline
     apple_uid = baseline["apple_uid"]
     live_generation = live.get("connection_generation")
@@ -184,8 +222,13 @@ def classify_observed_identity_recovery(
         )
     except mutation_journal.JournalError as error:
         raise EnrollmentReconciliationError(str(error)) from error
-    if (
+    generation_invalid = (
         live_generation == baseline["connection_generation"]
+        if require_fresh_generation
+        else live_generation != baseline["connection_generation"]
+    )
+    if (
+        generation_invalid
         or live.get("double_collection_equal") is not True
         or live.get("apple_uid") != apple_uid
         or live.get("biometric_protocol_version")

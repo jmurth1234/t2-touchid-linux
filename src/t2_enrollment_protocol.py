@@ -62,6 +62,7 @@ class EnrollmentProtocolError(ValueError):
 class EnrollmentState(Enum):
     ACTIVE = "active"
     CANCEL_REQUESTED = "cancel-requested"
+    SEP_RESULT_WITNESSED = "sep-result-witnessed"
     SEP_IDENTITY_OBSERVED = "sep-identity-observed"
     CANCELLED = "cancelled"
     FAILED = "failed"
@@ -84,6 +85,7 @@ class EnrollmentAction(Enum):
     CANCELLED = "cancelled"
     FAILED = "failed"
     TIMED_OUT = "timed-out"
+    RESULT_WITNESSED = "result-witnessed"
     IDENTITY_OBSERVED = "identity-observed"
 
 
@@ -231,6 +233,14 @@ def parse_service_event(data: bytes) -> ServiceEvent:
 def parse_enrollment_identity(
     event: ServiceEvent, *, expected_user_id: int
 ) -> EnrollmentIdentity:
+    identity = parse_enrollment_result(event)
+    if identity.user_id != expected_user_id:
+        raise EnrollmentProtocolError("enrollment result belongs to another Apple user")
+    return identity
+
+
+def parse_enrollment_result(event: ServiceEvent) -> EnrollmentIdentity:
+    """Decode a structurally valid result without treating its owner as authority."""
     if event.envelope_type != SERVICE_ENROLLMENT_RESULT:
         raise EnrollmentProtocolError("event is not an enrollment result")
     if event.version == 1:
@@ -246,8 +256,6 @@ def parse_enrollment_identity(
     else:
         raise EnrollmentProtocolError("unsupported enrollment-result version")
     user_id, identity_uuid, group_type, group_uuid = struct.unpack("<I16sI16s", record)
-    if user_id != expected_user_id:
-        raise EnrollmentProtocolError("enrollment result belongs to another Apple user")
     if record[20:40] not in BUILTIN_GROUPS:
         raise EnrollmentProtocolError("accessory enrollment result is unsupported")
     return EnrollmentIdentity(user_id, identity_uuid, group_type, group_uuid)
@@ -330,14 +338,21 @@ class EnrollmentStateMachine:
 
         if event.envelope_type == SERVICE_ENROLLMENT_RESULT:
             try:
-                identity = parse_enrollment_identity(
-                    event, expected_user_id=self.expected_user_id
-                )
+                identity = parse_enrollment_result(event)
             except EnrollmentProtocolError as error:
                 self.state = EnrollmentState.FROZEN
                 raise EnrollmentProtocolError(
                     "invalid enrollment-result event"
                 ) from error
+            if identity.user_id != self.expected_user_id:
+                # Live 23P1072 evidence shows that this embedded field can
+                # disagree even when the authoritative per-user and global
+                # SEP inventories add exactly one built-in identity.  Treat
+                # the event only as a terminal witness; never adopt its UUID.
+                self.state = EnrollmentState.SEP_RESULT_WITNESSED
+                return EnrollmentTransition(
+                    EnrollmentAction.RESULT_WITNESSED, self.state
+                )
             self.state = EnrollmentState.SEP_IDENTITY_OBSERVED
             return EnrollmentTransition(
                 EnrollmentAction.IDENTITY_OBSERVED, self.state, identity=identity

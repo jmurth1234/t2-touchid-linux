@@ -28,6 +28,7 @@ class EnrollmentPhase(Enum):
     CONTINUE_INTENT = "continue-intent"
     CANCEL_INTENT = "cancel-intent"
     CANCEL_REQUESTED = "cancel-requested"
+    TERMINAL_WITNESS = "terminal-result-witness"
     TERMINAL_IDENTITY = "terminal-identity"
     TERMINAL_FAILURE = "terminal-failure"
     PERSISTING = "persisting"
@@ -310,6 +311,88 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             _uuid(evidence["identity_uuid"], "identity_uuid")
             terminal_identity_uuid = evidence["identity_uuid"]
             last_event = sequence
+            phase = EnrollmentPhase.TERMINAL_IDENTITY
+            continue
+
+        if milestone == "E2_TERMINAL_RESULT_WITNESSED":
+            if phase not in (EnrollmentPhase.ACTIVE, EnrollmentPhase.CANCEL_REQUESTED):
+                raise EnrollmentJournalError("terminal result witness is out of order")
+            evidence = _exact(
+                evidence,
+                {
+                    "connection_generation",
+                    "event_sequence",
+                    "envelope_type",
+                    "event_version",
+                    "payload_length",
+                    "event_sha256",
+                    "embedded_user_matches",
+                },
+                milestone,
+            )
+            _same_generation(evidence, baseline)
+            sequence = _uint(evidence["event_sequence"], "event sequence")
+            if last_event is not None and sequence <= last_event:
+                raise EnrollmentJournalError("terminal event sequence is not increasing")
+            version = _uint(evidence["event_version"], "event version", 2)
+            payload_length = _uint(
+                evidence["payload_length"], "payload length", 1024 * 1024
+            )
+            length_valid = (
+                payload_length == 20
+                if version == 1
+                else version == 2 and payload_length >= 40
+            )
+            if (
+                evidence["envelope_type"] != SERVICE_ENROLLMENT_RESULT
+                or version not in (1, 2)
+                or not length_valid
+                or evidence["embedded_user_matches"] is not False
+            ):
+                raise EnrollmentJournalError("terminal result witness framing is invalid")
+            _sha256(evidence["event_sha256"], "event_sha256")
+            last_event = sequence
+            phase = EnrollmentPhase.TERMINAL_WITNESS
+            continue
+
+        if milestone == "E2_WITNESS_IDENTITY_READBACK_OBSERVED":
+            if phase is not EnrollmentPhase.TERMINAL_WITNESS:
+                raise EnrollmentJournalError("witness identity read-back is out of order")
+            evidence = _exact(
+                evidence,
+                {
+                    "connection_generation",
+                    "user_id",
+                    "identity_uuid",
+                    "source",
+                    "single_identity_added",
+                    "host_unchanged",
+                    "sep_catacomb_advanced",
+                    "per_user_global_equal",
+                    "mapping_generation",
+                },
+                milestone,
+            )
+            _same_generation(evidence, baseline)
+            _uuid(evidence["identity_uuid"], "identity_uuid")
+            _sha256(evidence["mapping_generation"], "mapping_generation")
+            if (
+                evidence["user_id"] != baseline["apple_uid"]
+                or evidence["source"] != "stable-readback"
+                or evidence["mapping_generation"] != baseline["mapping_generation"]
+            ):
+                raise EnrollmentJournalError("witness identity read-back binding is invalid")
+            for field in (
+                "single_identity_added",
+                "host_unchanged",
+                "sep_catacomb_advanced",
+                "per_user_global_equal",
+            ):
+                if evidence[field] is not True:
+                    raise EnrollmentJournalError(
+                        f"witness identity read-back field {field} is not true"
+                    )
+            terminal_identity_uuid = evidence["identity_uuid"]
             phase = EnrollmentPhase.TERMINAL_IDENTITY
             continue
 
@@ -698,6 +781,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
                 EnrollmentPhase.CONTINUE_INTENT,
                 EnrollmentPhase.CANCEL_INTENT,
                 EnrollmentPhase.CANCEL_REQUESTED,
+                EnrollmentPhase.TERMINAL_WITNESS,
                 EnrollmentPhase.PERSISTING,
             ):
                 raise EnrollmentJournalError("outcome-unknown marker is out of order")

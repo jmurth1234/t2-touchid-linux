@@ -264,6 +264,77 @@ class EnrollmentFinalizerTests(unittest.TestCase):
         self.assertEqual(lease.calls[-1][4], 0x1000)
         self.assertFalse(lease.invalidated)
 
+    def test_terminal_witness_adopts_only_stable_readback_identity(self):
+        journal = Path(self.temp.name) / "witness-journal" / "operation.jsonl"
+        operation_id, _record = mutation.create(journal, "enroll", self.baseline)
+        enrollment.append_checked(
+            journal,
+            operation_id,
+            "ENROLL_START_INTENT",
+            {
+                "apple_uid": 501,
+                "protocol_version": 2,
+                "connection_generation": GENERATION,
+                "request_length": 68,
+                "request_sha256": "a" * 64,
+            },
+        )
+        enrollment.append_checked(
+            journal, operation_id, "ENROLL_START_OBSERVED", {"status": 0}
+        )
+        enrollment.append_checked(
+            journal,
+            operation_id,
+            "E2_TERMINAL_RESULT_WITNESSED",
+            {
+                "connection_generation": GENERATION,
+                "event_sequence": 1,
+                "envelope_type": enrollment.SERVICE_ENROLLMENT_RESULT,
+                "event_version": 2,
+                "payload_length": 40,
+                "event_sha256": "b" * 64,
+                "embedded_user_matches": False,
+            },
+        )
+        instance = finalizer.BuiltinEnrollmentFinalizer(
+            lease=FakeLease(),
+            apple_user_id=501,
+            connection_generation=GENERATION,
+            journal_path=journal,
+            operation_id=operation_id,
+            catacomb_root=self.root,
+            mapping_generation="d" * 64,
+            identity_name="Linux enrolled finger",
+            clock=lambda: codec.APPLE_EPOCH + dt.timedelta(seconds=710000000),
+        )
+        components = (
+            catacomb_protocol.CatacombComponent.user(501),
+            catacomb_protocol.CatacombComponent.master(),
+        )
+        outcome = enrollment_operation.EnrollmentOperationResult(
+            "result-witnessed", None, True
+        )
+        with (
+            patch(
+                "t2_enrollment_finalizer.t2_catacomb_bridge.collect_builtin_save_components",
+                return_value=components,
+            ),
+            patch(
+                "t2_enrollment_finalizer.t2_bridge_inventory.collect_stable_private_inventory",
+                return_value=live_after(),
+            ),
+        ):
+            attestation = instance(outcome)
+
+        history = enrollment.read(journal)
+        self.assertTrue(attestation.persistence_ready)
+        self.assertEqual(history.phase, enrollment.EnrollmentPhase.RECONCILED)
+        self.assertEqual(history.terminal_identity_uuid, IDENTITY)
+        user = codec.decode_user_catacomb(
+            (self.root / "user_000001f5.cat").read_bytes(), 501
+        )
+        self.assertEqual(user.identities[-1].uuid, IDENTITY)
+
     def test_concrete_readback_failure_is_durable_outcome_unknown(self):
         lease = FakeLease()
         instance = finalizer.BuiltinEnrollmentFinalizer(

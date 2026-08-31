@@ -193,7 +193,43 @@ class BuiltinEnrollmentFinalizer:
         ):
             raise EnrollmentFinalizerError("finalizer binding changed")
 
-        if result.outcome != "identity-observed":
+        if result.outcome == "result-witnessed":
+            try:
+                host, live = self._stable_readback(baseline)
+                recovery = (
+                    t2_enrollment_reconciliation.classify_terminal_result_witness(
+                        history,
+                        host=host,
+                        live=live,
+                        mapping_generation=self.mapping_generation,
+                    )
+                )
+                history = t2_enrollment_journal.append_checked(
+                    self.journal_path,
+                    self.operation_id,
+                    "E2_WITNESS_IDENTITY_READBACK_OBSERVED",
+                    recovery.evidence,
+                )
+            except BaseException as error:
+                try:
+                    t2_enrollment_journal.append_checked(
+                        self.journal_path,
+                        self.operation_id,
+                        "ENROLL_OUTCOME_UNKNOWN",
+                        {
+                            "connection_generation": self.connection_generation,
+                            "stage": "terminal",
+                            "reason": "protocol-error",
+                            "mutation_possible": True,
+                        },
+                    )
+                except BaseException:
+                    pass
+                raise EnrollmentFinalizerError(
+                    "terminal result witness could not prove one SEP identity"
+                ) from error
+
+        if result.outcome not in ("identity-observed", "result-witnessed"):
             committed = self.store.read_committed_components()
             old_biolockout = t2_catacomb_codec.decode_biolockout_catacomb(
                 committed["biolockout.cat"]
