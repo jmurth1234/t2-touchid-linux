@@ -114,6 +114,22 @@ class EnrollmentProtocolTests(unittest.TestCase):
         self.assertIsNone(transition.progress_percent)
         self.assertTrue(transition.continue_required)
 
+    def test_status_90_is_an_exact_build_phase_noop(self):
+        machine = self.machine()
+        phase = self.accept(
+            machine, event(1, enrollment.SERVICE_STATUS, 1, 90)
+        )
+        self.assertEqual(phase.action, enrollment.EnrollmentAction.IGNORE_PHASE)
+        self.assertFalse(phase.continue_required)
+        self.assertIsNone(phase.progress_percent)
+        self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
+
+        progress = self.accept(
+            machine, event(2, enrollment.SERVICE_STATUS, 1, 100)
+        )
+        self.assertEqual(progress.action, enrollment.EnrollmentAction.PROGRESS)
+        self.assertTrue(progress.continue_required)
+
     def test_structured_status_payload_is_validated_but_not_exposed(self):
         detail = b"private-node-data"
         payload = (

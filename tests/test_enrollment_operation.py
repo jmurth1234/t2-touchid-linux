@@ -88,9 +88,10 @@ class EnrollmentOperationTests(unittest.TestCase):
                     protocol.SKS_LOCK_STATE_PAYLOAD.pack(501, 0x228),
                 ),
                 raw_event(9, protocol.SERVICE_STATISTICS, 1, 0, bytes(28)),
-                raw_event(10, protocol.SERVICE_STATUS, 1, 263),
+                raw_event(10, protocol.SERVICE_STATUS, 1, 90),
+                raw_event(11, protocol.SERVICE_STATUS, 1, 263),
                 raw_event(
-                    11,
+                    12,
                     protocol.SERVICE_ENROLLMENT_RESULT,
                     2,
                     0,

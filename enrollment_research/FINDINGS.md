@@ -494,6 +494,10 @@ Mesa enrollment statuses actionable:
   a terminal result.
 - Status **70** also issues `enrollContinue`, but without reporting a new
   percentage.
+- Status **90** is a deliberate no-op phase message on the exact 24G830 path.
+  `BKEnrollTouchIDOperation` finds no capture error, `BKEnrollOperation` finds
+  no progress or terminal action, and `BKOperation` falls through without
+  notifying its delegate or issuing `enrollContinue`.
 - Statuses **66, 67, and 68** terminate through enrollment failure reasons
   **1, 2, and 3**, respectively. The shipping UI identifies these as
   **cancelled**, **failed**, and **timeout**.
@@ -685,6 +689,7 @@ stops at `SEP-identity-observed` pending persistence and inventory reconciliatio
 |---|---|---:|---|
 | `0xe3ff8001`, ordinal 100..355 | Active -> progress; compute `floor(100 * (ordinal-100) / 255)` | yes, exactly once for that accepted event | progress only; never success |
 | `0xe3ff8001`, ordinal 70 | Active -> continue-without-new-progress | yes, exactly once | no terminal result |
+| ordinal 90 | Active -> unchanged; exact-build phase message ignored after validation | no | no feedback or terminal result |
 | ordinal 74 | Active -> waiting-for-finger-removal | no invented continue | `enroll-remove-and-retry` feedback |
 | ordinals 78, 85, 87, 88, 98 | Active -> rejected-capture feedback | no invented continue | generic `enroll-retry-scan` |
 | ordinal 86 | Active -> rejected-small-coverage feedback | no invented continue | `enroll-retry-scan`; richer UI may say low coverage |
@@ -695,7 +700,7 @@ stops at `SEP-identity-observed` pending persistence and inventory reconciliatio
 | `0xe3ff8003` with valid v1/v2 identity record | Active -> SEP-identity-observed | no | provisional identity only; `enroll-completed` waits for Catacomb and stable read-back |
 | version-1 `0xe3ff8004` statistics | Active -> unchanged; telemetry ignored after deduplication | no | no enrollment feedback or result |
 | `0xe3ff800e` / ordinal 501 accessory authorization | Active -> accessory-authorization-required | no guessed retry | unsupported for built-in-only Linux flow unless the accessory protocol is explicitly implemented |
-| unknown envelope, ordinal, version, length, operation, or generation | no transition | no | protocol error; freeze/reconcile if an operation was active |
+| unknown envelope, ordinal other than the explicitly recovered no-op 90, version, length, operation, or generation | no transition | no | protocol error; freeze/reconcile if an operation was active |
 
 “Exactly once” is scoped to a uniquely accepted event on the current operation
 and transport generation. A duplicate delivery must not send a second continue;
@@ -5340,6 +5345,18 @@ mode can close exactly one outcome-unknown attempt only on a different Bridge
 generation whose stable read-back proves no identity, capacity, Catacomb,
 component, account/bag, or mapping delta. A newly visible identity or any
 persistent divergence remains manual and cannot be normalized into failure.
+
+The next approved attempt crossed both ambient-event boundaries and reached
+generic enrollment status 90 after successful password/ACM binding and start
+dispatch. Conservative stopping and fresh stable reconciliation proved no SEP
+identity, capacity, Catacomb, or host-state delta. Exact 24G830 x86_64
+`BiometricKit` then closed the semantic gap: the Touch ID subclass maps status
+90 to no capture error, the enrollment superclass maps it to neither progress
+nor a terminal reason, and the generic operation handler falls through without
+delegate notification or a command. The reducer therefore accepts only ordinal
+90 as a validated no-op phase event, emits no feedback, sends no `0x0e`, and
+keeps the operation active. Other unrecovered ordinals remain fail-closed.
+
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.
 - Treat producer-side decomposition of generic enrollment failure 67 as

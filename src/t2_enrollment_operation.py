@@ -204,6 +204,7 @@ class EnrollmentOperation:
                 if transition.action not in {
                     protocol.EnrollmentAction.IGNORE_TELEMETRY,
                     protocol.EnrollmentAction.IGNORE_AUXILIARY,
+                    protocol.EnrollmentAction.IGNORE_PHASE,
                     protocol.EnrollmentAction.IDENTITY_OBSERVED,
                     protocol.EnrollmentAction.CANCELLED,
                     protocol.EnrollmentAction.FAILED,

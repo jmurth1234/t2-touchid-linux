@@ -327,6 +327,14 @@ validates only the exact version and minimum shape, treats it as an auxiliary
 event, and never lets it select an identity, emit enrollment feedback, or send
 continue. The finalizer still owns persistence for the enrolled user.
 
+The next approved run reached generic enrollment status 90 after a successful
+start. Conservative recovery again proved no persistent delta. Exact matching
+24G830 `BiometricKit` shows that this status crosses the Touch ID, enrollment,
+and generic operation handlers without capture feedback, progress, terminal
+delivery, or `enrollContinue`. The reducer now treats this one recovered status
+as a validated no-op phase event and continues waiting on the same connection;
+all other unrecovered ordinals remain fail-closed.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,

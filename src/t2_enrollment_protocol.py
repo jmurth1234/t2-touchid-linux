@@ -51,6 +51,7 @@ class EnrollmentState(Enum):
 class EnrollmentAction(Enum):
     IGNORE_TELEMETRY = "ignore-telemetry"
     IGNORE_AUXILIARY = "ignore-auxiliary"
+    IGNORE_PHASE = "ignore-phase"
     CONTINUE = "continue"
     PROGRESS = "progress"
     REMOVE_AND_RETRY = "remove-and-retry"
@@ -385,6 +386,14 @@ class EnrollmentStateMachine:
             )
         if status == 93:
             return EnrollmentTransition(EnrollmentAction.DIRTY_SENSOR, self.state)
+        # Exact macOS 15.7 / 24G830 BiometricKit forwards status 90 through
+        # BKEnrollTouchIDOperation and BKEnrollOperation without a capture
+        # error, progress update, terminal result, or enrollContinue. The
+        # generic BKOperation handler also has no status-90 branch. Preserve
+        # that deliberate no-op while retaining fail-closed handling for every
+        # other status whose semantics have not been recovered.
+        if status == 90:
+            return EnrollmentTransition(EnrollmentAction.IGNORE_PHASE, self.state)
         if 100 <= status <= 355:
             return EnrollmentTransition(
                 EnrollmentAction.PROGRESS,

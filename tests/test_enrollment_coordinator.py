@@ -121,10 +121,10 @@ def acm_device() -> FakeACMDevice:
 class EnrollmentCoordinatorTests(unittest.TestCase):
     def test_only_controlled_adapter_or_protocol_detail_is_exposed(self):
         error = enrollment_protocol.EnrollmentProtocolError(
-            "unknown enrollment status 90"
+            "unknown enrollment status 500"
         )
         self.assertEqual(
-            coordinator._safe_stop_detail(error), "unknown enrollment status 90"
+            coordinator._safe_stop_detail(error), "unknown enrollment status 500"
         )
         self.assertIsNone(coordinator._safe_stop_detail(RuntimeError("private")))
 
