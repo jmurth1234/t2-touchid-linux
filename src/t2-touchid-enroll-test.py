@@ -31,8 +31,11 @@ import t2_baseline
 import t2_bridge_connection
 import t2_bridge_inventory
 import t2_catacomb_local
+import t2_catacomb_store
 import t2_enrollment_coordinator
 import t2_enrollment_finalizer
+import t2_enrollment_journal
+import t2_enrollment_reconciliation
 import t2_mutation_journal
 from t2_acm_device import ACMDevice, ACMDeviceError
 
@@ -231,6 +234,101 @@ def run_preflight(
     }
 
 
+UNFINISHED_PHASES = frozenset(
+    {
+        t2_enrollment_journal.EnrollmentPhase.START_INTENT,
+        t2_enrollment_journal.EnrollmentPhase.ACTIVE,
+        t2_enrollment_journal.EnrollmentPhase.CONTINUE_INTENT,
+        t2_enrollment_journal.EnrollmentPhase.CANCEL_INTENT,
+        t2_enrollment_journal.EnrollmentPhase.CANCEL_REQUESTED,
+        t2_enrollment_journal.EnrollmentPhase.TERMINAL_IDENTITY,
+        t2_enrollment_journal.EnrollmentPhase.TERMINAL_FAILURE,
+        t2_enrollment_journal.EnrollmentPhase.PERSISTING,
+        t2_enrollment_journal.EnrollmentPhase.PERSISTENCE_READY,
+        t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN,
+    }
+)
+
+
+def unfinished_enrollment_journals() -> list[
+    tuple[Path, t2_enrollment_journal.EnrollmentHistory]
+]:
+    _private_root_owned(MUTATION_ROOT, directory=True)
+    found = []
+    for entry in sorted(MUTATION_ROOT.iterdir(), key=lambda value: value.name):
+        if not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl",
+            entry.name,
+        ):
+            raise EnrollmentCommandError(
+                "mutation journal directory contains an unexpected entry"
+            )
+        _private_root_owned(entry, directory=False)
+        history = t2_enrollment_journal.read(entry)
+        if history.phase in UNFINISHED_PHASES:
+            found.append((entry, history))
+    return found
+
+
+def require_no_unfinished_enrollment() -> None:
+    if unfinished_enrollment_journals():
+        raise EnrollmentCommandError(
+            "an earlier enrollment journal is unfinished; reconcile it before retrying"
+        )
+
+
+def run_outcome_unknown_reconciliation(
+    configuration: dict[str, object], store: t2_catacomb_store.CatacombStore
+) -> dict[str, object]:
+    candidates = [
+        item
+        for item in unfinished_enrollment_journals()
+        if item[1].phase is t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+    ]
+    if len(candidates) != 1:
+        raise EnrollmentCommandError(
+            "exactly one outcome-unknown enrollment journal is required"
+        )
+    journal_path, history = candidates[0]
+    if (
+        history.baseline["apple_uid"] != configuration["apple_uid"]
+        or history.baseline["mapping_generation"]
+        != configuration["mapping_generation"]
+    ):
+        raise EnrollmentCommandError(
+            "outcome-unknown journal belongs to another mapping"
+        )
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"],
+        configuration["interface"],
+        _port(),
+        timeout=60,
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        host = t2_enrollment_finalizer.read_local_host_snapshot(
+            store, history.baseline
+        )
+        reconciled = t2_enrollment_reconciliation.append_reconciled(
+            journal_path,
+            history.operation_id,
+            host=host,
+            live=live,
+            mapping_generation=configuration["mapping_generation"],
+        )
+    if reconciled.phase is not t2_enrollment_journal.EnrollmentPhase.RECONCILED:
+        raise EnrollmentCommandError("outcome-unknown journal did not reconcile")
+    return {
+        "schema_version": 1,
+        "outcome_unknown_reconciled": True,
+        "identity_count": len(live["per_user_identity_records"]),
+        "persistent_identity_delta": False,
+        "identifiers_redacted": True,
+        "fingerprint_mutation_performed": False,
+    }
+
+
 def run_enrollment(
     configuration: dict[str, object],
     host_inventory: dict[str, object],
@@ -320,7 +418,9 @@ def run_enrollment(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--preflight-only", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--preflight-only", action="store_true")
+    mode.add_argument("--reconcile-outcome-unknown", action="store_true")
     parser.add_argument("--identity-name", default="Linux enrolled finger")
     parser.add_argument(
         "--acknowledge-password-fallback-tested", action="store_true"
@@ -334,14 +434,20 @@ def main() -> int:
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("run through sudo from the mapped desktop user")
-    if not args.acknowledge_password_fallback_tested:
+    if (
+        not args.reconcile_outcome_unknown
+        and not args.acknowledge_password_fallback_tested
+    ):
         parser.error("password-fallback acknowledgement is required")
-    if not args.preflight_only and not (
+    live_enrollment = (
+        not args.preflight_only and not args.reconcile_outcome_unknown
+    )
+    if live_enrollment and not (
         args.acknowledge_live_fingerprint_enrollment
         and args.acknowledge_local_catacomb_mutation
     ):
         parser.error("both live mutation acknowledgements are required")
-    if not args.preflight_only and (
+    if live_enrollment and (
         not args.identity_name
         or "\x00" in args.identity_name
         or len(args.identity_name.encode("utf-8")) > 1024
@@ -370,20 +476,22 @@ def main() -> int:
                 raise EnrollmentCommandError("operation lock is unsafe")
             fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             store_preexisting = os.path.lexists(STORE_ROOT)
-            host_inventory, _store = t2_catacomb_local.provision_from_backup(
+            host_inventory, store = t2_catacomb_local.provision_from_backup(
                 backup, STORE_ROOT, configuration["apple_uid"]
             )
-            result = (
-                run_preflight(configuration, host_inventory, backup)
-                if args.preflight_only
-                else run_enrollment(
+            if args.preflight_only:
+                result = run_preflight(configuration, host_inventory, backup)
+            elif args.reconcile_outcome_unknown:
+                result = run_outcome_unknown_reconciliation(configuration, store)
+            else:
+                require_no_unfinished_enrollment()
+                result = run_enrollment(
                     configuration,
                     host_inventory,
                     backup,
                     args.identity_name,
                     cancellation,
                 )
-            )
             result["local_store_provisioned"] = not store_preexisting
         finally:
             os.close(lock_descriptor)
@@ -396,8 +504,10 @@ def main() -> int:
         t2_bridge_connection.BridgeConnectionError,
         t2_bridge_inventory.BridgeInventoryError,
         t2_catacomb_local.LocalCatacombError,
+        t2_catacomb_store.CatacombStoreError,
         t2_enrollment_coordinator.EnrollmentCoordinatorError,
         t2_enrollment_finalizer.EnrollmentFinalizerError,
+        t2_enrollment_reconciliation.EnrollmentReconciliationError,
         t2_mutation_journal.JournalError,
     ) as error:
         print(f"t2-touchid-enroll-test: {error}", file=sys.stderr)
@@ -405,7 +515,7 @@ def main() -> int:
     finally:
         signal.signal(signal.SIGINT, previous_sigint)
     print(json.dumps(result, indent=2, sort_keys=True))
-    if not args.preflight_only and result.get("enrollment_succeeded") is not True:
+    if live_enrollment and result.get("enrollment_succeeded") is not True:
         return 1
     return 0
 

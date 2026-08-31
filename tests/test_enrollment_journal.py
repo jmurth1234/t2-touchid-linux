@@ -139,6 +139,61 @@ class EnrollmentJournalTests(unittest.TestCase):
                     {"status": 0},
                 )
 
+    def test_unknown_outcome_accepts_only_fresh_no_change_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create(directory)
+            value = baseline()
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "ENROLL_START_INTENT",
+                {
+                    "apple_uid": 501,
+                    "protocol_version": 2,
+                    "connection_generation": value["connection_generation"],
+                    "request_length": 68,
+                    "request_sha256": "a" * 64,
+                },
+            )
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "ENROLL_OUTCOME_UNKNOWN",
+                {
+                    "connection_generation": value["connection_generation"],
+                    "stage": "start",
+                    "reason": "transport-error",
+                    "mutation_possible": True,
+                },
+            )
+            evidence = {
+                "connection_generation": str(uuid.UUID(int=99)),
+                "snapshot_sha256": "f" * 64,
+                "identity_uuid": None,
+                "identity_present": False,
+                "host_sep_identity_equal": True,
+                "catacomb_reconciled": True,
+                "bindings_preserved": True,
+                "mapping_generation": value["mapping_generation"],
+                "capacity_used": value["capacity"]["used"],
+                "capacity_maximum": value["capacity"]["maximum"],
+                "master_enrollment_count": value["master_enrollment_count"],
+            }
+            with self.assertRaisesRegex(enrollment.EnrollmentJournalError, "fresh"):
+                enrollment.append_checked(
+                    path,
+                    operation_id,
+                    "E3_RECOVERY_NO_CHANGE_RECONCILED",
+                    {**evidence, "connection_generation": value["connection_generation"]},
+                )
+            result = enrollment.append_checked(
+                path,
+                operation_id,
+                "E3_RECOVERY_NO_CHANGE_RECONCILED",
+                evidence,
+            )
+        self.assertEqual(result.phase, enrollment.EnrollmentPhase.RECONCILED)
+
     def test_wrong_generation_uid_digest_and_continue_order_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path, operation_id = self.create(directory)

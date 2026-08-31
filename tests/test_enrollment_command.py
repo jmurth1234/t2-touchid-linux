@@ -33,7 +33,7 @@ CONFIGURATION = {
 
 
 class EnrollmentCommandTests(unittest.TestCase):
-    def invoke(self, arguments, *, live=False):
+    def invoke(self, arguments, *, live=False, recovery=False):
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "operation.lock"
             backup = Path(directory) / ("a" * 64 + ".tar.gz")
@@ -62,6 +62,7 @@ class EnrollmentCommandTests(unittest.TestCase):
                     return_value=({}, object()),
                 ),
                 mock.patch.object(MODULE, "warm_sensor"),
+                mock.patch.object(MODULE, "require_no_unfinished_enrollment"),
                 mock.patch.object(MODULE, "OPERATION_LOCK", lock),
                 mock.patch.object(
                     MODULE,
@@ -77,12 +78,22 @@ class EnrollmentCommandTests(unittest.TestCase):
                         "enrollment_succeeded": True,
                     },
                 ) as enrollment,
+                mock.patch.object(
+                    MODULE,
+                    "run_outcome_unknown_reconciliation",
+                    return_value={
+                        **result,
+                        "outcome_unknown_reconciled": True,
+                        "fingerprint_mutation_performed": False,
+                    },
+                ) as reconcile,
                 redirect_stdout(output),
             ):
                 status = MODULE.main()
             self.assertEqual(status, 0)
-            self.assertEqual(preflight.called, not live)
+            self.assertEqual(preflight.called, not live and not recovery)
             self.assertEqual(enrollment.called, live)
+            self.assertEqual(reconcile.called, recovery)
             return output.getvalue()
 
     def test_preflight_requires_no_live_mutation_acknowledgement(self):
@@ -124,6 +135,32 @@ class EnrollmentCommandTests(unittest.TestCase):
             live=True,
         )
         self.assertIn('"mutation_performed": true', output)
+
+    def test_recovery_needs_no_password_or_live_mutation_acknowledgement(self):
+        output = self.invoke(
+            ["--reconcile-outcome-unknown"],
+            recovery=True,
+        )
+        self.assertIn('"outcome_unknown_reconciled": true', output)
+        self.assertIn('"fingerprint_mutation_performed": false', output)
+
+    def test_unfinished_journal_blocks_a_new_live_operation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            journal = root / "00000000-0000-0000-0000-000000000001.jsonl"
+            journal.touch()
+            history = SimpleNamespace(
+                phase=MODULE.t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+            )
+            with (
+                mock.patch.object(MODULE, "MUTATION_ROOT", root),
+                mock.patch.object(MODULE, "_private_root_owned"),
+                mock.patch.object(
+                    MODULE.t2_enrollment_journal, "read", return_value=history
+                ),
+                self.assertRaisesRegex(MODULE.EnrollmentCommandError, "unfinished"),
+            ):
+                MODULE.require_no_unfinished_enrollment()
 
     def test_invalid_identity_name_is_rejected_before_runtime_setup(self):
         arguments = [

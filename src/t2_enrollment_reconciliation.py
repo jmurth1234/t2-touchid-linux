@@ -167,16 +167,30 @@ def classify(
         history.phase is enrollment_journal.EnrollmentPhase.PERSISTING
         and history.persistence.phase is persistence_journal.PersistencePhase.ATTESTATION_READY
     )
+    outcome_unknown_recovery = (
+        history.phase is enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+    )
     if history.phase not in (
         enrollment_journal.EnrollmentPhase.PERSISTENCE_READY,
         enrollment_journal.EnrollmentPhase.TERMINAL_FAILURE,
+        enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN,
     ) and not persistence_readback:
         raise EnrollmentReconciliationError("journal is not ready for E3")
     baseline = history.baseline
     apple_uid = baseline["apple_uid"]
+    live_generation = live.get("connection_generation")
+    try:
+        mutation_journal.require_uuid(live_generation, "connection generation")
+    except mutation_journal.JournalError as error:
+        raise EnrollmentReconciliationError(str(error)) from error
+    generation_valid = (
+        live_generation != baseline["connection_generation"]
+        if outcome_unknown_recovery
+        else live_generation == baseline["connection_generation"]
+    )
     if (
         live.get("double_collection_equal") is not True
-        or live.get("connection_generation") != baseline["connection_generation"]
+        or not generation_valid
         or live.get("apple_uid") != apple_uid
         or live.get("biometric_protocol_version") != baseline["protocol_version"]
     ):
@@ -329,7 +343,7 @@ def classify(
         )
     return ReconciliationPlan(
         {
-            "connection_generation": baseline["connection_generation"],
+            "connection_generation": live_generation,
             "snapshot_sha256": snapshot_sha256,
             "identity_uuid": identity_uuid,
             "identity_present": identity_uuid is not None,
@@ -361,6 +375,11 @@ def append_reconciled(
         mapping_generation=mapping_generation,
     )
     if plan.readback_identity_uuid is not None:
+        if history.phase is enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN:
+            raise EnrollmentReconciliationError(
+                "outcome-unknown recovery observed a new identity; "
+                "automatic recovery is unsafe"
+            )
         return enrollment_journal.append_checked(
             path,
             operation_id,
@@ -374,6 +393,11 @@ def append_reconciled(
         )
     if plan.evidence is None:
         raise EnrollmentReconciliationError("E3 evidence is incomplete")
+    milestone = (
+        "E3_RECOVERY_NO_CHANGE_RECONCILED"
+        if history.phase is enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+        else "E3_RECONCILED"
+    )
     return enrollment_journal.append_checked(
-        path, operation_id, "E3_RECONCILED", plan.evidence
+        path, operation_id, milestone, plan.evidence
     )

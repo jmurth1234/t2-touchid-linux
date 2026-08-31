@@ -5220,6 +5220,26 @@ rehearsal and explicit operator approval of the first live enrollment.
 The target-side negative gate rehearsal confirms that omitting either mutation
 acknowledgement exits during argument validation, before protected runtime state
 or hardware is opened.
+
+The explicitly approved first live enrollment attempt on 2026-08-31 proved the
+next boundary. UID-bound ACM creation, externalization, password binding, and
+policy 1007 all succeeded; the broker durably wrote start intent, then froze the
+operation as start/transport outcome-unknown before scan feedback. A fresh
+double-collected inventory still contained the single pre-existing identity,
+unchanged capacity, reconciled global/per-user records, and unchanged local
+Catacomb state. The adapter had required a two-item reply even for zero-output
+commands, while the shared Bridge decoder and probe contract permit omission of
+the nil output item. It now accepts only `[status]`, `[status, null]`, or
+`[status, empty-data]` and rejects every nonempty output. This is the leading
+cause and is not hardware-confirmed until the next separately approved run
+crosses start successfully.
+
+The incident also closed a recovery gap. The broker now blocks new live
+enrollment while any mutation journal is unfinished. Its dedicated recovery
+mode can close exactly one outcome-unknown attempt only on a different Bridge
+generation whose stable read-back proves no identity, capacity, Catacomb,
+component, account/bag, or mapping delta. A newly visible identity or any
+persistent divergence remains manual and cannot be normalized into failure.
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.
 - Treat producer-side decomposition of generic enrollment failure 67 as

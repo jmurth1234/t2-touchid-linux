@@ -410,6 +410,73 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             phase = EnrollmentPhase.RECONCILED
             continue
 
+        if milestone == "E3_RECOVERY_NO_CHANGE_RECONCILED":
+            if phase is not EnrollmentPhase.OUTCOME_UNKNOWN:
+                raise EnrollmentJournalError(
+                    "outcome-unknown recovery reconciliation is out of order"
+                )
+            evidence = _exact(
+                evidence,
+                {
+                    "connection_generation",
+                    "snapshot_sha256",
+                    "identity_uuid",
+                    "identity_present",
+                    "host_sep_identity_equal",
+                    "catacomb_reconciled",
+                    "bindings_preserved",
+                    "mapping_generation",
+                    "capacity_used",
+                    "capacity_maximum",
+                    "master_enrollment_count",
+                },
+                milestone,
+            )
+            _uuid(
+                evidence["connection_generation"],
+                "recovery connection generation",
+            )
+            if evidence["connection_generation"] == baseline["connection_generation"]:
+                raise EnrollmentJournalError(
+                    "outcome-unknown recovery did not use a fresh Bridge generation"
+                )
+            _sha256(evidence["snapshot_sha256"], "snapshot_sha256")
+            _sha256(evidence["mapping_generation"], "mapping_generation")
+            if evidence["mapping_generation"] != baseline["mapping_generation"]:
+                raise EnrollmentJournalError(
+                    "mapping changed before recovery reconciliation"
+                )
+            for field in (
+                "host_sep_identity_equal",
+                "catacomb_reconciled",
+                "bindings_preserved",
+            ):
+                if evidence[field] is not True:
+                    raise EnrollmentJournalError(
+                        f"recovery reconciliation field {field} is not true"
+                    )
+            used = _uint(evidence["capacity_used"], "capacity used", 0xFFFFFFFF)
+            maximum = _uint(
+                evidence["capacity_maximum"], "capacity maximum", 0xFFFFFFFF
+            )
+            _uint(
+                evidence["master_enrollment_count"],
+                "master enrollment count",
+                0xFFFFFFFF,
+            )
+            if (
+                evidence["identity_uuid"] is not None
+                or evidence["identity_present"] is not False
+                or used != baseline["capacity"]["used"]
+                or maximum != baseline["capacity"]["maximum"]
+            ):
+                raise EnrollmentJournalError(
+                    "outcome-unknown recovery observed a persistent identity delta"
+                )
+            reconciled_snapshot_sha256 = evidence["snapshot_sha256"]
+            phase = EnrollmentPhase.RECONCILED
+            continue
+
         if milestone == "E4_POST_REBOOT_VERIFIED":
             if (
                 phase is not EnrollmentPhase.RECONCILED

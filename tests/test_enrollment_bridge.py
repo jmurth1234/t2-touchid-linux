@@ -136,7 +136,7 @@ class EnrollmentBridgeTests(unittest.TestCase):
     def test_malformed_reply_output_or_event_poisons(self):
         bad_results = [
             [0, None],
-            ([0], []),
+            ([], []),
             ([True, None], []),
             ([0, b"unexpected"], []),
             ([0, None], [event()[2]]),
@@ -150,6 +150,15 @@ class EnrollmentBridgeTests(unittest.TestCase):
                 with self.assertRaises(bridge.EnrollmentBridgeError):
                     transport.start(start_payload())
                 self.assertEqual(transport.state, bridge.EnrollmentBridgeState.POISONED)
+
+    def test_zero_output_reply_encodings_are_equivalent(self):
+        for reply in ([0], [0, None], [0, b""]):
+            with self.subTest(reply=reply):
+                lease = FakeLease()
+                lease.results = [(reply, [])]
+                transport = self.make(lease)
+                self.assertEqual(transport.start(start_payload()), 0)
+                self.assertEqual(transport.state, bridge.EnrollmentBridgeState.ACTIVE)
 
     def test_generation_change_during_dispatch_poisons(self):
         lease = FakeLease()

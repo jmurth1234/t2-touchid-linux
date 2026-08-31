@@ -17,6 +17,35 @@ from tests.test_enrollment_persistence_journal import append_persistence
 
 
 class EnrollmentReconciliationTests(unittest.TestCase):
+    def create_unknown(self, directory: str) -> tuple[Path, str]:
+        value = baseline()
+        path = Path(directory) / "operation.jsonl"
+        operation_id, _record = mutation_journal.create(path, "enroll", value)
+        enrollment_journal.append_checked(
+            path,
+            operation_id,
+            "ENROLL_START_INTENT",
+            {
+                "apple_uid": value["apple_uid"],
+                "protocol_version": value["protocol_version"],
+                "connection_generation": value["connection_generation"],
+                "request_length": 68,
+                "request_sha256": "a" * 64,
+            },
+        )
+        enrollment_journal.append_checked(
+            path,
+            operation_id,
+            "ENROLL_OUTCOME_UNKNOWN",
+            {
+                "connection_generation": value["connection_generation"],
+                "stage": "start",
+                "reason": "transport-error",
+                "mutation_possible": True,
+            },
+        )
+        return path, operation_id
+
     def create_terminal(
         self, directory: str, *, identity: bool
     ) -> tuple[Path, str, str | None]:
@@ -265,6 +294,51 @@ class EnrollmentReconciliationTests(unittest.TestCase):
                 mapping_generation=baseline()["mapping_generation"],
             )
         self.assertEqual(result.phase, enrollment_journal.EnrollmentPhase.RECONCILED)
+
+    def test_unknown_outcome_reconciles_unchanged_state_on_fresh_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create_unknown(directory)
+            host, live = self.snapshots(success=False)
+            live["connection_generation"] = str(uuid.UUID(int=99))
+            result = reconciliation.append_reconciled(
+                path,
+                operation_id,
+                host=host,
+                live=live,
+                mapping_generation=baseline()["mapping_generation"],
+            )
+            records = mutation_journal.read(path)
+        self.assertEqual(result.phase, enrollment_journal.EnrollmentPhase.RECONCILED)
+        self.assertEqual(
+            records[-1]["milestone"], "E3_RECOVERY_NO_CHANGE_RECONCILED"
+        )
+
+    def test_unknown_outcome_recovery_rejects_old_generation_or_new_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create_unknown(directory)
+            host, live = self.snapshots(success=False)
+            with self.assertRaisesRegex(
+                reconciliation.EnrollmentReconciliationError, "stale"
+            ):
+                reconciliation.append_reconciled(
+                    path,
+                    operation_id,
+                    host=host,
+                    live=live,
+                    mapping_generation=baseline()["mapping_generation"],
+                )
+            host, live = self.snapshots(success=True)
+            live["connection_generation"] = str(uuid.UUID(int=99))
+            with self.assertRaisesRegex(
+                reconciliation.EnrollmentReconciliationError, "automatic recovery"
+            ):
+                reconciliation.append_reconciled(
+                    path,
+                    operation_id,
+                    host=host,
+                    live=live,
+                    mapping_generation=baseline()["mapping_generation"],
+                )
 
     def test_failure_with_new_identity_is_promoted_before_persistence(self):
         with tempfile.TemporaryDirectory() as directory:

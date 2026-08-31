@@ -110,6 +110,13 @@ as provisional E2 success before attempting E3. This is a pure classifier: no
 snapshot collector, Catacomb writer, Bridge adapter, or hardware enrollment
 command has been added.
 
+The privileged experimental broker now supplies the collector around this pure
+layer. Its recovery-only mode accepts exactly one outcome-unknown enrollment,
+opens a fresh Bridge generation, and appends a distinct no-change E3 milestone
+only when the stable host/SEP snapshot still equals E0. It refuses automatic
+recovery if a new identity or any persistent delta is visible, and the live
+path refuses a new operation while an earlier journal is unfinished.
+
 E4 post-reboot verification is now a typed journal gate, not a live command. A
 successful enrollment can cross it only on a genuinely new Linux boot and
 Bridge connection while reproducing the E3 snapshot, mapping, account/bag,
@@ -154,7 +161,8 @@ buffer, emit only exact start/continue/cancel commands, validate and sequence
 service events within one connection/operation generation, never treat progress
 as success, and stop at `SEP-identity-observed`. The adapter permanently poisons
 itself after an ambiguous dispatch or receive. The adapter itself owns no
-socket, and there is no fprintd enrollment route or Catacomb mutation command.
+socket and there is no fprintd enrollment route; only the separately gated
+experimental broker composes it with Catacomb persistence.
 
 The next same-connection layer is also implemented without exposing a live
 mutation command. A single owner initializes and pins one Bridge socket; a
@@ -213,9 +221,18 @@ The non-mutating hardware preflight passed on 2026-08-31 and created the private
 Linux-local store from the sole hash-named root backup. It verified the backup,
 strictly decoded all three components, warmed the sensor, reconciled one current
 identity over a single Bridge generation, and confirmed spare capacity. It did
-not create an ACM context or dispatch enrollment/persistence. Do not run the
-live form until its command-level fault rehearsal is complete and the operator
-has explicitly approved a real fingerprint mutation.
+not create an ACM context or dispatch enrollment/persistence.
+
+The explicitly approved first live run reached successful password/ACM binding
+and wrote `ENROLL_START_INTENT`, then conservatively stopped with
+`ENROLL_OUTCOME_UNKNOWN` at start/transport before scan feedback. A subsequent
+stable inventory still showed one identity, unchanged capacity, host/SEP
+equality, and no Catacomb delta. Inspection found an overly narrow adapter
+assumption: a command with zero output capacity may omit the nil output item,
+where the fixture had included it. The adapter now normalizes only the three
+exact empty-output encodings and remains fail-closed for nonempty output. The
+failed operation must be recovery-reconciled before a separately approved
+second live run.
 
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements

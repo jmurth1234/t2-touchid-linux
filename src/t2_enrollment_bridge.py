@@ -144,15 +144,20 @@ class EnrollmentBridgeTransport:
             if type(result) is not tuple or len(result) != 2:
                 raise EnrollmentBridgeError("Bridge command result is malformed")
             reply, events = result
-            if type(reply) is not list or len(reply) != 2:
+            if type(reply) is not list or len(reply) not in (1, 2):
                 raise EnrollmentBridgeError("Bridge command reply is malformed")
-            status, output = reply
+            status = reply[0]
+            output = reply[1] if len(reply) == 2 else None
             if (
                 type(status) is not int
                 or isinstance(status, bool)
                 or not -(2**31) <= status < 2**32
             ):
                 raise EnrollmentBridgeError("Bridge command status is malformed")
+            # Objective-C/XPC omits a nil output object, so commands with a
+            # zero output capacity legitimately arrive as either [status] or
+            # [status, null].  Some bridge builds instead materialize an empty
+            # NSData.  These are the only equivalent zero-output encodings.
             if output not in (None, b""):
                 raise EnrollmentBridgeError("enrollment command returned unexpected data")
             if type(events) is not list:

@@ -20,6 +20,25 @@ class EnrollmentCoordinatorError(RuntimeError):
     """Raised when a composed enrollment cannot prove its final state."""
 
 
+def _safe_stop_detail(error: BaseException) -> str | None:
+    """Expose only controlled adapter diagnostics, never arbitrary text."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, t2_enrollment_bridge.EnrollmentBridgeError):
+            return str(current)
+        cause = current.__cause__
+        current = cause if isinstance(cause, BaseException) else None
+    return None
+
+
+def _stopped(error: BaseException) -> EnrollmentCoordinatorError:
+    detail = _safe_stop_detail(error)
+    suffix = f": {detail}" if detail else ""
+    return EnrollmentCoordinatorError(f"same-connection enrollment stopped{suffix}")
+
+
 @dataclass(frozen=True)
 class FinalizationAttestation:
     connection_generation: str
@@ -164,7 +183,7 @@ def run(
     except t2_acm_device.ACMDeviceError as error:
         if isinstance(error.__cause__, EnrollmentCoordinatorError):
             raise error.__cause__ from error
-        raise EnrollmentCoordinatorError("same-connection enrollment stopped") from error
+        raise _stopped(error) from error
     except (
         t2_baseline.BaselineError,
         t2_bridge_inventory.BridgeInventoryError,
@@ -172,4 +191,4 @@ def run(
         t2_enrollment_operation.EnrollmentOperationError,
         t2_mutation_journal.JournalError,
     ) as error:
-        raise EnrollmentCoordinatorError("same-connection enrollment stopped") from error
+        raise _stopped(error) from error

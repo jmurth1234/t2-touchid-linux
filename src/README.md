@@ -104,6 +104,10 @@ caller/target pair, protocol, capacity, and exact Bridge connection generation
 as E0. Consequently the standalone
 `t2-touchid-baseline` command remains evidence collection only: it closes its
 inventory connection and reports `same_connection_enrollment_ready: false`.
+An outcome-unknown attempt may cross the distinct
+`E3_RECOVERY_NO_CHANGE_RECONCILED` transition only on a fresh Bridge generation
+whose stable host/SEP read-back proves identity, capacity, Catacomb, and binding
+state are all unchanged.
 
 `t2_enrollment_operation.py` composes those two pure layers into a synchronous
 E1/E2 operation core. It requires a same-connection E0 journal, accepts only an
@@ -120,7 +124,9 @@ operation core without opening a socket. It accepts only an already-open,
 exclusive Bridge lease whose canonical connection-generation UUID matches E0;
 emits exact start `0x03`, continue `0x0e`, and cancel `0x0c` commands; validates
 and queues the recovered five-item service callbacks; and requires empty
-command output. A generation change, malformed reply/event, disconnect, or
+command output. Zero-capacity commands accept the equivalent Bridge encodings
+`[status]`, `[status, null]`, and `[status, empty-data]`; any nonempty output is
+still rejected. A generation change, malformed reply/event, disconnect, or
 nonzero active-operation reply permanently poisons the adapter. It composes
 with the journaled enrollment core in tests, but no live lease, baseline-to-
 authorization coordinator, or enrollment CLI is exposed.
@@ -197,8 +203,9 @@ has replayed every persistence milestone and its reconciliation-snapshot digest
 matches the classifier's stable read-back. A generic failure reconciles
 only to a byte-for-byte unchanged persistent state; if stable read-back reveals
 a new UUID despite that failure, the journal first promotes it to a provisional
-E2 identity. These modules perform no I/O and no persistence themselves, and
-there is no command-line producer for the persistence milestones.
+E2 identity. An outcome-unknown start can be closed only as no-change recovery
+on a fresh generation; a new identity instead refuses automatic recovery.
+These modules perform no I/O and no persistence themselves.
 
 `t2_enrollment_finalizer.py` is the concrete no-CLI producer. It derives the
 post-E2 built-in save list on the owned connection, composes the strict
@@ -215,8 +222,13 @@ local store, sensor readiness, operation lock, same-connection E0, and capacity.
 The live branch additionally requires explicit live-fingerprint and local-store
 mutation acknowledgements, derives all security subjects from protected runtime
 state, retains one Bridge lease through E3, and provides cancellation/audio
-feedback. Its preflight has passed on the target hardware. The live branch has
-not been executed and remains an experimental recovery-required path.
+feedback. Its preflight has passed on the target hardware. The first live run
+reached password-bound E1, then conservatively stopped outcome-unknown when the
+adapter rejected the real zero-output reply shape; fresh stable read-back proved
+no identity or Catacomb delta. `--reconcile-outcome-unknown` records that proof
+without issuing enrollment or persistence, and live enrollment refuses to start
+while an earlier mutation journal remains unfinished. A second live attempt is
+still explicitly operator-gated.
 
 The typed journal also defines `E4_POST_REBOOT_VERIFIED` for a successful
 identity. It is accepted only after E3, on both a different Linux boot UUID and
