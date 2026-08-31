@@ -86,6 +86,11 @@ evidence, not intent.
       `0x06`, strict keybag-state decoding, and stable double-read observation.
 - [x] Compose the observer with the existing load/bind/unlock commands through
       a non-exposed adapter that pipes and never logs password bytes.
+- [x] Add a non-exposed self-service policy resolver that binds distinct
+      verify/inventory/enroll/identity-management and activation decisions to
+      caller, target, mapping generation, operation, boot, and bounded time.
+- [x] Require the exact policy binding in the activation core and reuse its
+      operation UUID in the durable activation journal.
 - [ ] Validate operation `0x06` and the read-only alias observer on hardware
       after loading the rebuilt pinned module at reboot.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor

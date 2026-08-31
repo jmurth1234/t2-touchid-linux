@@ -73,8 +73,19 @@ unknown fields, ambiguous UID/account/bag/keybag ownership, unsafe paths, and
 implicit capabilities. Each record targets an already-provisioned Apple user;
 it cannot create an account, keybag, persona, or biometric container. Its
 resolver checks only target mapping and capability. Authenticated-caller and
-delegation policy remain a separate required boundary, so this module is not
-yet connected to fprintd or any live broker.
+delegation policy remain separate from the file parser.
+
+`t2_user_policy.py` implements that next pure boundary for the operations
+`verify`, `inventory`, `enroll`, `rename`, and `delete-one`. It accepts only an
+authenticated active self-session, resolves the target exclusively by numeric
+Linux UID through the protected mapping, and requires an operation-specific
+grant bound to caller, target, exact mapping bytes, operation UUID, Linux boot,
+and a maximum five-minute monotonic validity interval. Cross-user delegation
+is disabled, root has no implicit authority, mutation-disable policy is
+independent, and grants are not transitive between action classes. A locked or
+absent target additionally requires a separately bound `activate-user` grant;
+lockout and quarantine can never use that route. The returned mapping and
+binding are internal while the report is identifier-free.
 
 `t2_user_readiness.py` is the next pure runtime boundary. Given a validated
 mapping plus independently collected Linux-account/keybag/Catacomb and live
@@ -100,6 +111,11 @@ becomes a terminal reconciliation-required record. Recovery requires a fresh
 runtime generation and an unchanged exact mapping, performs one read-only alias
 observation, and never retries a password, bind, unlock, or unknown handle. It
 can close only as observed ready, observed not-ready, blocked, or quarantined.
+The activation operation now refuses to observe or mutate unless supplied the
+exact policy binding. It accepts an ordinary operation grant only while the
+target remains ready, accepts activation only with the separate activation
+grant, and uses the policy-bound operation UUID as its journal UUID so a grant
+cannot be detached from recovery evidence.
 `t2_aks_state.py` strictly decodes the exact ten-field DER keybag-state schema
 observed on the proven build, including canonical SET ordering, integer
 encoding, queried handle, lock state, and private user UUID. `t2_aks_observer.py`
@@ -108,8 +124,8 @@ only inside a private transient directory, and deletes it immediately.
 `t2_aks_transport.py` composes that observer with the existing load, bind, and
 unlock commands; password bytes traverse a pipe and command output must match
 the exact typed reply. These modules provide the concrete dependency boundary,
-but no PolicyKit action, mapping consumer, recovery CLI, or public activation
-command is present. Hardware validation of operation `0x06` requires installing
+but no PolicyKit evidence collector, recovery CLI, or public activation command
+is present. Hardware validation of operation `0x06` requires installing
 the rebuilt pinned module and rebooting before this adapter can be enabled.
 
 The `t2-touchid-manage` rename path resolves one slot only after that

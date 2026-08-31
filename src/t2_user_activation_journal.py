@@ -406,6 +406,7 @@ def create(
     *,
     linux_boot_uuid: str,
     runtime_generation: str,
+    operation_id: str | None = None,
 ) -> UserActivationHistory:
     decision = t2_user_readiness.assess(selected, capability, persistent, alias)
     if decision.state not in {
@@ -431,7 +432,8 @@ def create(
         "alias_preexisting": alias.present,
     }
     _validate_baseline(baseline)
-    operation_id = str(uuid.uuid4())
+    operation_id = operation_id or str(uuid.uuid4())
+    _uuid(operation_id, "operation ID")
     journal.append(
         path,
         operation_id,

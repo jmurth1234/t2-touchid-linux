@@ -2967,6 +2967,28 @@ view through an anonymous pipe, never argv or environment. This code is not a
 public multi-user feature: operation `0x06` still needs read-only live validation
 after the rebuilt pinned module is installed and loaded at reboot.
 
+The previously missing caller/delegation boundary is now represented by a pure,
+non-exposed policy resolver. A request contains a Linux target UID but no Apple
+UID, account UUID, bag UUID, handle, or alias; all Apple authority is selected
+from the exact protected mapping. Only authenticated active self-service is
+accepted. Root is not treated as the fingerprint owner and cross-user
+delegation is deliberately disabled. Distinct verify, own-inventory,
+enrollment, and identity-management actions are bound to the caller UID,
+target UID, byte-exact mapping generation, operation UUID, Linux boot UUID, and
+a monotonic grant lifetime capped at five minutes. Mutation-disable policy is
+checked independently.
+
+An operation authorization is intentionally insufficient to load, bind, or
+unlock a keybag. Alias absence, device lock, or before-first-unlock needs a
+second `activate-user` decision carrying the identical binding; lockout,
+binding drift, Catacomb corruption, and unknown lock bits remain ineligible.
+The activation core now verifies this policy object before its first transport
+observation. A target that becomes locked after a ready-only authorization is
+refused without mutation, while an authorized activation uses the same bound
+operation UUID for its durable journal. This closes the internal authority-to-
+recovery join, but it does not implement the eventual PolicyKit evidence
+collector, cross-user actions, relocking, or public broker API.
+
 The safest host-side activation is not to reuse `-501` for every Linux user.
 Each already-provisioned Apple user retains its Apple UID-derived alias
 (`-UID`), so switching from UID 501 to 502 selects `-502` rather than rebinding

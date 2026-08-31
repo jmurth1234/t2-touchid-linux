@@ -102,6 +102,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
   accounts to already-provisioned Apple users and explicit capabilities.
 - `src/t2_user_readiness.py`: pure classifier for per-user binding, alias, and
   lock-state evidence; it emits no AKS operation.
+- `src/t2_user_policy.py`: non-exposed self-service caller/target/policy
+  resolver with exact operation, boot, mapping, and authorization bindings.
 - `src/t2_user_activation_{journal,operation,recovery}.py`: transport-free
   durable activation, execution, and read-only recovery core; no CLI exists.
 - `src/t2_aks_{state,observer,transport}.py`: strict operation-`0x19` state
@@ -309,9 +311,19 @@ account generation to one already-provisioned Apple UID, account UUID, AKS bag
 UUID, canonical private keybag path/digest, unlock mode, and explicit
 `verify`/`enroll`/`identity-management` capabilities. It rejects duplicate
 Apple authority across Linux accounts and derives the special alias as
-`-AppleUID`; callers cannot supply an alias. No command consumes this mapping
-yet, because per-user bag activation, relocking, and runtime reconciliation
-must be implemented and proven first.
+`-AppleUID`; callers cannot supply an alias.
+
+The internal policy resolver now consumes that mapping together with
+authenticated-caller, active-session, fresh policy-grant, and readiness
+evidence. It permits only self-service, gives root no implicit bypass, binds a
+grant to the exact caller, target, mapping generation, operation UUID, Linux
+boot, action, and a bounded monotonic lifetime, and keeps verification,
+inventory, enrollment, and identity-management actions non-transitive. A
+separate `activate-user` grant is mandatory before a locked or absent alias may
+enter the keybag activation core. The activation journal then uses the same
+bound operation UUID. There is still no PolicyKit collector or public
+multi-user command; per-user relocking and runtime/session orchestration remain
+incomplete.
 
 The accompanying pure readiness classifier already defines the fail-closed
 outcomes for that future runtime: absent aliases require activation and fresh

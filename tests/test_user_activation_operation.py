@@ -15,6 +15,7 @@ sys.path.insert(0, str(SOURCE))
 import t2_user_activation_journal as journal
 import t2_user_activation_operation as operation
 import t2_user_mapping as mapping
+import t2_user_policy as policy
 import t2_user_readiness as readiness
 
 
@@ -73,6 +74,7 @@ class FakeTransport:
         bind=0,
         unlock=0,
     ):
+        self.initial_observation = observations[0]
         self.observations = iter(observations)
         self.load_result = load
         self.loaded_bag_uuid = loaded_bag_uuid
@@ -118,8 +120,53 @@ class UserActivationOperationTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def invoke(self, transport, password=UNSET):
+    def authorization(self, initial):
+        operation_id = identifier(40)
+        boot_id = identifier(21)
+        request = policy.OperationRequest(
+            "verify", 1000, operation_id, boot_id, 2_000, True
+        )
+        caller = policy.CallerEvidence(1000, "a" * 64, True, True)
+        operation_grant = policy.PolicyGrant(
+            identifier(41),
+            policy.OPERATION_POLICIES["verify"].action,
+            1000,
+            1000,
+            self.mapping_set.generation,
+            operation_id,
+            boot_id,
+            1_000,
+            3_000,
+            True,
+        )
+        activation_grant = None
+        if initial != READY:
+            activation_grant = policy.PolicyGrant(
+                identifier(42),
+                policy.ACTIVATE_ACTION,
+                1000,
+                1000,
+                self.mapping_set.generation,
+                operation_id,
+                boot_id,
+                1_000,
+                3_000,
+                True,
+            )
+        return policy.authorize(
+            self.mapping_set,
+            request,
+            caller,
+            persistent(),
+            initial,
+            operation_grant,
+            activation_grant,
+        )
+
+    def invoke(self, transport, password=UNSET, authorization=None):
         password = bytearray(b"test-password") if password is UNSET else password
+        if authorization is None:
+            authorization = self.authorization(transport.initial_observation)
         try:
             result = operation.run(
                 self.path,
@@ -129,6 +176,7 @@ class UserActivationOperationTests(unittest.TestCase):
                 persistent(),
                 transport,
                 password,
+                authorization=authorization,
                 linux_boot_uuid=identifier(21),
             )
             return result, password
@@ -161,6 +209,26 @@ class UserActivationOperationTests(unittest.TestCase):
         self.assertEqual(transport.calls, [("observe", -501)])
         self.assertFalse(self.path.exists())
 
+    def test_activation_refuses_missing_or_stale_policy_authority(self):
+        transport = FakeTransport([ABSENT])
+        with self.assertRaisesRegex(
+            operation.UserActivationOperationError, "policy authority"
+        ):
+            self.invoke(transport, authorization=object())
+        self.assertEqual(transport.calls, [])
+        self.assertFalse(self.path.exists())
+
+    def test_ready_authority_cannot_be_reused_after_target_locks(self):
+        authorization = self.authorization(READY)
+        transport = FakeTransport([LOCKED])
+        with self.assertRaisesRegex(
+            operation.UserActivationOperationError,
+            "separate activation authority",
+        ):
+            self.invoke(transport, authorization=authorization)
+        self.assertEqual(transport.calls, [("observe", -501)])
+        self.assertFalse(self.path.exists())
+
     def test_absent_alias_loads_binds_unlocks_and_reconciles(self):
         transport = FakeTransport([ABSENT, LOCKED, READY])
         result, password = self.invoke(transport)
@@ -170,6 +238,7 @@ class UserActivationOperationTests(unittest.TestCase):
         self.assertEqual(transport.password_seen, b"test-password")
         self.assertEqual(password, bytearray(len(password)))
         self.assertEqual(journal.read(self.path).phase, journal.UserActivationPhase.READY)
+        self.assertEqual(journal.read(self.path).operation_id, identifier(40))
         self.assertEqual(
             [call[0] for call in transport.calls],
             ["observe", "load", "bag-uuid", "bind", "observe", "unlock", "observe"],

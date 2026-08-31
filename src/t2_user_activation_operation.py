@@ -15,6 +15,7 @@ from typing import Protocol
 
 import t2_user_activation_journal as activation_journal
 import t2_user_mapping
+import t2_user_policy
 import t2_user_readiness
 
 
@@ -160,6 +161,7 @@ def run(
     transport: UserActivationTransport,
     password: bytearray | None,
     *,
+    authorization: t2_user_policy.UserPolicyDecision,
     linux_boot_uuid: str,
 ) -> UserActivationOperationResult:
     if password is not None and not isinstance(password, bytearray):
@@ -167,6 +169,23 @@ def run(
             "activation password must use wipeable storage"
         )
     try:
+        activation_authorized = (
+            isinstance(authorization, t2_user_policy.UserPolicyDecision)
+            and authorization.state == "activation-authorized"
+        )
+        try:
+            authorized_operation_id = t2_user_policy.require_bound_authority(
+                authorization,
+                mapping_set,
+                selected,
+                capability,
+                linux_boot_uuid=linux_boot_uuid,
+                activation=activation_authorized,
+            )
+        except t2_user_policy.UserPolicyError as error:
+            raise UserActivationOperationError(
+                "activation lacks exact caller and policy authority"
+            ) from error
         if isinstance(password, bytearray) and not 1 <= len(password) <= 1024:
             raise UserActivationOperationError(
                 "activation password storage has an invalid size"
@@ -185,6 +204,10 @@ def run(
             ) from error
         if decision.state == "ready":
             return UserActivationOperationResult("already-ready", False, False)
+        if not activation_authorized:
+            raise UserActivationOperationError(
+                "target became not-ready without separate activation authority"
+            )
         if not isinstance(password, bytearray):
             raise UserActivationOperationError(
                 "activation requires a nonempty password in wipeable storage"
@@ -199,6 +222,7 @@ def run(
                 before,
                 linux_boot_uuid=linux_boot_uuid,
                 runtime_generation=transport.runtime_generation,
+                operation_id=authorized_operation_id,
             )
         except activation_journal.UserActivationJournalError as error:
             raise UserActivationOperationError(
