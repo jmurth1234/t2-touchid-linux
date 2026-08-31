@@ -34,11 +34,11 @@ class ReadbackAttestation:
 
 
 class PersistenceTransport(Protocol):
-    def prepare(self, descriptor: bytes) -> int: ...
+    def prepare(self, descriptor: bytes) -> tuple[int, int]: ...
 
     def complete(self, descriptor: bytes) -> tuple[int, bytearray]: ...
 
-    def confirm(self, descriptor: bytes) -> tuple[int, str]: ...
+    def confirm(self, descriptor: bytes) -> int: ...
 
 
 class HostStore(Protocol):
@@ -191,7 +191,9 @@ def run(
             final_reference = reference
             _append(path, operation_id, "CATACOMB_PREPARE_INTENT", reference)
             try:
-                prepare_status = transport.prepare(component.descriptor)
+                prepare_status, expected_blob_length = transport.prepare(
+                    component.descriptor
+                )
             except Exception as error:
                 _freeze(
                     path,
@@ -202,7 +204,13 @@ def run(
                     host_commit_possible=False,
                     cause=error,
                 )
-            if prepare_status != 0:
+            if (
+                type(prepare_status) is not int
+                or prepare_status != 0
+                or not isinstance(expected_blob_length, int)
+                or isinstance(expected_blob_length, bool)
+                or not 0 < expected_blob_length <= 1024 * 1024
+            ):
                 _freeze(
                     path,
                     operation_id,
@@ -216,7 +224,11 @@ def run(
                     path,
                     operation_id,
                     "CATACOMB_PREPARED",
-                    {**reference, "status": prepare_status},
+                    {
+                        **reference,
+                        "status": prepare_status,
+                        "expected_blob_length": expected_blob_length,
+                    },
                 )
             except Exception as error:
                 _freeze(
@@ -248,9 +260,11 @@ def run(
                         cause=error,
                     )
                 if (
-                    complete_status != 0
+                    type(complete_status) is not int
+                    or complete_status != 0
                     or not isinstance(secure_blob, bytearray)
                     or not secure_blob
+                    or len(secure_blob) != expected_blob_length
                 ):
                     _freeze(
                         path,
@@ -357,9 +371,7 @@ def run(
             if component_index + 1 < len(batch):
                 _append(path, operation_id, "CATACOMB_CONFIRM_INTENT", reference)
                 try:
-                    confirm_status, sep_hash = transport.confirm(
-                        component.descriptor
-                    )
+                    confirm_status = transport.confirm(component.descriptor)
                 except Exception as error:
                     _freeze(
                         path,
@@ -370,7 +382,7 @@ def run(
                         host_commit_possible=False,
                         cause=error,
                     )
-                if confirm_status != 0:
+                if type(confirm_status) is not int or confirm_status != 0:
                     _freeze(
                         path,
                         operation_id,
@@ -387,7 +399,6 @@ def run(
                         {
                             **reference,
                             "status": confirm_status,
-                            "sep_component_hash": sep_hash,
                         },
                     )
                 except Exception as error:
@@ -453,9 +464,7 @@ def run(
             path, operation_id, "CATACOMB_FINAL_CONFIRM_INTENT", final_reference
         )
         try:
-            confirm_status, sep_hash = transport.confirm(
-                batch[-1].descriptor
-            )
+            confirm_status = transport.confirm(batch[-1].descriptor)
         except Exception as error:
             _freeze(
                 path,
@@ -466,7 +475,7 @@ def run(
                 host_commit_possible=True,
                 cause=error,
             )
-        if confirm_status != 0:
+        if type(confirm_status) is not int or confirm_status != 0:
             _freeze(
                 path,
                 operation_id,
@@ -483,7 +492,6 @@ def run(
                 {
                     **final_reference,
                     "status": confirm_status,
-                    "sep_component_hash": sep_hash,
                 },
             )
         except Exception as error:

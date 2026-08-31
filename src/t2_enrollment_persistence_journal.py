@@ -93,6 +93,7 @@ class PersistenceTracker:
         self.batch_index: int | None = None
         self.component_index: int | None = None
         self._captured_blob_sha256: str | None = None
+        self._expected_blob_length: int | None = None
         self._staged: dict[str, str] = {}
         self.reconciliation_snapshot_sha256: str | None = None
         self.sep_host_generation_equal = False
@@ -314,8 +315,18 @@ class PersistenceTracker:
                 raise PersistenceJournalError(
                     "Catacomb prepare observation is out of order"
                 )
-            evidence = self._component_evidence(value, milestone, {"status"})
+            evidence = self._component_evidence(
+                value, milestone, {"status", "expected_blob_length"}
+            )
             _status_zero(evidence["status"], "Catacomb prepare status")
+            expected_blob_length = _uint(
+                evidence["expected_blob_length"],
+                "expected secure blob length",
+                1024 * 1024,
+            )
+            if expected_blob_length == 0:
+                raise PersistenceJournalError("expected secure blob is empty")
+            self._expected_blob_length = expected_blob_length
             self.phase = PersistencePhase.PREPARED
             return True
 
@@ -333,11 +344,13 @@ class PersistenceTracker:
                 value, milestone, {"status", "blob_length", "secure_blob_sha256"}
             )
             _status_zero(evidence["status"], "Catacomb complete status")
-            if (
-                _uint(evidence["blob_length"], "secure blob length", 1024 * 1024)
-                == 0
-            ):
-                raise PersistenceJournalError("secure blob is empty")
+            blob_length = _uint(
+                evidence["blob_length"], "secure blob length", 1024 * 1024
+            )
+            if blob_length == 0 or blob_length != self._expected_blob_length:
+                raise PersistenceJournalError(
+                    "secure blob length differs from prepare response"
+                )
             _sha256(evidence["secure_blob_sha256"], "secure blob SHA-256")
             self._captured_blob_sha256 = evidence["secure_blob_sha256"]
             self.phase = PersistencePhase.SECURE_BLOB_CAPTURED
@@ -376,12 +389,12 @@ class PersistenceTracker:
             if self.phase is not PersistencePhase.CONFIRM_INTENT:
                 raise PersistenceJournalError("early Catacomb confirm is out of order")
             evidence = self._component_evidence(
-                value, milestone, {"status", "sep_component_hash"}
+                value, milestone, {"status"}
             )
             _status_zero(evidence["status"], "Catacomb confirm status")
-            _sha256(evidence["sep_component_hash"], "SEP component hash")
             self.component_index += 1
             self._captured_blob_sha256 = None
+            self._expected_blob_length = None
             self.phase = PersistencePhase.COMPONENT_READY
             return True
 
@@ -414,11 +427,11 @@ class PersistenceTracker:
             if self.phase is not PersistencePhase.FINAL_CONFIRM_INTENT:
                 raise PersistenceJournalError("final Catacomb confirm is out of order")
             evidence = self._component_evidence(
-                value, milestone, {"status", "sep_component_hash"}
+                value, milestone, {"status"}
             )
             _status_zero(evidence["status"], "final Catacomb confirm status")
-            _sha256(evidence["sep_component_hash"], "SEP component hash")
             self._captured_blob_sha256 = None
+            self._expected_blob_length = None
             if self.batch_index + 1 < len(self.batches):
                 self.batch_index += 1
                 self.component_index = 0

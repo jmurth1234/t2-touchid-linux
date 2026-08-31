@@ -2672,6 +2672,18 @@ cryptographic context independently:
   descriptor. Load (`0x40`) likewise sends the component descriptor separately
   from the secure Catacomb bytes.
 
+The exact matching-daemon methods additionally resolve the three reply shapes.
+`performPrepareSaveCatacombCommand:outDataSize:` requires exactly four output
+bytes and interprets them as the expected secure-blob length.
+`performCompleteSaveCatacombCommand:outBuffer:` receives the variable secure
+blob and updates the caller buffer to its actual returned length.
+`performConfirmSaveCatacombCommand:` supplies no output buffer at all. Thus the
+complete result must equal the length announced by prepare, while confirm
+proves only a successful status. Any component hash used for reconciliation
+must come from an independent stable inventory/read-back; it is not present in
+the confirm reply. The public pure codec encodes this boundary without parsing
+the still-opaque internal fields of the 24-byte v2 descriptor.
+
 Thus an enrollment/commit sequence is not governed merely by whichever Linux
 user happens to be current when an event arrives. The SEP state machine and
 each persistence phase retain or restate an explicit biometric user/component.

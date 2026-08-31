@@ -24,7 +24,7 @@ class FakeTransport:
 
     def prepare(self, descriptor):
         self.calls.append(("prepare", descriptor))
-        return 0
+        return 0, 32
 
     def complete(self, descriptor):
         self.calls.append(("complete", descriptor))
@@ -34,7 +34,7 @@ class FakeTransport:
 
     def confirm(self, descriptor):
         self.calls.append(("confirm", descriptor))
-        return (5 if self.fail_confirm else 0), "a" * 64
+        return 5 if self.fail_confirm else 0
 
 
 class CrashAfterCommitStore:

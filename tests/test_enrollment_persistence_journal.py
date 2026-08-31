@@ -65,7 +65,7 @@ def append_persistence(
                 path,
                 operation_id,
                 "CATACOMB_PREPARED",
-                {**reference, "status": 0},
+                {**reference, "status": 0, "expected_blob_length": 32},
             )
             enrollment.append_checked(
                 path, operation_id, "CATACOMB_COMPLETE_INTENT", reference
@@ -101,7 +101,7 @@ def append_persistence(
                     path,
                     operation_id,
                     "CATACOMB_CONFIRMED",
-                    {**reference, "status": 0, "sep_component_hash": "a" * 64},
+                    {**reference, "status": 0},
                 )
         staged_snapshot_sha256 = hashlib.sha256(
             mutation.canonical(staged)
@@ -124,7 +124,7 @@ def append_persistence(
             path,
             operation_id,
             "CATACOMB_FINAL_CONFIRMED",
-            {**final_reference, "status": 0, "sep_component_hash": "b" * 64},
+            {**final_reference, "status": 0},
         )
     return enrollment.append_checked(
         path,

@@ -81,6 +81,14 @@ buffers, and freezes post-dispatch transport, codec, host-store, journal, or
 read-back ambiguity as outcome-unknown. There is still no concrete SEP/Bridge
 persistence transport and no user-facing command.
 
+The matching daemon disassembly also fixes the reply contract precisely:
+prepare `0x3d` returns exactly one 32-bit expected secure-blob length, complete
+`0x3e` returns a variable blob that must equal that length, and confirm `0x3f`
+returns no payload. `t2_catacomb_protocol.py` enforces those rules as a pure,
+non-sending codec for opaque 4-byte v1 and 24-byte v2 component descriptors.
+The final SEP component hash is therefore evidence from independent stable
+read-back, not a value invented from the confirm reply.
+
 The pure E3 reconciliation layer is executable too. Given already-collected
 host and same-connection SEP snapshots, it rejects mapping or binding drift,
 removed or multiple identities, changed existing entity numbers, component

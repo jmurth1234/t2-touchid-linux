@@ -130,6 +130,16 @@ exit. A transport, codec, store, journal, or read-back ambiguity after SEP
 dispatch becomes `CATACOMB_PERSISTENCE_OUTCOME_UNKNOWN`. Tests use only fake
 transport and temporary Catacomb copies; no live adapter or command exists.
 
+`t2_catacomb_protocol.py` captures the exact non-sending command boundary
+recovered from the matching daemon: prepare `0x3d` returns one 32-bit expected
+secure-blob length, complete `0x3e` must return exactly that many bytes, and
+confirm `0x3f` returns no payload. Every command carries the opaque component
+descriptor unchanged (4 bytes for protocol v1, 24 bytes for v2). The pure
+builders/parsers reject nonzero status, malformed descriptors, zero or
+unbounded sizes, length drift, immutable complete buffers, and unexpected
+confirm output. They do not interpret the still-opaque v2 descriptor and do
+not open BridgeXPC or expose a command.
+
 `t2_enrollment_reconciliation.py` is the pure E3 classifier. It accepts only a
 stable same-generation SEP inventory and a strict host Catacomb read-back,
 requires the mapping, account, bag, existing identities, entity numbers,
