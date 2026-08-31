@@ -52,6 +52,7 @@ class EnrollmentHistory:
     reconciled_snapshot_sha256: str | None
     post_reboot_linux_boot_uuid: str | None
     outcome_unknown_stage: str | None
+    persistence_connection_generation: str
 
 
 def _exact(value: Any, keys: set[str], field: str) -> dict[str, Any]:
@@ -122,6 +123,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
     reconciled_snapshot_sha256: str | None = None
     post_reboot_linux_boot_uuid: str | None = None
     outcome_unknown_stage: str | None = None
+    persistence_connection_generation = baseline["connection_generation"]
 
     for record in records[1:]:
         if record.get("operation_id") != operation_id:
@@ -366,6 +368,66 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             phase = EnrollmentPhase.TERMINAL_IDENTITY
             continue
 
+        if milestone == "E2_RECOVERY_IDENTITY_READBACK_OBSERVED":
+            if (
+                phase is not EnrollmentPhase.OUTCOME_UNKNOWN
+                or outcome_unknown_stage != "terminal"
+            ):
+                raise EnrollmentJournalError(
+                    "terminal identity recovery is out of order"
+                )
+            evidence = _exact(
+                evidence,
+                {
+                    "connection_generation",
+                    "user_id",
+                    "identity_uuid",
+                    "source",
+                    "single_identity_added",
+                    "host_unchanged",
+                    "sep_catacomb_advanced",
+                    "per_user_global_equal",
+                    "mapping_generation",
+                },
+                milestone,
+            )
+            _uuid(
+                evidence["connection_generation"],
+                "recovery connection generation",
+            )
+            _uuid(evidence["identity_uuid"], "identity_uuid")
+            _sha256(evidence["mapping_generation"], "mapping_generation")
+            if (
+                evidence["connection_generation"]
+                == baseline["connection_generation"]
+                or evidence["user_id"] != baseline["apple_uid"]
+                or evidence["source"] != "stable-readback"
+                or evidence["mapping_generation"]
+                != baseline["mapping_generation"]
+            ):
+                raise EnrollmentJournalError(
+                    "terminal identity recovery binding is invalid"
+                )
+            for field in (
+                "single_identity_added",
+                "host_unchanged",
+                "sep_catacomb_advanced",
+                "per_user_global_equal",
+            ):
+                if evidence[field] is not True:
+                    raise EnrollmentJournalError(
+                        f"terminal identity recovery field {field} is not true"
+                    )
+            terminal_identity_uuid = evidence["identity_uuid"]
+            persistence_connection_generation = evidence[
+                "connection_generation"
+            ]
+            persistence.use_recovery_generation(
+                persistence_connection_generation
+            )
+            phase = EnrollmentPhase.TERMINAL_IDENTITY
+            continue
+
         if isinstance(milestone, str) and milestone.startswith("CATACOMB_"):
             identity_persistence = terminal_identity_uuid is not None
             failure_biolockout_persistence = (
@@ -425,7 +487,13 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
                 },
                 milestone,
             )
-            _same_generation(evidence, baseline)
+            if (
+                evidence["connection_generation"]
+                != persistence_connection_generation
+            ):
+                raise EnrollmentJournalError(
+                    "E3 used another persistence connection generation"
+                )
             _sha256(evidence["snapshot_sha256"], "snapshot_sha256")
             _sha256(evidence["mapping_generation"], "mapping_generation")
             if evidence["mapping_generation"] != baseline["mapping_generation"]:
@@ -678,6 +746,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
         reconciled_snapshot_sha256,
         post_reboot_linux_boot_uuid,
         outcome_unknown_stage,
+        persistence_connection_generation,
     )
 
 

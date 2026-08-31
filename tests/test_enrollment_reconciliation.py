@@ -195,6 +195,77 @@ class EnrollmentReconciliationTests(unittest.TestCase):
             )
         self.assertEqual(result.phase, enrollment_journal.EnrollmentPhase.RECONCILED)
 
+    def test_terminal_unknown_recovers_only_one_fresh_builtin_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = baseline()
+            path = Path(directory) / "operation.jsonl"
+            operation_id, _record = mutation_journal.create(path, "enroll", value)
+            enrollment_journal.append_checked(
+                path,
+                operation_id,
+                "ENROLL_START_INTENT",
+                {
+                    "apple_uid": value["apple_uid"],
+                    "protocol_version": value["protocol_version"],
+                    "connection_generation": value["connection_generation"],
+                    "request_length": 68,
+                    "request_sha256": "a" * 64,
+                },
+            )
+            enrollment_journal.append_checked(
+                path, operation_id, "ENROLL_START_OBSERVED", {"status": 0}
+            )
+            history = enrollment_journal.append_checked(
+                path,
+                operation_id,
+                "ENROLL_OUTCOME_UNKNOWN",
+                {
+                    "connection_generation": value["connection_generation"],
+                    "stage": "terminal",
+                    "reason": "protocol-error",
+                    "mutation_possible": True,
+                },
+            )
+            host, live = self.snapshots(success=False)
+            new_identity = {
+                "user_id": value["apple_uid"],
+                "identity_uuid": str(uuid.UUID(int=8)),
+            }
+            live["connection_generation"] = str(uuid.UUID(int=99))
+            live["per_user_identity_records"].append(new_identity)
+            live["global_identity_records"].append(
+                {
+                    **new_identity,
+                    "group_type": 1,
+                    "group_uuid": str(uuid.UUID(int=0)),
+                }
+            )
+            live["configured_user_free_capacity"] -= 1
+            live["catacomb"]["hash"] = "3" * 64
+            recovery = reconciliation.classify_observed_identity_recovery(
+                history,
+                host=host,
+                live=live,
+                mapping_generation=value["mapping_generation"],
+            )
+            self.assertEqual(recovery.identity_uuid, new_identity["identity_uuid"])
+            self.assertTrue(recovery.evidence["single_identity_added"])
+
+            unsafe = copy.deepcopy(live)
+            unsafe["global_identity_records"] = unsafe[
+                "global_identity_records"
+            ][:-1]
+            with self.assertRaisesRegex(
+                reconciliation.EnrollmentReconciliationError,
+                "exactly one built-in SEP addition",
+            ):
+                reconciliation.classify_observed_identity_recovery(
+                    history,
+                    host=host,
+                    live=unsafe,
+                    mapping_generation=value["mapping_generation"],
+                )
+
     def test_e4_requires_new_boot_and_exact_e3_state(self):
         with tempfile.TemporaryDirectory() as directory:
             path, operation_id, identity_uuid = self.create_terminal(

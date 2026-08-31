@@ -38,6 +38,7 @@ import t2_catacomb_store
 import t2_enrollment_coordinator
 import t2_enrollment_finalizer
 import t2_enrollment_journal
+import t2_enrollment_operation
 import t2_enrollment_persistence_journal
 import t2_enrollment_protocol
 import t2_enrollment_reconciliation
@@ -587,6 +588,95 @@ def run_outcome_unknown_reconciliation(
     }
 
 
+def run_observed_identity_recovery(
+    configuration: dict[str, object],
+    store: t2_catacomb_store.CatacombStore,
+    identity_name: str,
+) -> dict[str, object]:
+    unfinished = unfinished_enrollment_journals()
+    if (
+        len(unfinished) != 1
+        or unfinished[0][1].phase
+        is not t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+        or unfinished[0][1].outcome_unknown_stage != "terminal"
+    ):
+        raise EnrollmentCommandError(
+            "identity recovery requires exactly one terminal outcome-unknown journal"
+        )
+    journal_path, history = unfinished[0]
+    if (
+        history.baseline["apple_uid"] != configuration["apple_uid"]
+        or history.baseline["mapping_generation"]
+        != configuration["mapping_generation"]
+    ):
+        raise EnrollmentCommandError(
+            "identity recovery journal belongs to another mapping"
+        )
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"],
+        configuration["interface"],
+        _port(),
+        timeout=60,
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        host = t2_enrollment_finalizer.read_local_host_snapshot(
+            store, history.baseline
+        )
+        recovery = (
+            t2_enrollment_reconciliation.classify_observed_identity_recovery(
+                history,
+                host=host,
+                live=live,
+                mapping_generation=configuration["mapping_generation"],
+            )
+        )
+        recovered = t2_enrollment_journal.append_checked(
+            journal_path,
+            history.operation_id,
+            "E2_RECOVERY_IDENTITY_READBACK_OBSERVED",
+            recovery.evidence,
+        )
+        if (
+            recovered.phase
+            is not t2_enrollment_journal.EnrollmentPhase.TERMINAL_IDENTITY
+            or recovered.terminal_identity_uuid != recovery.identity_uuid
+            or recovered.persistence_connection_generation
+            != lease.connection_generation
+        ):
+            raise EnrollmentCommandError(
+                "recovered identity was not durably bound to the fresh lease"
+            )
+        finalizer = t2_enrollment_finalizer.BuiltinEnrollmentFinalizer(
+            lease=lease,
+            apple_user_id=configuration["apple_uid"],
+            connection_generation=lease.connection_generation,
+            journal_path=journal_path,
+            operation_id=history.operation_id,
+            catacomb_root=STORE_ROOT,
+            mapping_generation=configuration["mapping_generation"],
+            identity_name=identity_name,
+        )
+        attestation = finalizer(
+            t2_enrollment_operation.EnrollmentOperationResult(
+                "identity-observed", None, reconciliation_required=True
+            )
+        )
+    if not attestation.persistence_ready or not attestation.reconciliation_complete:
+        raise EnrollmentCommandError(
+            "observed identity recovery did not reconcile"
+        )
+    return {
+        "schema_version": 1,
+        "observed_identity_recovered": True,
+        "persistence_ready": True,
+        "reconciliation_complete": True,
+        "identifiers_redacted": True,
+        "fingerprint_mutation_performed": False,
+    }
+
+
 def run_local_transaction_recovery(
     configuration: dict[str, object], store: t2_catacomb_store.CatacombStore
 ) -> dict[str, object]:
@@ -832,6 +922,7 @@ def main() -> int:
     mode.add_argument("--status-only", action="store_true")
     mode.add_argument("--verify-post-reboot", action="store_true")
     mode.add_argument("--recover-local-transaction", action="store_true")
+    mode.add_argument("--recover-observed-identity", action="store_true")
     parser.add_argument("--identity-name", default="Linux enrolled finger")
     parser.add_argument(
         "--acknowledge-password-fallback-tested", action="store_true"
@@ -842,6 +933,9 @@ def main() -> int:
     parser.add_argument(
         "--acknowledge-local-catacomb-mutation", action="store_true"
     )
+    parser.add_argument(
+        "--acknowledge-observed-identity-recovery", action="store_true"
+    )
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("run through sudo from the mapped desktop user")
@@ -850,6 +944,7 @@ def main() -> int:
         and not args.status_only
         and not args.verify_post_reboot
         and not args.recover_local_transaction
+        and not args.recover_observed_identity
         and not args.acknowledge_password_fallback_tested
     ):
         parser.error("password-fallback acknowledgement is required")
@@ -859,13 +954,19 @@ def main() -> int:
         and not args.status_only
         and not args.verify_post_reboot
         and not args.recover_local_transaction
+        and not args.recover_observed_identity
     )
     if live_enrollment and not (
         args.acknowledge_live_fingerprint_enrollment
         and args.acknowledge_local_catacomb_mutation
     ):
         parser.error("both live mutation acknowledgements are required")
-    if live_enrollment and (
+    if args.recover_observed_identity and not (
+        args.acknowledge_observed_identity_recovery
+        and args.acknowledge_local_catacomb_mutation
+    ):
+        parser.error("both observed-identity recovery acknowledgements are required")
+    if (live_enrollment or args.recover_observed_identity) and (
         not args.identity_name
         or "\x00" in args.identity_name
         or len(args.identity_name.encode("utf-8")) > 1024
@@ -887,7 +988,7 @@ def main() -> int:
         _private_root_owned(MUTATION_ROOT, directory=True)
         backup: Path | None = None
         if not args.status_only and not args.recover_local_transaction:
-            if not args.verify_post_reboot:
+            if not args.verify_post_reboot and not args.recover_observed_identity:
                 backup = select_backup()
             # The readiness service takes OPERATION_LOCK itself, so this must
             # finish before the broker acquires its long-lived operation lock.
@@ -907,6 +1008,23 @@ def main() -> int:
             fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if args.status_only:
                 result = enrollment_status()
+            elif args.recover_observed_identity:
+                if not os.path.lexists(STORE_ROOT):
+                    raise EnrollmentCommandError(
+                        "identity recovery requires the existing local Catacomb"
+                    )
+                store = t2_catacomb_store.CatacombStore(
+                    STORE_ROOT, configuration["apple_uid"]
+                )
+                with sleep_inhibitor() as inhibitor:
+                    if cancellation.is_set() or inhibitor.poll() is not None:
+                        raise EnrollmentCommandError(
+                            "identity recovery was cancelled before read-back"
+                        )
+                    result = run_observed_identity_recovery(
+                        configuration, store, args.identity_name
+                    )
+                result["local_store_provisioned"] = False
             elif args.recover_local_transaction:
                 if not os.path.lexists(STORE_ROOT):
                     raise EnrollmentCommandError(

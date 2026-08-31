@@ -122,6 +122,16 @@ opens a fresh Bridge generation, and appends a distinct no-change E3 milestone
 only when the stable host/SEP snapshot still equals E0. It refuses automatic
 recovery if a new identity or any persistent delta is visible, and the live
 path refuses a new operation while an earlier journal is unfinished.
+For the narrower case where a terminal enrollment event was rejected locally
+after SEP had already created one identity, the separately acknowledged
+`--recover-observed-identity` mode can complete persistence. It requires a
+terminal-stage outcome-unknown journal and a fresh double collection proving
+exactly one new configured-user built-in identity, agreement between per-user
+and global SEP inventories, unchanged host files, the same SEP Catacomb UUID
+with a terminal secure-state hash advance, unchanged mapping/account/keybag
+bindings, and no removal. The journal binds persistence
+to that fresh recovery connection before any Catacomb mutation. Every other
+delta remains manual and fail-closed.
 After a successful mutation, the Linux-local Catacomb—not the older copied
 macOS archive—is the current host baseline for a later enrollment. The archive
 remains the immutable recovery reference; opening advanced local state requires

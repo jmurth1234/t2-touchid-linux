@@ -5487,6 +5487,19 @@ continue/cancel with wire version 1. The client layer still does not interpret
 the numeric continue return as a terminal enrollment result, but the exact
 header should no longer provoke the observed unsupported-command response.
 
+The next approved run confirmed the correction end to end through capture:
+progress advanced across repeated placements from 23% to 100%. SEP created one
+new built-in identity, but Linux rejected the terminal result's embedded user
+field before starting Catacomb persistence. Fresh stable inventory proved an
+exactly-one identity increase and agreement between the configured per-user
+and global built-in inventories while the host Catacomb remained unchanged;
+the SEP Catacomb retained its UUID but advanced its secure-state hash.
+This is not a no-change failure and must not be retried. A separately gated
+recovery path now permits only this narrow terminal-stage state to adopt the
+single stable-readback UUID and complete persistence on a fresh, durably bound
+Bridge generation. The terminal-event field discrepancy remains under
+investigation; it is not weakened into unconditional acceptance.
+
 Two subsequent approved attempts exercised repeated lift/place capture and
 reported real progress at 20% and 22%. The second stopped during a quiet scan
 interval with a service-event receive failure. This isolated a host transport

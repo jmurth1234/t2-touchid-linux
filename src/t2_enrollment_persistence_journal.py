@@ -89,6 +89,7 @@ class PersistenceTracker:
 
     def __init__(self, baseline: dict[str, Any]) -> None:
         self._baseline = baseline
+        self._connection_generation = baseline["connection_generation"]
         self.phase = PersistencePhase.NOT_STARTED
         self.batches: tuple[tuple[tuple[str, str], ...], ...] = ()
         self.batch_index: int | None = None
@@ -115,11 +116,29 @@ class PersistenceTracker:
     def _same_generation(self, evidence: dict[str, Any]) -> None:
         if (
             evidence["connection_generation"]
-            != self._baseline["connection_generation"]
+            != self._connection_generation
         ):
             raise PersistenceJournalError(
                 "Catacomb persistence connection generation changed"
             )
+
+    def use_recovery_generation(self, connection_generation: str) -> None:
+        """Bind not-yet-started persistence to a fresh recovery lease."""
+        if self.phase is not PersistencePhase.NOT_STARTED:
+            raise PersistenceJournalError(
+                "Catacomb persistence generation changed after planning"
+            )
+        try:
+            journal.require_uuid(
+                connection_generation, "recovery connection generation"
+            )
+        except journal.JournalError as error:
+            raise PersistenceJournalError(str(error)) from error
+        if connection_generation == self._baseline["connection_generation"]:
+            raise PersistenceJournalError(
+                "Catacomb recovery did not use a fresh connection generation"
+            )
+        self._connection_generation = connection_generation
 
     def _current(self) -> tuple[str, str]:
         if self.batch_index is None or self.component_index is None:

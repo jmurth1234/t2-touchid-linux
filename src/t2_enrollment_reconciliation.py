@@ -24,6 +24,12 @@ class ReconciliationPlan:
     readback_identity_uuid: str | None
 
 
+@dataclass(frozen=True, repr=False)
+class ObservedIdentityRecovery:
+    identity_uuid: str
+    evidence: dict[str, Any]
+
+
 def _identity_pairs(
     records: Any,
     uuid_key: str,
@@ -154,6 +160,140 @@ def _components(records: Any) -> dict[str, dict[str, Any]]:
     return result
 
 
+def classify_observed_identity_recovery(
+    history: enrollment_journal.EnrollmentHistory,
+    *,
+    host: dict[str, Any],
+    live: dict[str, Any],
+    mapping_generation: str,
+) -> ObservedIdentityRecovery:
+    """Prove one terminal-stage identity can be adopted on a fresh lease."""
+    if (
+        history.phase is not enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+        or history.outcome_unknown_stage != "terminal"
+    ):
+        raise EnrollmentReconciliationError(
+            "identity recovery requires a terminal outcome-unknown journal"
+        )
+    baseline = history.baseline
+    apple_uid = baseline["apple_uid"]
+    live_generation = live.get("connection_generation")
+    try:
+        mutation_journal.require_uuid(
+            live_generation, "recovery connection generation"
+        )
+    except mutation_journal.JournalError as error:
+        raise EnrollmentReconciliationError(str(error)) from error
+    if (
+        live_generation == baseline["connection_generation"]
+        or live.get("double_collection_equal") is not True
+        or live.get("apple_uid") != apple_uid
+        or live.get("biometric_protocol_version")
+        != baseline["protocol_version"]
+        or mapping_generation != baseline["mapping_generation"]
+    ):
+        raise EnrollmentReconciliationError(
+            "identity recovery inventory is stale, unstable, or rebound"
+        )
+    if (
+        host.get("account_uuid") != baseline["account_uuid"]
+        or host.get("bag_uuid") != baseline["bag_uuid"]
+        or host.get("master_enrollment_count")
+        != baseline["master_enrollment_count"]
+    ):
+        raise EnrollmentReconciliationError(
+            "identity recovery host binding changed"
+        )
+
+    before = _identity_pairs(
+        baseline["identity_records"],
+        "uuid",
+        apple_uid,
+        expected_keys={"user_id", "uuid", "entity"},
+        require_entity=True,
+    )
+    host_after = _identity_pairs(
+        host.get("identity_records"),
+        "uuid",
+        apple_uid,
+        expected_keys={"user_id", "uuid", "entity"},
+        require_entity=True,
+    )
+    live_after = _identity_pairs(
+        live.get("per_user_identity_records"),
+        "identity_uuid",
+        apple_uid,
+        expected_keys={"user_id", "identity_uuid"},
+    )
+    configured_global = _configured_global_pairs(
+        live.get("global_identity_records"), apple_uid
+    )
+    added = live_after - before
+    if (
+        host_after != before
+        or configured_global != live_after
+        or before - live_after
+        or len(added) != 1
+        or len(live_after) != baseline["capacity"]["used"] + 1
+    ):
+        raise EnrollmentReconciliationError(
+            "identity recovery does not contain exactly one built-in SEP addition"
+        )
+
+    maximum = live.get("maximum_capacity")
+    free_capacity = live.get("configured_user_free_capacity")
+    if (
+        not isinstance(maximum, int)
+        or isinstance(maximum, bool)
+        or maximum != baseline["capacity"]["maximum"]
+        or not isinstance(free_capacity, int)
+        or isinstance(free_capacity, bool)
+        or not 0 <= free_capacity <= maximum
+    ):
+        raise EnrollmentReconciliationError(
+            "identity recovery capacity is inconsistent"
+        )
+    catacomb = live.get("catacomb")
+    if (
+        not isinstance(catacomb, dict)
+        or catacomb.get("present") is not True
+        or catacomb.get("uuid") != baseline["sep_catacomb"]["uuid"]
+    ):
+        raise EnrollmentReconciliationError(
+            "identity recovery observed a rebound SEP Catacomb"
+        )
+    try:
+        mutation_journal.require_sha256(
+            catacomb.get("hash"), "recovery SEP Catacomb hash"
+        )
+    except mutation_journal.JournalError as error:
+        raise EnrollmentReconciliationError(str(error)) from error
+    if catacomb["hash"] == baseline["sep_catacomb"]["hash"]:
+        raise EnrollmentReconciliationError(
+            "identity recovery did not observe the terminal SEP Catacomb advance"
+        )
+    before_components = _components(baseline["host_components"])
+    after_components = _components(host.get("host_components"))
+    if before_components != after_components:
+        raise EnrollmentReconciliationError(
+            "identity recovery observed a local Catacomb mutation"
+        )
+
+    identity_uuid = next(iter(added))[1]
+    evidence = {
+        "connection_generation": live_generation,
+        "user_id": apple_uid,
+        "identity_uuid": identity_uuid,
+        "source": "stable-readback",
+        "single_identity_added": True,
+        "host_unchanged": True,
+        "sep_catacomb_advanced": True,
+        "per_user_global_equal": True,
+        "mapping_generation": mapping_generation,
+    }
+    return ObservedIdentityRecovery(identity_uuid, evidence)
+
+
 def classify(
     history: enrollment_journal.EnrollmentHistory,
     *,
@@ -186,7 +326,7 @@ def classify(
     generation_valid = (
         live_generation != baseline["connection_generation"]
         if outcome_unknown_recovery
-        else live_generation == baseline["connection_generation"]
+        else live_generation == history.persistence_connection_generation
     )
     if (
         live.get("double_collection_equal") is not True
@@ -492,6 +632,7 @@ def classify_post_reboot(
         history,
         phase=enrollment_journal.EnrollmentPhase.PERSISTENCE_READY,
         baseline=current_baseline,
+        persistence_connection_generation=connection_generation,
     )
     plan = classify(
         current_history,

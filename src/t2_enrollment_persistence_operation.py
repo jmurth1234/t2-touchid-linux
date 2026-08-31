@@ -69,7 +69,7 @@ def _reference(
     component: ComponentSpec,
 ) -> dict[str, object]:
     return {
-        "connection_generation": history.baseline["connection_generation"],
+        "connection_generation": history.persistence_connection_generation,
         "batch_index": batch_index,
         "component_index": component_index,
         "name": component.name,
@@ -200,7 +200,7 @@ def run(
     if history.operation_id != operation_id:
         raise PersistenceOperationError("operation ID differs from journal")
     _validate_components(history, batches)
-    generation = history.baseline["connection_generation"]
+    generation = history.persistence_connection_generation
     _append(
         path,
         operation_id,

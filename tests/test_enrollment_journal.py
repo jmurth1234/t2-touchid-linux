@@ -136,6 +136,68 @@ class EnrollmentJournalTests(unittest.TestCase):
             )
             self.assertEqual(history.phase, enrollment.EnrollmentPhase.ACTIVE)
 
+    def test_terminal_outcome_unknown_can_bind_one_fresh_recovery_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create(directory)
+            self.start(path, operation_id)
+            value = baseline()
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "ENROLL_OUTCOME_UNKNOWN",
+                {
+                    "connection_generation": value["connection_generation"],
+                    "stage": "terminal",
+                    "reason": "protocol-error",
+                    "mutation_possible": True,
+                },
+            )
+            recovery_generation = str(uuid.UUID(int=99))
+            history = enrollment.append_checked(
+                path,
+                operation_id,
+                "E2_RECOVERY_IDENTITY_READBACK_OBSERVED",
+                {
+                    "connection_generation": recovery_generation,
+                    "user_id": value["apple_uid"],
+                    "identity_uuid": str(uuid.UUID(int=8)),
+                    "source": "stable-readback",
+                    "single_identity_added": True,
+                    "host_unchanged": True,
+                    "sep_catacomb_advanced": True,
+                    "per_user_global_equal": True,
+                    "mapping_generation": value["mapping_generation"],
+                },
+            )
+            self.assertEqual(
+                history.phase, enrollment.EnrollmentPhase.TERMINAL_IDENTITY
+            )
+            self.assertEqual(
+                history.persistence_connection_generation,
+                recovery_generation,
+            )
+
+            bad = dict(
+                connection_generation=str(uuid.UUID(int=100)),
+                user_id=value["apple_uid"],
+                identity_uuid=str(uuid.UUID(int=9)),
+                source="stable-readback",
+                single_identity_added=True,
+                host_unchanged=True,
+                sep_catacomb_advanced=True,
+                per_user_global_equal=True,
+                mapping_generation=value["mapping_generation"],
+            )
+            with self.assertRaisesRegex(
+                enrollment.EnrollmentJournalError, "out of order"
+            ):
+                enrollment.append_checked(
+                    path,
+                    operation_id,
+                    "E2_RECOVERY_IDENTITY_READBACK_OBSERVED",
+                    bad,
+                )
+
     def test_continue_return_cannot_be_marked_authoritative(self):
         with tempfile.TemporaryDirectory() as directory:
             path, operation_id = self.create(directory)

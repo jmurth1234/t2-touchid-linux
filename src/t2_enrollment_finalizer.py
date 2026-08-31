@@ -169,7 +169,8 @@ class BuiltinEnrollmentFinalizer:
         baseline = history.baseline
         if (
             baseline["apple_uid"] != self.apple_user_id
-            or baseline["connection_generation"] != self.connection_generation
+            or history.persistence_connection_generation
+            != self.connection_generation
             or baseline["mapping_generation"] != self.mapping_generation
             or self.lease.connection_generation != self.connection_generation
         ):
