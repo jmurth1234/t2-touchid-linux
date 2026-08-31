@@ -284,8 +284,10 @@ def with_authorized_context(
     missing = object()
     consumer_result: object = missing
     primary_error: BaseException | None = None
+    stage = "create-response"
     try:
         handle = protocol.parse_create_response(response, tracking=tracking)
+        stage = "policy-preflight"
         initial = protocol.parse_policy_response(
             device.exchange(
                 protocol.build_enrollment_policy(handle, preflight=True),
@@ -294,7 +296,9 @@ def with_authorized_context(
         )
         if initial.satisfied or initial.requirement_type != 1:
             raise ACMDeviceError("initial policy state is not the passcode requirement")
+        stage = "password-binding"
         password_binder(handle.context)
+        stage = "policy-final"
         final = protocol.parse_policy_response(
             device.exchange(
                 protocol.build_enrollment_policy(handle, preflight=False),
@@ -303,6 +307,7 @@ def with_authorized_context(
         )
         if not final.satisfied:
             raise ACMDeviceError("policy 1007 remained unsatisfied after password binding")
+        stage = "authorized-consumer"
         candidate = consumer(handle.context)
         if inspect.isawaitable(candidate):
             close = getattr(candidate, "close", None)
@@ -319,14 +324,15 @@ def with_authorized_context(
     except BaseException as cleanup_error:
         if primary_error is not None:
             raise ACMDeviceError(
-                f"authorized operation failed and mandatory cleanup failed: {cleanup_error}"
+                f"authorized operation failed at {stage} and mandatory cleanup "
+                f"failed: {cleanup_error}"
             ) from primary_error
         raise ACMDeviceError(
             f"authorized operation completed but mandatory cleanup failed: {cleanup_error}"
         ) from cleanup_error
     if primary_error is not None:
         raise ACMDeviceError(
-            "authorized operation failed; context was cleaned up"
+            f"authorized operation failed at {stage}; context was cleaned up"
         ) from primary_error
     assert initial is not None and final is not None
     assert consumer_result is not missing

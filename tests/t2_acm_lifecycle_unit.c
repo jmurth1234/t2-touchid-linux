@@ -22,8 +22,10 @@ int main(void)
 	assert(!t2_acm_response_capacity_allowed(0x24, 21, false));
 	assert(t2_acm_response_capacity_allowed(0x02, 0, false));
 	assert(!t2_acm_response_capacity_allowed(0x02, 0, true));
+	assert(T2_ACM_POLICY_RESPONSE_SIZE == 0x1000);
 	assert(t2_acm_response_capacity_allowed(
-		0x03, T2_ACM_MAX_RESPONSE_SIZE, true));
+		0x03, T2_ACM_POLICY_RESPONSE_SIZE, true));
+	assert(!t2_acm_response_capacity_allowed(0x03, 0x4000, true));
 
 	assert(t2_acm_reply_action(0x24, 21, 0) ==
 	       T2_ACM_REPLY_SET_CONTEXT);
@@ -41,7 +43,8 @@ int main(void)
 	       T2_ACM_REPLY_ACCEPT);
 	assert(t2_acm_reply_action(0x03, 3, 0) ==
 	       T2_ACM_REPLY_REJECT);
-	assert(t2_acm_reply_action(0x03, T2_ACM_MAX_RESPONSE_SIZE + 1, 0) ==
+	assert(t2_acm_reply_action(0x03,
+				   T2_ACM_POLICY_RESPONSE_SIZE + 1, 0) ==
 	       T2_ACM_REPLY_REJECT);
 	assert(t2_acm_reply_action(0x24, 0, 1) ==
 	       T2_ACM_REPLY_ACCEPT);

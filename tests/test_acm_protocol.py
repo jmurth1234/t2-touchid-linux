@@ -9,6 +9,9 @@ import t2_acm_protocol as acm
 
 
 class ACMProtocolTests(unittest.TestCase):
+    def test_policy_response_capacity_matches_recovered_apple_caller(self):
+        self.assertEqual(acm.POLICY_RESPONSE_CAPACITY, 0x1000)
+
     def test_tracking_create_matches_recovered_apple_framing(self):
         self.assertEqual(
             acm.build_create(user_id=501, tracking=True).hex(),

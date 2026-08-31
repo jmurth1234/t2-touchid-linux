@@ -200,7 +200,10 @@ class ACMDeviceTests(unittest.TestCase):
         def fail(_context: bytes) -> None:
             raise RuntimeError("synthetic consumer failure")
 
-        with self.assertRaisesRegex(device.ACMDeviceError, "context was cleaned up"):
+        with self.assertRaisesRegex(
+            device.ACMDeviceError,
+            "failed at authorized-consumer; context was cleaned up",
+        ):
             device.with_authorized_context(fake, 501, lambda _: None, fail)
         self.assertEqual(fake.commands[-1][0], protocol.OP_CONTEXT_DELETE)
 
@@ -273,8 +276,25 @@ class ACMDeviceTests(unittest.TestCase):
         def fail(_: bytes) -> None:
             raise device.ACMDeviceError("synthetic password failure")
 
-        with self.assertRaisesRegex(device.ACMDeviceError, "context was cleaned up"):
+        with self.assertRaisesRegex(
+            device.ACMDeviceError,
+            "failed at password-binding; context was cleaned up",
+        ):
             device.authorization_test(fake, 501, fail)
+        self.assertEqual(fake.commands[-1][0], protocol.OP_CONTEXT_DELETE)
+
+    def test_authorization_preflight_failure_reports_safe_stage(self):
+        context = bytes(range(16))
+        fake = FakeDevice(
+            context + b"\x00" * 4 + b"\x01",
+            policy_response=b"\x02\x00\x00\x00",
+        )
+
+        with self.assertRaisesRegex(
+            device.ACMDeviceError,
+            "failed at policy-preflight; context was cleaned up",
+        ):
+            device.authorization_test(fake, 501, lambda _: None)
         self.assertEqual(fake.commands[-1][0], protocol.OP_CONTEXT_DELETE)
 
 
