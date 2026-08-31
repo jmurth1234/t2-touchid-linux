@@ -281,7 +281,11 @@ real-codec end-to-end test reaches E3; malformed bio-lockout output or an
 injected read-back disconnect after commit is durably outcome-unknown. Hardware
 enrollment is exposed only through a privileged, explicitly acknowledged broker.
 
-`t2-touchid-enroll-test.py` is that experimental broker. `--preflight-only`
+`t2-touchid-enroll` is the stable subcommand frontend for that experimental
+broker. It maps `status`, `preflight`, `start`, `verify-post-reboot`, and the
+three typed recovery commands directly to the existing fail-closed engine; it
+does not duplicate protocol or mutation logic. `t2-touchid-enroll-test.py`
+remains the installed compatibility backend. Its `--preflight-only`
 cannot enter ACM or enrollment; it verifies the sole protected backup, private
 local store, sensor readiness, operation lock, same-connection E0, and capacity.
 The original macOS archive remains an immutable recovery anchor, not a frozen
@@ -357,8 +361,10 @@ of routing the ambient record by its own user field. The reducer therefore
 validates the exact version and minimum shape but never lets the event select an
 identity, send feedback, or send continue; the finalizer owns persistence for
 the enrolled user. Live enrollment refuses to start while
-an earlier mutation journal remains unfinished. Any next live attempt remains
-explicitly operator-gated.
+an earlier mutation journal remains unfinished. The first complete Linux
+enrollment reached E3, survived reboot/E4, appeared as a second reconciled
+local/SEP identity, and matched independently through fprintd. Any next live
+attempt remains explicitly operator-gated.
 
 The typed journal also defines `E4_POST_REBOOT_VERIFIED` for a successful
 identity. It is accepted only after E3, on both a different Linux boot UUID and

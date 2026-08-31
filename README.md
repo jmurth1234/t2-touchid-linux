@@ -5,7 +5,8 @@ T2 chip. It talks to bridgeOS BiometricKit over BridgeXPC and exposes a minimal
 `fprintd`-compatible D-Bus service for PAM clients.
 
 This is research software, not an upstream `libfprint` driver. Verification and
-one live enrollment have been proven on the configuration below. Label rename
+two live identities, including one enrolled entirely from Linux, have been
+proven on the configuration below. Label rename
 is exposed through a separately gated management broker. Single-identity
 deletion is implemented behind explicit acknowledgements but has not yet had
 its first live hardware test; macOS remains the recovery environment.
@@ -242,6 +243,54 @@ labels; UUIDs, entities, Catacomb identifiers, and biometric data remain
 redacted. A slot number is valid only for that reconciled invocation and is the
 selector used by identity management commands.
 
+### Experimental Linux enrollment
+
+The stable command frontend exposes the proven journaled enrollment broker
+without adding enrollment to fprintd. Check the redacted state first, then run
+the non-mutating preflight after confirming password fallback works:
+
+```sh
+sudo t2-touchid-enroll status
+sudo t2-touchid-enroll preflight \
+  --acknowledge-password-fallback-tested
+```
+
+To enroll one fingerprint, keep macOS available as the recovery environment
+and explicitly acknowledge both the live SEP mutation and local Catacomb
+persistence:
+
+```sh
+sudo t2-touchid-enroll start \
+  --name "Linux enrolled finger" \
+  --acknowledge-password-fallback-tested \
+  --acknowledge-live-fingerprint-enrollment \
+  --acknowledge-local-catacomb-mutation
+```
+
+Follow the lift/place prompts until completion. A completed enrollment remains
+the only blocking mutation until the exact identity and Catacomb state are
+proved after a different Linux boot and Bridge connection:
+
+```sh
+sudo t2-touchid-enroll verify-post-reboot
+```
+
+Do not simply repeat `start` after an interruption or ambiguous result. Inspect
+`status`, then use only the recovery path it identifies:
+
+```sh
+sudo t2-touchid-enroll recover-outcome
+sudo t2-touchid-enroll recover-local
+sudo t2-touchid-enroll recover-observed \
+  --name "Recovered Linux finger" \
+  --acknowledge-observed-identity-recovery \
+  --acknowledge-local-catacomb-mutation
+```
+
+`recover-observed` persists a newly observed SEP identity and is therefore a
+mutation; it is not a generic repair command. The backend remains experimental
+and is proven only on the configuration documented here.
+
 Rename one current identity label (this does not alter its fingerprint
 template or fprintd's compatibility-slot name):
 
@@ -347,7 +396,8 @@ as a terminal completion witness: its UUID is discarded, and enrollment can
 complete only when a stable double-read proves exactly one new built-in
 identity in both the configured-user and global inventories, with unchanged
 account, keybag, mapping, and local Catacomb state. This is the path validated
-by the first Linux enrollment that persisted and matched after reboot.
+by the first Linux enrollment, which persisted and matched independently
+alongside the original macOS-enrolled finger after reboot.
 
 This machine has no usable TPM, so the credential is encrypted with systemd's
 host key. It protects against casual/offline disclosure without the decrypted

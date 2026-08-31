@@ -73,6 +73,7 @@ evidence, not intent.
 - [x] Implement journaled reconciled single-identity deletion and interruption
       recovery behind explicit acknowledgements.
 - [x] Add a non-mutating live deletion-target preflight.
+- [x] Promote the live-proven enrollment broker behind a stable subcommand UX.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
       verification on the proven machine.
 - [ ] Implement Linux-native enrollment/unenrollment policy for multiple users.
