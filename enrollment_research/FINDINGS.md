@@ -5234,6 +5234,22 @@ the nil output item. It now accepts only `[status]`, `[status, null]`, or
 cause and is not hardware-confirmed until the next separately approved run
 crosses start successfully.
 
+The separately approved second attempt reached the same password-bound start
+boundary and then froze because the two-item reply carried a 36-character
+string rather than decoded null or empty data. Fresh stable read-back again
+proved no identity, capacity, binding, or Catacomb delta, and the attempt was
+closed through `E3_RECOVERY_NO_CHANGE_RECONCILED` before further work.
+Disassembly of the exact target `bkremoted`
+`performCommandinputoutputcapacity:` method resolves the ambiguity: after the
+underlying call it constructs `[numericStatus, output ?: fixedCFString]`.
+The referenced CFString is a single image constant, not a generated request,
+connection, identity, or service identifier. A normal non-persistent sensor
+reset on the target returned a string that matched the embedded constant; the
+diagnostic disclosed only the equality result. The public adapter consequently
+recognizes that one exact nil-output placeholder only for its zero-capacity
+commands. A different canonical UUID, case variant, arbitrary string, or
+nonempty byte output still poisons the generation and requires reconciliation.
+
 The incident also closed a recovery gap. The broker now blocks new live
 enrollment while any mutation journal is unfinished. Its dedicated recovery
 mode can close exactly one outcome-unknown attempt only on a different Bridge

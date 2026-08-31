@@ -19,6 +19,16 @@ BIOMETRIC_COMMAND_HEADER = struct.Struct("<HHHH")
 BIOMETRIC_COMMAND_MAGIC = 0x4D42
 MAX_FRAME_BODY = 16 * 1024 * 1024
 
+# bkremoted uses this fixed CFString in its two-item command reply whenever
+# performCommand:input:output:capacity: returns a nil Objective-C output.  It
+# is a protocol sentinel, not a request, connection, identity, or service UUID.
+BIOMETRIC_NIL_OUTPUT_SENTINEL = "d4161201-daf5-4bbd-ae4f-9bf319fabbe0"
+
+
+def is_biometric_nil_output(value: object) -> bool:
+    """Recognize only bkremoted's exact fixed nil-output placeholder."""
+    return type(value) is str and value == BIOMETRIC_NIL_OUTPUT_SENTINEL
+
 
 def receive_exact(sock: socket.socket, length: int) -> bytes:
     chunks = bytearray()

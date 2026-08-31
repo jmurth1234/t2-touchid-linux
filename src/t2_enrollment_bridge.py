@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Protocol
 
 import t2_enrollment_protocol as protocol
+import t2_bridge_wire as wire
 
 
 COMMAND_CANCEL = 0x0C
@@ -154,11 +155,17 @@ class EnrollmentBridgeTransport:
                 or not -(2**31) <= status < 2**32
             ):
                 raise EnrollmentBridgeError("Bridge command status is malformed")
-            # Objective-C/XPC omits a nil output object, so commands with a
-            # zero output capacity legitimately arrive as either [status] or
-            # [status, null].  Some bridge builds instead materialize an empty
-            # NSData.  These are the only equivalent zero-output encodings.
-            if output not in (None, b""):
+            # bkremoted substitutes one fixed CFString sentinel when the
+            # Objective-C output pointer is nil.  Depending on the decoder or
+            # bridge build, the same zero-capacity result can instead omit the
+            # second item, decode it as null, or materialize empty NSData.
+            # Never accept a different UUID/string as equivalent to nil.
+            empty_output = (
+                output is None
+                or (type(output) is bytes and len(output) == 0)
+                or wire.is_biometric_nil_output(output)
+            )
+            if not empty_output:
                 raise EnrollmentBridgeError("enrollment command returned unexpected data")
             if type(events) is not list:
                 raise EnrollmentBridgeError("Bridge command events are malformed")

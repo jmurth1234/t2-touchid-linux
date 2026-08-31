@@ -34,6 +34,7 @@ from t2_bridge_wire import (
     TYPE_MESSAGE,
     biometric_command,
     describe,
+    is_biometric_nil_output,
     receive_envelope,
     receive_exact,
     receive_frame,
@@ -124,6 +125,8 @@ def summarize_command_reply(reply: object) -> dict:
     if len(reply) > 1:
         output = reply[1]
         summary["output_length"] = len(output) if isinstance(output, bytes) else None
+        if is_biometric_nil_output(output):
+            summary["output_kind"] = "nil-placeholder"
     return summary
 
 

@@ -16,6 +16,8 @@ MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
 
+import t2_bridge_wire as wire
+
 
 class ReplyTests(unittest.TestCase):
     def test_full_inventory_retries_missing_initial_protocol_payload(self):
@@ -51,6 +53,14 @@ class ReplyTests(unittest.TestCase):
         self.assertTrue(summary["valid"])
         self.assertEqual(summary["output_length"], 14)
         self.assertNotIn("output", summary)
+
+    def test_nil_placeholder_is_classified_without_disclosure(self):
+        sentinel = wire.BIOMETRIC_NIL_OUTPUT_SENTINEL
+        summary = MODULE.summarize_command_reply([0, sentinel])
+        self.assertTrue(summary["valid"])
+        self.assertEqual(summary["output_kind"], "nil-placeholder")
+        self.assertIsNone(summary["output_length"])
+        self.assertNotIn(sentinel, str(summary))
 
     def full_inventory(self):
         identity = struct.pack("<I", 501) + uuid.UUID(int=1).bytes

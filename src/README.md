@@ -125,7 +125,8 @@ exclusive Bridge lease whose canonical connection-generation UUID matches E0;
 emits exact start `0x03`, continue `0x0e`, and cancel `0x0c` commands; validates
 and queues the recovered five-item service callbacks; and requires empty
 command output. Zero-capacity commands accept the equivalent Bridge encodings
-`[status]`, `[status, null]`, and `[status, empty-data]`; any nonempty output is
+`[status]`, `[status, null]`, `[status, empty-data]`, and the one exact fixed
+`bkremoted` nil-output placeholder; every other string and any nonempty data are
 still rejected. A generation change, malformed reply/event, disconnect, or
 nonzero active-operation reply permanently poisons the adapter. It composes
 with the journaled enrollment core in tests, but no live lease, baseline-to-
@@ -222,13 +223,18 @@ local store, sensor readiness, operation lock, same-connection E0, and capacity.
 The live branch additionally requires explicit live-fingerprint and local-store
 mutation acknowledgements, derives all security subjects from protected runtime
 state, retains one Bridge lease through E3, and provides cancellation/audio
-feedback. Its preflight has passed on the target hardware. The first live run
-reached password-bound E1, then conservatively stopped outcome-unknown when the
-adapter rejected the real zero-output reply shape; fresh stable read-back proved
-no identity or Catacomb delta. `--reconcile-outcome-unknown` records that proof
-without issuing enrollment or persistence, and live enrollment refuses to start
-while an earlier mutation journal remains unfinished. A second live attempt is
-still explicitly operator-gated.
+feedback. Its preflight has passed on the target hardware. Two explicitly
+approved live runs reached password-bound E1, then conservatively stopped
+outcome-unknown while the adapter learned the real zero-output reply variants;
+fresh stable read-back after each proved no identity or Catacomb delta. The
+second run exposed a fixed 36-character placeholder. Exact `bkremoted`
+disassembly proves that this constant is substituted for a nil Objective-C
+output, and a non-mutating reset command on the target matched it without
+disclosing the value. The adapter now accepts only that exact constant in
+addition to omitted/null/empty-data encodings. `--reconcile-outcome-unknown`
+records no-change proof without issuing enrollment or persistence, and live
+enrollment refuses to start while an earlier mutation journal remains
+unfinished. Any next live attempt remains explicitly operator-gated.
 
 The typed journal also defines `E4_POST_REBOOT_VERIFIED` for a successful
 identity. It is accepted only after E3, on both a different Linux boot UUID and

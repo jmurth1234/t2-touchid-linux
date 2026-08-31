@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import t2_enrollment_bridge as bridge
 import t2_enrollment_operation as operation
 import t2_enrollment_protocol as protocol
+import t2_bridge_wire as wire
 import t2_mutation_journal as journal
 from tests.test_mutation_journal import baseline
 
@@ -152,13 +153,36 @@ class EnrollmentBridgeTests(unittest.TestCase):
                 self.assertEqual(transport.state, bridge.EnrollmentBridgeState.POISONED)
 
     def test_zero_output_reply_encodings_are_equivalent(self):
-        for reply in ([0], [0, None], [0, b""]):
+        for reply in (
+            [0],
+            [0, None],
+            [0, b""],
+            [0, wire.BIOMETRIC_NIL_OUTPUT_SENTINEL],
+        ):
             with self.subTest(reply=reply):
                 lease = FakeLease()
                 lease.results = [(reply, [])]
                 transport = self.make(lease)
                 self.assertEqual(transport.start(start_payload()), 0)
                 self.assertEqual(transport.state, bridge.EnrollmentBridgeState.ACTIVE)
+
+    def test_only_exact_bkremoted_nil_sentinel_is_accepted(self):
+        for output in (
+            str(uuid.UUID(int=123)),
+            wire.BIOMETRIC_NIL_OUTPUT_SENTINEL.upper(),
+            wire.BIOMETRIC_NIL_OUTPUT_SENTINEL + "x",
+        ):
+            with self.subTest(output=output):
+                lease = FakeLease()
+                lease.results = [([0, output], [])]
+                transport = self.make(lease)
+                with self.assertRaisesRegex(
+                    bridge.EnrollmentBridgeError, "unexpected data"
+                ):
+                    transport.start(start_payload())
+                self.assertEqual(
+                    transport.state, bridge.EnrollmentBridgeState.POISONED
+                )
 
     def test_generation_change_during_dispatch_poisons(self):
         lease = FakeLease()

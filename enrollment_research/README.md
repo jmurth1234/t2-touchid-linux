@@ -223,16 +223,19 @@ strictly decoded all three components, warmed the sensor, reconciled one current
 identity over a single Bridge generation, and confirmed spare capacity. It did
 not create an ACM context or dispatch enrollment/persistence.
 
-The explicitly approved first live run reached successful password/ACM binding
-and wrote `ENROLL_START_INTENT`, then conservatively stopped with
-`ENROLL_OUTCOME_UNKNOWN` at start/transport before scan feedback. A subsequent
-stable inventory still showed one identity, unchanged capacity, host/SEP
-equality, and no Catacomb delta. Inspection found an overly narrow adapter
-assumption: a command with zero output capacity may omit the nil output item,
-where the fixture had included it. The adapter now normalizes only the three
-exact empty-output encodings and remains fail-closed for nonempty output. The
-failed operation must be recovery-reconciled before a separately approved
-second live run.
+The explicitly approved first two live runs each reached successful
+password/ACM binding and wrote `ENROLL_START_INTENT`, then conservatively
+stopped with `ENROLL_OUTCOME_UNKNOWN` at start/transport before scan feedback.
+Stable inventory after each still showed one identity, unchanged capacity,
+host/SEP equality, and no Catacomb delta; both journals were recovery-reconciled
+on fresh Bridge generations before proceeding. The first run exposed an omitted
+nil output item. The second exposed a 36-character string in the same slot.
+Exact `bkremoted` disassembly proves the latter is one fixed CFString substituted
+when the Objective-C output pointer is nil, and a non-mutating reset command on
+the target matched that constant without printing it. The adapter now accepts
+only `[status]`, `[status, null]`, `[status, empty-data]`, or that exact fixed
+nil placeholder. Arbitrary UUID strings and nonempty data remain fail-closed.
+Any further live run requires separate explicit approval.
 
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
