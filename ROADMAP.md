@@ -78,6 +78,8 @@ evidence, not intent.
       authority and explicit per-target capabilities.
 - [x] Add a transport-free per-user binding/alias/lock-state readiness
       classifier with explicit quarantine and password-bootstrap outcomes.
+- [x] Add a typed runtime alias-activation journal and dependency-injected
+      load/bind/unlock operation core with secret wiping and no retry.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
       verification on the proven machine.
 - [ ] Implement Linux-native enrollment/unenrollment policy for multiple users.

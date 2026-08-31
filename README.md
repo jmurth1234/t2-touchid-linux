@@ -102,6 +102,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
   accounts to already-provisioned Apple users and explicit capabilities.
 - `src/t2_user_readiness.py`: pure classifier for per-user binding, alias, and
   lock-state evidence; it emits no AKS operation.
+- `src/t2_user_activation_{journal,operation}.py`: transport-free durable
+  activation ordering and dependency-injected execution core; no CLI exists.
 - `systemd/`: system and audible-feedback units.
 - `pam/`: clamshell-safe Omarchy PAM templates.
 - `tools/macos/`: private export helpers; outputs must never be committed.
@@ -316,6 +318,17 @@ lock-state bits quarantine the mapping; lockout and first-unlock states require
 the appropriate password recovery/bootstrap path. Only a fully reconciled
 alias with the expected bag and known-safe lock state is match-ready. This is a
 tested policy model, not a command that loads or unlocks another user's bag.
+
+The next activation core is implemented behind injected interfaces only. It
+durably records load intent before obtaining a temporary handle, verifies that
+handle's independently observed bag UUID, records bind intent before selecting
+the derived alias, re-reads the alias regardless of the command return, and
+records unlock intent before using a wipeable password buffer. It trusts only
+the final readiness observation: a lost bind/unlock reply can succeed when
+read-back proves the exact ready state, while a lost load handle, missing
+read-back, or post-mutation journal failure becomes outcome-unknown without a
+retry. There is still no concrete transport, public command, or automatic
+recovery path.
 
 Rename one current identity label (this does not alter its fingerprint
 template or fprintd's compatibility-slot name):

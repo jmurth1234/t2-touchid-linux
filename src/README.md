@@ -78,6 +78,18 @@ the mapping. The classifier deliberately has no transport and cannot perform
 the requested next step. This keeps future observation/recovery logic separate
 from AKS mutation and prevents an error return from becoming an implicit retry.
 
+`t2_user_activation_journal.py` and `t2_user_activation_operation.py` encode the
+serialized activation transaction without supplying a live transport. The
+hash-chained journal binds mapping/boot/runtime generations, target capability,
+Apple/account/bag/keybag authority, derived alias, and whether that alias
+predated the operation. The injected core writes intent before load, bind, and
+unlock; verifies a loaded handle's bag UUID before bind; re-observes alias and
+lock state after every ambiguous command return; accepts ready state over a
+lost reply; and never retries. Password input must be a bounded `bytearray` and
+is wiped on every exit. A post-mutation transport, observation, or journal fault
+becomes a terminal reconciliation-required record. No implementation of the
+transport protocol, recovery executor, PolicyKit action, or CLI is present.
+
 The `t2-touchid-manage` rename path resolves one slot only after that
 reconciliation gate,
 proves its strict archive rewrite changes only the selected label, and binds an

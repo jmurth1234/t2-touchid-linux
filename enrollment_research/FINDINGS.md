@@ -2097,6 +2097,19 @@ binding drift, and unknown SKS bits enter quarantine. Its output is redacted and
 contains no handle or UUID. It cannot load, bind, unlock, relock, unload, or
 retry anything, so an observation failure cannot accidentally become mutation.
 
+The repository also now contains a typed activation journal and
+dependency-injected operation core. For an absent alias, the only accepted
+order is durable load intent, positive-handle observation, exact bag-UUID
+read-back, durable bind intent, exact alias/bag observation, then—only if still
+locked—durable unlock intent and final readiness observation. A pre-existing
+locked alias skips load and bind. A bind or unlock error is classified from the
+independent read-back and may still be observed success; a missing load handle,
+missing read-back, or journal failure after mutation freezes outcome-unknown.
+The bounded password buffer is explicitly wiped on all exits and never enters
+the journal. This is still a no-transport core: it cannot issue a live AKS call,
+clean up a temporary handle, retire a previous user, or recover an ambiguous
+journal, so it does not weaken the current single-user service boundary.
+
 ## Read-only inventory transaction specification
 
 The matching binary exposes enough non-mutating primitives to discover existing
