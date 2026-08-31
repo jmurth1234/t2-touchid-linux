@@ -32,7 +32,27 @@ ACM_EXTERNAL_FORM_SIZE = 16
 BUILTIN_GROUPS = frozenset((bytes(20), struct.pack("<I16x", 1)))
 MAX_EVENT_PAYLOAD = 1024 * 1024
 MAX_EVENT_FINGERPRINTS = 64
-EXACT_NOOP_PHASE_STATUSES = frozenset((55, 72, 90, 95))
+# Complete no-op domain recovered from the exact macOS 15.7 / 24G830 chain
+# BKEnrollTouchIDOperation -> BKEnrollOperation -> BKOperation.  Statuses not
+# covered here are either handled explicitly below or reach a generic
+# operation-state transition whose enrollment meaning has not been recovered.
+EXACT_NOOP_PHASE_RANGES = (
+    (0, 50),
+    (52, 57),
+    (59, 59),
+    (69, 69),
+    (71, 73),
+    (75, 77),
+    (79, 79),
+    (81, 84),
+    (89, 92),
+    (94, 97),
+    (356, 500),
+    (503, 0xFFFFFFFF),
+)
+EXACT_UNMAPPED_GENERIC_STATE_STATUSES = frozenset(
+    (51, 58, 60, 61, 62, 65, 80, 99, 502)
+)
 
 
 class EnrollmentProtocolError(ValueError):
@@ -109,8 +129,8 @@ class ServiceEvent:
             raise EnrollmentProtocolError("event type is outside uint32 range")
         if not 0 <= self.version <= 0xFFFFFFFF:
             raise EnrollmentProtocolError("event version is outside uint32 range")
-        if not 0 <= self.ordinal <= 0xFFFFFFFFFFFFFFFF:
-            raise EnrollmentProtocolError("event ordinal is outside uint64 range")
+        if not 0 <= self.ordinal <= 0xFFFFFFFF:
+            raise EnrollmentProtocolError("event ordinal is outside uint32 range")
         if type(self.payload) is not bytes or len(self.payload) > MAX_EVENT_PAYLOAD:
             raise EnrollmentProtocolError("event payload is invalid or unbounded")
 
@@ -366,7 +386,7 @@ class EnrollmentStateMachine:
         # for both versions. Matching host dispatch normalizes version 2 and
         # forwards the same ordinal/details to BiometricKit, whose recovered
         # state transitions do not receive the envelope version. Linux discards
-        # the opaque details and still fails closed on every unknown ordinal.
+        # the opaque details and applies the complete recovered status domain.
         if status == 66:
             self.state = EnrollmentState.CANCELLED
             return EnrollmentTransition(EnrollmentAction.CANCELLED, self.state)
@@ -402,14 +422,6 @@ class EnrollmentStateMachine:
             )
         if status == 93:
             return EnrollmentTransition(EnrollmentAction.DIRTY_SENSOR, self.state)
-        # Exact macOS 15.7 / 24G830 BiometricKit forwards statuses 55, 72, 90,
-        # and 95 through BKEnrollTouchIDOperation and BKEnrollOperation without
-        # a capture error, progress update, terminal result, or enrollContinue.
-        # The generic BKOperation handler sends all four directly to its
-        # common return path. Preserve only these recovered no-ops while
-        # retaining fail-closed handling for every other unknown status.
-        if status in EXACT_NOOP_PHASE_STATUSES:
-            return EnrollmentTransition(EnrollmentAction.IGNORE_PHASE, self.state)
         if 100 <= status <= 355:
             return EnrollmentTransition(
                 EnrollmentAction.PROGRESS,
@@ -417,7 +429,14 @@ class EnrollmentStateMachine:
                 continue_required=True,
                 progress_percent=100 * (status - 100) // 255,
             )
-        self._freeze(f"unknown enrollment status {status}")
+        if any(lower <= status <= upper for lower, upper in EXACT_NOOP_PHASE_RANGES):
+            return EnrollmentTransition(EnrollmentAction.IGNORE_PHASE, self.state)
+        if status in EXACT_UNMAPPED_GENERIC_STATE_STATUSES:
+            self._freeze(f"unmapped generic operation state status {status}")
+        # The ranges above, the explicit actions, and accessory status 501
+        # partition the full uint32 domain. Keep a defensive fail-closed branch
+        # so a future edit cannot accidentally turn a gap into an implicit no-op.
+        self._freeze(f"unclassified enrollment status {status}")
 
     def _freeze(self, message: str) -> None:
         self.state = EnrollmentState.FROZEN

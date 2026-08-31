@@ -332,8 +332,8 @@ start. Conservative recovery again proved no persistent delta. Exact matching
 24G830 `BiometricKit` shows that this status crosses the Touch ID, enrollment,
 and generic operation handlers without capture feedback, progress, terminal
 delivery, or `enrollContinue`. The reducer now treats this one recovered status
-as a validated no-op phase event and continues waiting on the same connection;
-all other unrecovered ordinals remain fail-closed.
+as a validated no-op phase event and continues waiting on the same connection.
+At that stage, other unrecovered ordinals remained fail-closed.
 
 The following approved run reached status 63 immediately after the first finger
 press; recovery proved no persistent delta. Exact matching `BKOperation` maps
@@ -346,14 +346,14 @@ The next approved run emitted status 55 after the first contact notification;
 stable recovery again proved no persistent delta. In the exact 24G830 handler
 chain, 55 maps to no capture error, enrollment action, delegate callback, state
 change, or command, and the generic jump table sends it directly to the common
-return path. The reducer therefore accepts 55 as a second silent phase no-op
-while continuing to fail closed on every other unrecovered ordinal.
+return path. The reducer therefore accepted 55 as a second silent phase no-op;
+at that stage, every other unrecovered ordinal remained fail-closed.
 
 The subsequent approved run emitted status 72 at the same live boundary;
 stable recovery again proved no persistent delta. The exact handler chain also
 sends 72 through the Touch ID and enrollment subclasses without an action and
 then directly to the generic common return path. It is now the third explicit
-silent phase no-op; other unrecovered ordinals remain fail-closed.
+silent phase no-op; other unrecovered ordinals remained fail-closed then.
 
 The next approved run crossed those phase events and stopped on a version-2
 generic status envelope after finger contact; stable recovery again proved no
@@ -364,15 +364,25 @@ alignment detail. The reducer now validates that common framing, discards the
 detail, and preserves the established percentage/continue cadence for that
 recovered range. A subsequent live run proved that version 2 also carries a
 lower status after contact. Matching host dispatch removes the envelope version
-before the same BiometricKit handler, so version 2 is now allowed to reach only
-the already recovered ordinal switch; every unknown ordinal still fails closed.
+before the same BiometricKit handler, so version 2 was allowed to reach the
+then-recovered ordinal switch while every unknown ordinal remained fail-closed.
 
-The next approved run reached status 95 after contact. Stable recovery again
-proved no persistent delta, and an immediate second invocation was correctly
-blocked by the unfinished-operation gate. In exact 24G830 BiometricKit, 95
-bypasses Touch ID capture handling, enrollment progress/terminal handling, and
-the generic special cases before returning without a callback or command. It is
-now an explicit silent phase no-op for either supported envelope version.
+The next approved runs reached statuses 95 and 91 after contact. Stable
+recovery proved no persistent delta after each stop, and the unfinished-
+operation gate correctly prevented an overlapping invocation. Rather than
+continue recovering one observed number at a time, the exact 24G830
+`BKEnrollTouchIDOperation` -> `BKEnrollOperation` -> `BKOperation` chain was
+exhaustively enumerated. Its complete silent no-op domain is `0..50`, `52..57`,
+`59`, `69`, `71..73`, `75..77`, `79`, `81..84`, `89..92`, `94..97`,
+`356..500`, and `503..UINT32_MAX`. These statuses emit no capture feedback,
+progress, terminal result, state change, or command. The reducer now encodes
+and tests that whole domain for both supported envelope versions.
+
+Generic statuses `51`, `58`, `60`, `61`, `62`, `65`, `80`, `99`, and `502`
+do change `BKOperation` state but their enrollment effects are not yet safely
+recovered, so they remain fail-closed. Accessory authorization status `501`
+also remains on its separately blocked path. This exhaustive boundary removes
+the need for another live attempt merely to classify a harmless phase ordinal.
 
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements

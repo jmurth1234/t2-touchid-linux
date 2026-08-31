@@ -83,6 +83,15 @@ class EnrollmentProtocolTests(unittest.TestCase):
         self.assertEqual(parsed.ordinal, 90)
         self.assertEqual(parsed.version, 1)
 
+    def test_service_event_ordinal_is_exactly_uint32(self):
+        for ordinal in (-1, 0x100000000):
+            with self.subTest(ordinal=ordinal):
+                with self.assertRaisesRegex(
+                    enrollment.EnrollmentProtocolError, "outside uint32"
+                ):
+                    event(1, enrollment.SERVICE_STATUS, 1, ordinal)
+        event(1, enrollment.SERVICE_STATUS, 1, 0xFFFFFFFF)
+
     def test_wire_parser_rejects_nonzero_reserved_or_missing_status_record(self):
         for raw in (
             enrollment.SERVICE_HEADER.pack(1, enrollment.SERVICE_STATUS, 1, 7)
@@ -152,11 +161,56 @@ class EnrollmentProtocolTests(unittest.TestCase):
                 self.assertFalse(removed.continue_required)
                 self.assertEqual(machine.state, enrollment.EnrollmentState.ACTIVE)
 
-    def test_exact_build_phase_noops_do_not_continue(self):
+    def test_exact_build_phase_noop_domain_is_exhaustive_through_503(self):
+        expected_ranges = (
+            (0, 50),
+            (52, 57),
+            (59, 59),
+            (69, 69),
+            (71, 73),
+            (75, 77),
+            (79, 79),
+            (81, 84),
+            (89, 92),
+            (94, 97),
+            (356, 500),
+            (503, 503),
+        )
+        expected = {
+            status
+            for lower, upper in expected_ranges
+            for status in range(lower, upper + 1)
+        }
+        actual = {
+            status
+            for lower, upper in enrollment.EXACT_NOOP_PHASE_RANGES
+            for status in range(max(0, lower), min(503, upper) + 1)
+        }
+        self.assertEqual(actual, expected)
+        self.assertIn((503, 0xFFFFFFFF), enrollment.EXACT_NOOP_PHASE_RANGES)
+
+    def test_representative_exact_build_phase_noops_do_not_continue(self):
         machine = self.machine()
         sequence = 0
         for version in (1, 2):
-            for status in (55, 72, 90, 95):
+            for status in (
+                0,
+                50,
+                52,
+                55,
+                59,
+                69,
+                72,
+                76,
+                79,
+                84,
+                91,
+                95,
+                356,
+                500,
+                503,
+                0xFFFFFFFF,
+            ):
                 sequence += 1
                 with self.subTest(version=version, status=status):
                     phase = self.accept(
@@ -175,6 +229,78 @@ class EnrollmentProtocolTests(unittest.TestCase):
         )
         self.assertEqual(progress.action, enrollment.EnrollmentAction.PROGRESS)
         self.assertTrue(progress.continue_required)
+
+    def test_every_exact_build_status_through_503_has_a_decision(self):
+        actions = {
+            63: enrollment.EnrollmentAction.FINGER_PRESENT,
+            64: enrollment.EnrollmentAction.FINGER_REMOVED,
+            66: enrollment.EnrollmentAction.CANCELLED,
+            67: enrollment.EnrollmentAction.FAILED,
+            68: enrollment.EnrollmentAction.TIMED_OUT,
+            70: enrollment.EnrollmentAction.CONTINUE,
+            74: enrollment.EnrollmentAction.REMOVE_AND_RETRY,
+            78: enrollment.EnrollmentAction.RETRY_SCAN,
+            85: enrollment.EnrollmentAction.RETRY_SCAN,
+            86: enrollment.EnrollmentAction.RETRY_SMALL_COVERAGE,
+            87: enrollment.EnrollmentAction.RETRY_SCAN,
+            88: enrollment.EnrollmentAction.RETRY_SCAN,
+            93: enrollment.EnrollmentAction.DIRTY_SENSOR,
+            98: enrollment.EnrollmentAction.RETRY_SCAN,
+        }
+        blocked = {51, 58, 60, 61, 62, 65, 80, 99, 501, 502}
+        for version in (1, 2):
+            for status in range(504):
+                machine = self.machine()
+                with self.subTest(version=version, status=status):
+                    if status in blocked:
+                        with self.assertRaises(enrollment.EnrollmentProtocolError):
+                            self.accept(
+                                machine,
+                                event(
+                                    1,
+                                    enrollment.SERVICE_STATUS,
+                                    version,
+                                    status,
+                                ),
+                            )
+                        self.assertEqual(
+                            machine.state, enrollment.EnrollmentState.FROZEN
+                        )
+                        continue
+                    transition = self.accept(
+                        machine,
+                        event(1, enrollment.SERVICE_STATUS, version, status),
+                    )
+                    if 100 <= status <= 355:
+                        self.assertEqual(
+                            transition.action, enrollment.EnrollmentAction.PROGRESS
+                        )
+                    elif status in actions:
+                        self.assertEqual(transition.action, actions[status])
+                    else:
+                        self.assertEqual(
+                            transition.action,
+                            enrollment.EnrollmentAction.IGNORE_PHASE,
+                        )
+
+    def test_unmapped_generic_operation_states_remain_fail_closed(self):
+        expected = {51, 58, 60, 61, 62, 65, 80, 99, 502}
+        self.assertEqual(
+            set(enrollment.EXACT_UNMAPPED_GENERIC_STATE_STATUSES), expected
+        )
+        for version in (1, 2):
+            for status in sorted(expected):
+                machine = self.machine()
+                with self.subTest(version=version, status=status):
+                    with self.assertRaisesRegex(
+                        enrollment.EnrollmentProtocolError,
+                        "unmapped generic operation state",
+                    ):
+                        self.accept(
+                            machine,
+                            event(1, enrollment.SERVICE_STATUS, version, status),
+                        )
+                    self.assertEqual(machine.state, enrollment.EnrollmentState.FROZEN)
 
     def test_structured_status_payload_is_validated_but_not_exposed(self):
         detail = b"private-node-data"
@@ -432,12 +558,12 @@ class EnrollmentProtocolTests(unittest.TestCase):
             self.accept(machine, event(1, enrollment.SERVICE_STATUS, 1, 100))
         self.assertEqual(machine.state, enrollment.EnrollmentState.FROZEN)
 
-    def test_unknown_status_version_payload_and_accessory_freeze(self):
+    def test_unknown_version_payload_accessory_and_state_status_freeze(self):
         mismatched_status = (101).to_bytes(4, "little") + bytes(12)
         mismatched_length = (100).to_bytes(4, "little") + bytes(4) + (1).to_bytes(8, "little")
         cases = (
             event(1, enrollment.SERVICE_STATUS, 3, 100),
-            event(1, enrollment.SERVICE_STATUS, 2, 500),
+            event(1, enrollment.SERVICE_STATUS, 2, 51),
             event(1, enrollment.SERVICE_STATUS, 1, 100, b"truncated"),
             event(1, enrollment.SERVICE_STATUS, 1, 100, mismatched_status),
             event(1, enrollment.SERVICE_STATUS, 1, 100, mismatched_length),

@@ -709,10 +709,7 @@ stops at `SEP-identity-observed` pending persistence and inventory reconciliatio
 | ordinal 63 | Active -> finger-present feedback | no | presence/animation only; not capture success |
 | ordinal 64 | Active -> finger-removed/waiting feedback | no | presence/animation only; not a retry or terminal result |
 | `0xe3ff8001`, ordinal 70 | Active -> continue-without-new-progress | yes, exactly once | no terminal result |
-| ordinal 55 | Active -> unchanged; exact-build phase message ignored after validation | no | no feedback or terminal result |
-| ordinal 72 | Active -> unchanged; exact-build phase message ignored after validation | no | no feedback or terminal result |
-| ordinal 90 | Active -> unchanged; exact-build phase message ignored after validation | no | no feedback or terminal result |
-| ordinal 95 | Active -> unchanged; exact-build phase message ignored after validation | no | no feedback or terminal result |
+| ordinals `0..50`, `52..57`, `59`, `69`, `71..73`, `75..77`, `79`, `81..84`, `89..92`, `94..97`, `356..500`, `503..UINT32_MAX` | Active -> unchanged; complete exact-build no-op domain ignored after validation | no | no feedback, state change, command, or terminal result |
 | ordinal 74 | Active -> waiting-for-finger-removal | no invented continue | `enroll-remove-and-retry` feedback |
 | ordinals 78, 85, 87, 88, 98 | Active -> rejected-capture feedback | no invented continue | generic `enroll-retry-scan` |
 | ordinal 86 | Active -> rejected-small-coverage feedback | no invented continue | `enroll-retry-scan`; richer UI may say low coverage |
@@ -723,7 +720,7 @@ stops at `SEP-identity-observed` pending persistence and inventory reconciliatio
 | `0xe3ff8003` with valid v1/v2 identity record | Active -> SEP-identity-observed | no | provisional identity only; `enroll-completed` waits for Catacomb and stable read-back |
 | version-1 `0xe3ff8004` statistics | Active -> unchanged; telemetry ignored after deduplication | no | no enrollment feedback or result |
 | `0xe3ff800e` / ordinal 501 accessory authorization | Active -> accessory-authorization-required | no guessed retry | unsupported for built-in-only Linux flow unless the accessory protocol is explicitly implemented |
-| unknown envelope, ordinal other than the explicitly recovered no-ops 55, 72, 90, and 95, version, length, operation, or generation | no transition | no | protocol error; freeze/reconcile if an operation was active |
+| generic state ordinals `51`, `58`, `60`, `61`, `62`, `65`, `80`, `99`, `502`; unknown envelope/version/length/operation/generation | no transition | no | incomplete semantic recovery or protocol error; freeze/reconcile if an operation was active |
 
 “Exactly once” is scoped to a uniquely accepted event on the current operation
 and transport generation. A duplicate delivery must not send a second continue;
@@ -5378,7 +5375,8 @@ identity, capacity, Catacomb, or host-state delta. Exact 24G830 x86_64
 nor a terminal reason, and the generic operation handler falls through without
 delegate notification or a command. The reducer therefore accepts only ordinal
 90 as a validated no-op phase event, emits no feedback, sends no `0x0e`, and
-keeps the operation active. Other unrecovered ordinals remain fail-closed.
+keeps the operation active. Other unrecovered ordinals remained fail-closed at
+that stage.
 
 The following approved attempt reached generic status 63 immediately after the
 operator's first finger press. Fresh reconciliation again proved no persistent
@@ -5397,7 +5395,7 @@ the enrollment superclass; the generic operation jump table sends it directly
 to the common return path without a delegate callback, state change, or
 command. Linux therefore treats only this additionally recovered ordinal as a
 silent phase no-op and continues waiting on the same connection. All other
-unrecovered ordinals remain fail-closed.
+unrecovered ordinals remained fail-closed at that stage.
 
 The subsequent approved attempt emitted generic status 72 at the same live
 boundary. Fresh stable reconciliation again proved no persistent identity or
@@ -5405,7 +5403,7 @@ Catacomb delta. The exact 24G830 chain bypasses the Touch ID capture branch and
 the enrollment progress/terminal branches for 72, then the generic operation
 jump table sends it directly to its common return path. Linux therefore accepts
 72 as a third silent phase no-op without sending continue or emitting feedback;
-all other unrecovered ordinals remain fail-closed.
+all other unrecovered ordinals remained fail-closed at that stage.
 
 The next approved attempt crossed those phase boundaries and stopped on a
 version-2 generic status envelope after contact. Fresh stable reconciliation
@@ -5421,7 +5419,7 @@ all unsupported versions initially remained fail-closed. The subsequent live
 attempt proved a structurally valid version-2 record can also carry a lower
 status after contact. Matching host dispatch normalizes the envelope and calls
 the same BiometricKit status path without passing the wire version. Linux now
-allows version 2 through the same already recovered ordinal switch while still
+allowed version 2 through the same then-recovered ordinal switch while still
 freezing every unknown ordinal, malformed detail length, and other version.
 
 The next approved attempt reached generic status 95 after contact. Fresh stable
@@ -5431,8 +5429,23 @@ gate without opening a new operation. Exact 24G830 `BKEnrollTouchIDOperation`
 passes 95 to its superclass, `BKEnrollOperation` assigns it no progress or
 terminal action and passes it onward, and `BKOperation` finds neither a
 jump-table entry nor a later special case before reaching its common return
-path. Linux now treats 95 as a fourth silent phase no-op for both supported
-envelope versions and leaves every other unknown ordinal fail-closed.
+path. Linux then treated 95 as a fourth silent phase no-op for both supported
+envelope versions while leaving every other unknown ordinal fail-closed.
+
+The following approved attempt reached status 91 after the first contact and
+was likewise reconciled on a fresh generation with no persistent identity or
+Catacomb delta. This triggered an exhaustive recovery of the complete exact-
+build status decision boundary instead of another one-number patch. The Touch
+ID subclass handles progress `100..355` and capture errors `78`, `85..88`, and
+`98`; the enrollment superclass handles terminal `66..68`, continue `70`, and
+accessory `501`; the generic superclass handles presence `63/64`, feedback
+`74/93`, and state-changing `51`, `58`, `60`, `61`, `62`, `65`, `80`, `99`,
+and `502`. Every remaining uint32 status reaches the common return path without
+a delegate callback, state change, or command. Consequently the complete
+validated no-op ranges are `0..50`, `52..57`, `59`, `69`, `71..73`, `75..77`,
+`79`, `81..84`, `89..92`, `94..97`, `356..500`, and
+`503..UINT32_MAX`. The executable reducer tests those ranges and keeps the nine
+uninterpreted generic state transitions fail-closed.
 
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.
