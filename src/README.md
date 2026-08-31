@@ -66,6 +66,13 @@ read-back, and post-reboot phases. Every post-dispatch fault becomes
 outcome-unknown; the code is intentionally not exposed as a command until its
 local prepare/commit recovery broker is complete.
 
+The independent rename read-back additionally requires the identity set,
+account/keybag binding, master enrollment count, component ownership/modes,
+and unrelated master/bio-lockout hashes to remain unchanged. The committed
+user archive must equal the strict rename plan, the live per-user/global sets
+must equal it, and both the selected-user and master SEP Catacomb states must
+be clean before the journal can reach `reconciled`.
+
 The installed wrapper selects the known positive runtime keybag and requires a
 narrow acknowledgement for this non-ACM path:
 
