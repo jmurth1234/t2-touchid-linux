@@ -38,7 +38,7 @@ class IdentityDeletePlan:
         )
 
 
-def _survivor_snapshot(
+def survivor_snapshot_sha256(
     identities: tuple[t2_catacomb_codec.Identity, ...],
 ) -> str:
     records = [
@@ -100,7 +100,7 @@ def plan(
         selected.entity,
         selected.name,
         request,
-        _survivor_snapshot(decoded.identities),
+        survivor_snapshot_sha256(decoded.identities),
         archive,
     )
 
@@ -123,7 +123,7 @@ def bind_secure_blob(
         raise IdentityDeleteError("fresh secure envelope is invalid") from error
     if (
         value.identity_uuid in {identity.uuid for identity in verified.identities}
-        or _survivor_snapshot(verified.identities)
+        or survivor_snapshot_sha256(verified.identities)
         != value.survivor_snapshot_sha256
     ):
         raise IdentityDeleteError(

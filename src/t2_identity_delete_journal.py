@@ -327,7 +327,7 @@ def validate_history(records: list[dict[str, Any]]) -> IdentityDeleteHistory:
                 phase = IdentityDeletePhase.PERSISTENCE_READY
             elif persistence.phase is persistence_journal.PersistencePhase.OUTCOME_UNKNOWN:
                 phase = IdentityDeletePhase.OUTCOME_UNKNOWN
-                outcome_stage = persistence.outcome_unknown_stage
+                outcome_stage = persistence.snapshot().outcome_unknown_stage
             else:
                 phase = IdentityDeletePhase.PERSISTING
             continue
