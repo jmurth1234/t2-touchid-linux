@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import t2_catacomb_codec
@@ -11,6 +12,21 @@ import t2_catacomb_codec
 
 class IdentityInventoryError(ValueError):
     pass
+
+
+@dataclass(frozen=True, repr=False)
+class ResolvedIdentity:
+    apple_user_id: int
+    identity_uuid: str
+    entity: int
+    name: str
+
+    def __repr__(self) -> str:
+        return (
+            "ResolvedIdentity(apple_user_id="
+            f"{self.apple_user_id}, identity_uuid=<redacted>, "
+            f"entity={self.entity}, name={self.name!r})"
+        )
 
 
 def _canonical_uuid(value: Any, field: str) -> str:
@@ -119,3 +135,25 @@ def summarize(
         "fprintd_listing_is_compatibility_alias": True,
         "identifiers_redacted": True,
     }
+
+
+def resolve_slot(
+    local: t2_catacomb_codec.UserCatacomb,
+    live: dict[str, Any],
+    slot: int,
+) -> ResolvedIdentity:
+    """Resolve one ephemeral UI slot only after the full reconciliation gate."""
+    summary = summarize(local, live)
+    if (
+        not isinstance(slot, int)
+        or isinstance(slot, bool)
+        or not 1 <= slot <= summary["identity_count"]
+    ):
+        raise IdentityInventoryError("identity slot is outside the current list")
+    identity = sorted(local.identities, key=lambda item: item.entity)[slot - 1]
+    return ResolvedIdentity(
+        identity.user_id,
+        identity.uuid,
+        identity.entity,
+        identity.name,
+    )

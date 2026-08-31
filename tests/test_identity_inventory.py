@@ -89,6 +89,18 @@ class IdentityInventoryTests(unittest.TestCase):
             ):
                 inventory.summarize(self.local, live)
 
+    def test_slot_resolution_is_reconciled_and_repr_redacts_uuid(self):
+        live = live_for(self.local)
+        selected = inventory.resolve_slot(self.local, live, 2)
+        self.assertEqual(selected.name, "Linux enrolled finger")
+        self.assertEqual(selected.identity_uuid, self.local.identities[1].uuid)
+        self.assertNotIn(selected.identity_uuid, repr(selected))
+        for slot in (0, 3, True):
+            with self.subTest(slot=slot), self.assertRaises(
+                inventory.IdentityInventoryError
+            ):
+                inventory.resolve_slot(self.local, live, slot)
+
 
 if __name__ == "__main__":
     unittest.main()
