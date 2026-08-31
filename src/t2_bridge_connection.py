@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import select
 import socket
 import threading
 import uuid
@@ -198,6 +199,47 @@ class BridgeConnectionLease:
     def next_service_event(self) -> object:
         self._enter()
         try:
+            envelope = wire.receive_envelope(self._socket)
+            if (
+                envelope[0] != 1
+                or envelope[1] is not False
+                or not isinstance(envelope[2], str)
+                or not envelope[2]
+            ):
+                raise BridgeConnectionError("unexpected asynchronous Bridge envelope")
+            wire.send_message(self._socket, [1, True, envelope[2], [0]])
+            return envelope[3]
+        except BaseException as error:
+            self._poison()
+            if isinstance(error, BridgeConnectionError):
+                raise
+            raise BridgeConnectionError(
+                "Bridge event receive failed; connection generation is poisoned"
+            ) from error
+        finally:
+            self._leave()
+
+    def wait_service_event(self, timeout: float) -> object | None:
+        """Receive one event only after a bounded, non-consuming idle wait.
+
+        Readiness is checked before reading the frame header.  An idle timeout
+        therefore consumes no wire bytes and does not make the connection
+        ambiguous.  Once a frame begins, the socket's ordinary I/O timeout and
+        fail-closed poisoning rules still apply.
+        """
+        if (
+            not isinstance(timeout, (int, float))
+            or isinstance(timeout, bool)
+            or not 0 < timeout <= 5
+        ):
+            raise BridgeConnectionError("Bridge event poll timeout is invalid")
+        self._enter()
+        try:
+            readable, _writable, _exceptional = select.select(
+                [self._socket], [], [], float(timeout)
+            )
+            if not readable:
+                return None
             envelope = wire.receive_envelope(self._socket)
             if (
                 envelope[0] != 1

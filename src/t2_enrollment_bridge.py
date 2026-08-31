@@ -41,7 +41,7 @@ class EnrollmentBridgeLease(Protocol):
         output_capacity: int,
     ) -> tuple[object, list[object]]: ...
 
-    def next_service_event(self) -> object: ...
+    def wait_service_event(self, timeout: float) -> object | None: ...
 
 
 class EnrollmentBridgeState(Enum):
@@ -222,7 +222,7 @@ class EnrollmentBridgeTransport:
             self._state = EnrollmentBridgeState.CANCEL_REQUESTED
         return status
 
-    def next_event(self) -> bytes:
+    def next_event(self, *, timeout: float = 1.0) -> bytes | None:
         self._require_state(
             (
                 EnrollmentBridgeState.ACTIVE,
@@ -230,12 +230,20 @@ class EnrollmentBridgeTransport:
             ),
             "event receive",
         )
+        if (
+            not isinstance(timeout, (int, float))
+            or isinstance(timeout, bool)
+            or not 0 < timeout <= 5
+        ):
+            raise EnrollmentBridgeError("enrollment event poll timeout is invalid")
         if self._events:
             return self._events.popleft()
         try:
             self._check_generation()
-            value = self._lease.next_service_event()
+            value = self._lease.wait_service_event(float(timeout))
             self._check_generation()
+            if value is None:
+                return None
             return self._event_data(value)
         except BaseException as error:
             self._poison()

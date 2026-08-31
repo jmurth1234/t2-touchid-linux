@@ -141,6 +141,24 @@ class BridgeConnectionTests(unittest.TestCase):
         lease.close()
         peer.finish()
 
+    def test_idle_event_poll_consumes_nothing_and_keeps_generation_active(self):
+        release_peer = threading.Event()
+
+        def script(_peer: socket.socket) -> None:
+            if not release_peer.wait(timeout=2):
+                raise AssertionError("test did not release peer")
+
+        peer = ScriptedPeer(script)
+        lease = connection.BridgeConnectionLease(
+            peer.client, connection_generation=GENERATION
+        )
+        self.assertIsNone(lease.wait_service_event(0.01))
+        self.assertEqual(lease.state, connection.BridgeConnectionState.ACTIVE)
+        self.assertEqual(lease.connection_generation, GENERATION)
+        lease.close()
+        release_peer.set()
+        peer.finish()
+
     def test_disconnect_poisons_and_generation_becomes_unavailable(self):
         def script(peer: socket.socket) -> None:
             receive_message(peer)

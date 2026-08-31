@@ -35,7 +35,7 @@ class EnrollmentTransport(Protocol):
 
     def cancel(self) -> int: ...
 
-    def next_event(self) -> bytes: ...
+    def next_event(self, *, timeout: float = 1.0) -> bytes | None: ...
 
 
 @dataclass(frozen=True, repr=False)
@@ -151,7 +151,8 @@ class EnrollmentOperation:
                 )
 
             cancel_sent = False
-            for _event_index in range(event_limit):
+            event_count = 0
+            while event_count < event_limit:
                 try:
                     should_cancel = not cancel_sent and cancel_requested()
                 except BaseException as error:
@@ -188,9 +189,12 @@ class EnrollmentOperation:
                     cancel_sent = True
 
                 try:
-                    raw_event = self.transport.next_event()
+                    raw_event = self.transport.next_event(timeout=1.0)
                 except BaseException as error:
                     self._outcome_unknown("active", "connection-lost", error)
+                if raw_event is None:
+                    continue
+                event_count += 1
                 try:
                     event = protocol.parse_service_event(raw_event)
                     transition = machine.accept(

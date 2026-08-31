@@ -395,6 +395,17 @@ validated service events, journals the numeric return as non-authoritative, and
 continues. Start, cancel, persistence, malformed-event, and connection-
 generation checks remain fail-closed.
 
+Two later approved attempts confirmed sustained capture and progress at 20% and
+22%, but the latter stopped after a quiet scan interval because the original
+Bridge socket retained its 60-second command timeout while waiting for the next
+asynchronous service event. That timeout began before any frame header arrived,
+so it was an ordinary idle period rather than evidence of a malformed or lost
+frame. Enrollment now performs one-second readiness polls before reading an
+event frame. An idle poll consumes no bytes, does not poison the generation,
+does not consume the bounded event budget, and gives the signal handler a
+chance to request protocol cancellation. Once any frame starts, the existing
+bounded receive and fail-closed partial-frame handling remain unchanged.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,

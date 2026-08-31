@@ -47,12 +47,13 @@ class FakeLease:
             raise result
         return result  # type: ignore[return-value]
 
-    def next_service_event(self) -> object:
+    def wait_service_event(self, timeout: float) -> object | None:
+        if timeout <= 0:
+            raise AssertionError("invalid timeout")
         value = self.events.pop(0)
         if isinstance(value, BaseException):
             raise value
         return value
-
 
 def start_payload(version: int = 2) -> memoryview:
     request = protocol.SensitiveEnrollmentRequest(version, 501, bytes(range(16)))
@@ -95,6 +96,15 @@ class EnrollmentBridgeTests(unittest.TestCase):
         self.assertEqual(transport.next_event(), first[2])
         self.assertEqual(transport.next_event(), second[2])
         self.assertEqual(lease.events, [])
+
+    def test_idle_poll_is_nonterminal_and_does_not_poison(self):
+        lease = FakeLease()
+        lease.events = [None, event(3)]
+        transport = self.make(lease)
+        transport.start(start_payload())
+        self.assertIsNone(transport.next_event(timeout=0.01))
+        self.assertEqual(transport.state, bridge.EnrollmentBridgeState.ACTIVE)
+        self.assertEqual(transport.next_event(timeout=0.01), event(3)[2])
 
     def test_start_rejection_is_terminal_and_has_no_mutation_retry(self):
         lease = FakeLease()

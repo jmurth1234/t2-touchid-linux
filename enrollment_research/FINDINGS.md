@@ -5472,6 +5472,19 @@ queues every structurally valid interleaved event, journals the bounded return
 as non-authoritative, and continues consuming the event stream. Malformed
 replies/events and connection-generation changes still poison the operation.
 
+Two subsequent approved attempts exercised repeated lift/place capture and
+reported real progress at 20% and 22%. The second stopped during a quiet scan
+interval with a service-event receive failure. This isolated a host transport
+bug: the 60-second timeout used to establish and initialize the Bridge socket
+also governed a receive that began while no asynchronous frame existed. A
+normal enrollment pause could therefore poison an otherwise intact generation.
+The live path now calls `select` before consuming a frame and polls readiness at
+one-second intervals. A readiness timeout consumes no wire bytes, is not counted
+against the event limit, and permits prompt typed cancellation. After the
+socket becomes readable, header/body parsing retains the bounded socket timeout;
+EOF, malformed envelopes, partial-frame timeout, and acknowledgement failure
+still poison the generation and require reconciliation.
+
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.
 - Treat producer-side decomposition of generic enrollment failure 67 as

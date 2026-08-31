@@ -25,7 +25,7 @@ def raw_event(sequence: int, envelope: int, version: int, ordinal: int, payload:
 class FakeTransport:
     def __init__(
         self,
-        events: list[bytes],
+        events: list[bytes | None],
         *,
         start_status: int = 0,
         continue_status: int = 0,
@@ -53,7 +53,9 @@ class FakeTransport:
         self.cancel_calls += 1
         return 0
 
-    def next_event(self) -> bytes:
+    def next_event(self, *, timeout: float = 1.0) -> bytes | None:
+        if timeout <= 0:
+            raise AssertionError("invalid timeout")
         return next(self.events)
 
 
@@ -237,6 +239,23 @@ class EnrollmentOperationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             instance, path, _operation_id = self.create(directory, transport)
             result = instance.run(bytes(range(16)), cancel_requested=lambda: True)
+            history = typed_journal.read(path)
+        self.assertEqual(result.outcome, "cancelled")
+        self.assertEqual(transport.cancel_calls, 1)
+        self.assertEqual(history.phase, typed_journal.EnrollmentPhase.TERMINAL_FAILURE)
+
+    def test_idle_polls_do_not_consume_event_limit_and_allow_cancellation(self):
+        transport = FakeTransport(
+            [None, None, raw_event(1, protocol.SERVICE_STATUS, 1, 66)]
+        )
+        checks = iter((False, False, True, False))
+        with tempfile.TemporaryDirectory() as directory:
+            instance, path, _operation_id = self.create(directory, transport)
+            result = instance.run(
+                bytes(range(16)),
+                cancel_requested=lambda: next(checks),
+                event_limit=1,
+            )
             history = typed_journal.read(path)
         self.assertEqual(result.outcome, "cancelled")
         self.assertEqual(transport.cancel_calls, 1)

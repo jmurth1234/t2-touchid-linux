@@ -84,7 +84,7 @@ class FakeLease:
             ]
         raise AssertionError(f"unexpected command {command}")
 
-    def next_service_event(self) -> object:
+    def wait_service_event(self, timeout: float) -> object | None:
         raise AssertionError("all events are interleaved in this fixture")
 
 
