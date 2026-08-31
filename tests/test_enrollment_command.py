@@ -35,12 +35,19 @@ CONFIGURATION = {
 
 class EnrollmentCommandTests(unittest.TestCase):
     def invoke(
-        self, arguments, *, live=False, recovery=False, enrollment_error=None
+        self,
+        arguments,
+        *,
+        live=False,
+        recovery=False,
+        status_only=False,
+        enrollment_error=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "operation.lock"
             backup = Path(directory) / ("a" * 64 + ".tar.gz")
             output = io.StringIO()
+            lifecycle = []
             result = {
                 "schema_version": 1,
                 "identifiers_redacted": True,
@@ -58,13 +65,24 @@ class EnrollmentCommandTests(unittest.TestCase):
                     "fstat",
                     return_value=SimpleNamespace(st_mode=0o100600, st_uid=0),
                 ),
-                mock.patch.object(MODULE, "select_backup", return_value=backup),
+                mock.patch.object(
+                    MODULE, "select_backup", return_value=backup
+                ) as select_backup,
                 mock.patch.object(
                     MODULE.t2_catacomb_local,
                     "provision_from_backup",
                     return_value=({}, object()),
+                ) as provision,
+                mock.patch.object(
+                    MODULE,
+                    "warm_sensor",
+                    side_effect=lambda: lifecycle.append("warm"),
+                ) as warm_sensor,
+                mock.patch.object(
+                    MODULE.fcntl,
+                    "flock",
+                    side_effect=lambda *_args: lifecycle.append("lock"),
                 ),
-                mock.patch.object(MODULE, "warm_sensor"),
                 mock.patch.object(MODULE, "require_no_unfinished_enrollment"),
                 mock.patch.object(MODULE, "OPERATION_LOCK", lock),
                 mock.patch.object(
@@ -91,15 +109,34 @@ class EnrollmentCommandTests(unittest.TestCase):
                         "fingerprint_mutation_performed": False,
                     },
                 ) as reconcile,
+                mock.patch.object(
+                    MODULE,
+                    "enrollment_status",
+                    return_value={
+                        **result,
+                        "status_only": True,
+                        "unfinished_count": 0,
+                    },
+                ) as status_report,
                 mock.patch.object(MODULE, "notify_user") as notify,
                 redirect_stdout(output),
                 redirect_stderr(io.StringIO()),
             ):
                 status = MODULE.main()
             self.assertEqual(status, 1 if enrollment_error is not None else 0)
-            self.assertEqual(preflight.called, not live and not recovery)
+            self.assertEqual(
+                preflight.called, not live and not recovery and not status_only
+            )
             self.assertEqual(enrollment.called, live)
             self.assertEqual(reconcile.called, recovery)
+            self.assertEqual(status_report.called, status_only)
+            if status_only:
+                select_backup.assert_not_called()
+                warm_sensor.assert_not_called()
+                provision.assert_not_called()
+                self.assertEqual(lifecycle, ["lock"])
+            else:
+                self.assertEqual(lifecycle[:2], ["warm", "lock"])
             if enrollment_error is not None:
                 notify.assert_called_once_with(
                     CONFIGURATION["linux_user"], "t2-touchid-failure.service"
@@ -164,6 +201,52 @@ class EnrollmentCommandTests(unittest.TestCase):
         )
         self.assertIn('"outcome_unknown_reconciled": true', output)
         self.assertIn('"fingerprint_mutation_performed": false', output)
+
+    def test_status_needs_no_acknowledgement_or_hardware_setup(self):
+        output = self.invoke(["--status-only"], status_only=True)
+        self.assertIn('"status_only": true', output)
+        self.assertIn('"unfinished_count": 0', output)
+
+    def test_status_redacts_journal_identity_and_reports_recovery_eligibility(self):
+        histories = [
+            (
+                Path("/private/identifier-one.jsonl"),
+                SimpleNamespace(
+                    phase=MODULE.t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+                ),
+            )
+        ]
+        with mock.patch.object(
+            MODULE, "unfinished_enrollment_journals", return_value=histories
+        ):
+            result = MODULE.enrollment_status()
+        self.assertEqual(result["unfinished_count"], 1)
+        self.assertEqual(result["unfinished_phases"], {"outcome-unknown": 1})
+        self.assertTrue(result["automatic_no_change_recovery_candidate"])
+        self.assertNotIn("identifier-one", repr(result))
+
+    def test_recovery_rejects_mixed_unfinished_journals(self):
+        histories = [
+            (
+                Path("/private/one.jsonl"),
+                SimpleNamespace(
+                    phase=MODULE.t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+                ),
+            ),
+            (
+                Path("/private/two.jsonl"),
+                SimpleNamespace(
+                    phase=MODULE.t2_enrollment_journal.EnrollmentPhase.PERSISTING
+                ),
+            ),
+        ]
+        with (
+            mock.patch.object(
+                MODULE, "unfinished_enrollment_journals", return_value=histories
+            ),
+            self.assertRaisesRegex(MODULE.EnrollmentCommandError, "exactly one"),
+        ):
+            MODULE.run_outcome_unknown_reconciliation(CONFIGURATION, object())
 
     def test_unfinished_journal_blocks_a_new_live_operation(self):
         with tempfile.TemporaryDirectory() as directory:

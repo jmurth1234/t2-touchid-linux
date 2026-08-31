@@ -5253,7 +5253,11 @@ through the explicitly gated broker path.
 The gated privileged broker now exists. Its `--preflight-only` branch cannot
 enter ACM/enrollment, while the live branch requires separate enrollment and
 local-store mutation acknowledgements and derives every target from protected
-state. The target-hardware preflight passed and provisioned the private local
+state. Its `--status-only` branch takes only the operation lock, skips sensor and
+store setup, and reports redacted unfinished-phase counts. No-change recovery
+now requires exactly one unfinished outcome-unknown journal and rejects mixed
+unfinished states before opening Bridge. The target-hardware preflight passed
+and provisioned the private local
 store from the sole verified backup without dispatching a biometric or SEP
 persistence mutation. The remaining pre-experiment work is command-level fault
 rehearsal and explicit operator approval of the first live enrollment.

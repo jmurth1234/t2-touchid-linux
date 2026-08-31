@@ -222,6 +222,11 @@ enrollment is exposed only through a privileged, explicitly acknowledged broker.
 `t2-touchid-enroll-test.py` is that experimental broker. `--preflight-only`
 cannot enter ACM or enrollment; it verifies the sole protected backup, private
 local store, sensor readiness, operation lock, same-connection E0, and capacity.
+`--status-only` does not warm hardware or provision the store; under the same
+operation lock it reports only redacted unfinished-phase counts, whether live
+enrollment is blocked, and whether exactly one outcome-unknown journal is a
+candidate for no-change recovery. Recovery now refuses any mixed set of
+unfinished journals.
 The live branch additionally requires explicit live-fingerprint and local-store
 mutation acknowledgements, derives all security subjects from protected runtime
 state, retains one Bridge lease through E3, and provides cancellation/audio

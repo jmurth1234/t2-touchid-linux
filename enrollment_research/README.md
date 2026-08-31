@@ -227,6 +227,11 @@ rather than abandoning the operation, and desktop audio cues announce the
 finger request, actionable retry conditions, and terminal result. Those cues
 and console progress are strictly best-effort; desktop-bus failure or a closed
 stdout cannot change an authorized enrollment or persistence outcome.
+The read-only `--status-only` mode takes the operation lock but skips sensor
+warm-up and store provisioning. It emits only unfinished phase counts and a
+no-change recovery-candidate boolean, never journal paths or operation IDs.
+Automatic recovery requires that this be the sole unfinished journal; a mixed
+unfinished set is rejected before Bridge is opened.
 
 The non-mutating hardware preflight passed on 2026-08-31 and created the private
 Linux-local store from the sole hash-named root backup. It verified the backup,

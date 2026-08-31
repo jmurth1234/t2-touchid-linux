@@ -311,19 +311,42 @@ def require_no_unfinished_enrollment() -> None:
         )
 
 
+def enrollment_status() -> dict[str, object]:
+    unfinished = unfinished_enrollment_journals()
+    phases: dict[str, int] = {}
+    for _path, history in unfinished:
+        name = history.phase.value
+        phases[name] = phases.get(name, 0) + 1
+    recovery_available = (
+        len(unfinished) == 1
+        and unfinished[0][1].phase
+        is t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+    )
+    return {
+        "schema_version": 1,
+        "status_only": True,
+        "unfinished_count": len(unfinished),
+        "unfinished_phases": dict(sorted(phases.items())),
+        "live_enrollment_blocked": bool(unfinished),
+        "automatic_no_change_recovery_candidate": recovery_available,
+        "identifiers_redacted": True,
+        "mutation_performed": False,
+    }
+
+
 def run_outcome_unknown_reconciliation(
     configuration: dict[str, object], store: t2_catacomb_store.CatacombStore
 ) -> dict[str, object]:
-    candidates = [
-        item
-        for item in unfinished_enrollment_journals()
-        if item[1].phase is t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
-    ]
-    if len(candidates) != 1:
+    unfinished = unfinished_enrollment_journals()
+    if (
+        len(unfinished) != 1
+        or unfinished[0][1].phase
+        is not t2_enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+    ):
         raise EnrollmentCommandError(
-            "exactly one outcome-unknown enrollment journal is required"
+            "automatic recovery requires exactly one unfinished outcome-unknown journal"
         )
-    journal_path, history = candidates[0]
+    journal_path, history = unfinished[0]
     if (
         history.baseline["apple_uid"] != configuration["apple_uid"]
         or history.baseline["mapping_generation"]
@@ -453,6 +476,7 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--preflight-only", action="store_true")
     mode.add_argument("--reconcile-outcome-unknown", action="store_true")
+    mode.add_argument("--status-only", action="store_true")
     parser.add_argument("--identity-name", default="Linux enrolled finger")
     parser.add_argument(
         "--acknowledge-password-fallback-tested", action="store_true"
@@ -468,11 +492,14 @@ def main() -> int:
         parser.error("run through sudo from the mapped desktop user")
     if (
         not args.reconcile_outcome_unknown
+        and not args.status_only
         and not args.acknowledge_password_fallback_tested
     ):
         parser.error("password-fallback acknowledgement is required")
     live_enrollment = (
-        not args.preflight_only and not args.reconcile_outcome_unknown
+        not args.preflight_only
+        and not args.reconcile_outcome_unknown
+        and not args.status_only
     )
     if live_enrollment and not (
         args.acknowledge_live_fingerprint_enrollment
@@ -493,8 +520,11 @@ def main() -> int:
         configuration = runtime_configuration()
         _private_root_owned(STATE_ROOT, directory=True)
         _private_root_owned(MUTATION_ROOT, directory=True)
-        backup = select_backup()
-        warm_sensor()
+        if not args.status_only:
+            backup = select_backup()
+            # The readiness service takes OPERATION_LOCK itself, so this must
+            # finish before the broker acquires its long-lived operation lock.
+            warm_sensor()
         lock_flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC
         if hasattr(os, "O_NOFOLLOW"):
             lock_flags |= os.O_NOFOLLOW
@@ -508,24 +538,27 @@ def main() -> int:
             ):
                 raise EnrollmentCommandError("operation lock is unsafe")
             fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            store_preexisting = os.path.lexists(STORE_ROOT)
-            host_inventory, store = t2_catacomb_local.provision_from_backup(
-                backup, STORE_ROOT, configuration["apple_uid"]
-            )
-            if args.preflight_only:
-                result = run_preflight(configuration, host_inventory, backup)
-            elif args.reconcile_outcome_unknown:
-                result = run_outcome_unknown_reconciliation(configuration, store)
+            if args.status_only:
+                result = enrollment_status()
             else:
-                require_no_unfinished_enrollment()
-                result = run_enrollment(
-                    configuration,
-                    host_inventory,
-                    backup,
-                    args.identity_name,
-                    cancellation,
+                store_preexisting = os.path.lexists(STORE_ROOT)
+                host_inventory, store = t2_catacomb_local.provision_from_backup(
+                    backup, STORE_ROOT, configuration["apple_uid"]
                 )
-            result["local_store_provisioned"] = not store_preexisting
+                if args.preflight_only:
+                    result = run_preflight(configuration, host_inventory, backup)
+                elif args.reconcile_outcome_unknown:
+                    result = run_outcome_unknown_reconciliation(configuration, store)
+                else:
+                    require_no_unfinished_enrollment()
+                    result = run_enrollment(
+                        configuration,
+                        host_inventory,
+                        backup,
+                        args.identity_name,
+                        cancellation,
+                    )
+                result["local_store_provisioned"] = not store_preexisting
         finally:
             os.close(lock_descriptor)
     except (
