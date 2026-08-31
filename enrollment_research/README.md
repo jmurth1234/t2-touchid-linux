@@ -51,6 +51,14 @@ The checker is offline and non-mutating. It requires a private mode-0600
 archive, reads components directly from the tar stream, and emits only counts
 and compatibility booleans.
 
+The append-only journal now has a typed enrollment layer. It rejects skipped or
+reordered start/continue/cancel/terminal milestones, stale concurrent appends,
+changed connection generations, boot or mapping reuse, exhausted capacity, and
+untyped generic records. A journal produced by the standalone baseline command
+is intentionally not mutation-ready because that command closes its inventory
+connection; a future broker must collect E0 and execute E1 under one connection
+lease.
+
 ## Current boundary
 
 Existing, already-provisioned Apple users appear protocol-feasible for

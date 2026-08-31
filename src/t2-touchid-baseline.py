@@ -18,7 +18,10 @@ import uuid
 from pathlib import Path
 
 INSTALLED_SOURCE = Path("/opt/t2-touchid/src")
-if INSTALLED_SOURCE.is_dir():
+LOCAL_SOURCE = Path(__file__).resolve().parent
+if (LOCAL_SOURCE / "t2_mutation_journal.py").is_file():
+    sys.path.insert(0, str(LOCAL_SOURCE))
+elif INSTALLED_SOURCE.is_dir():
     sys.path.insert(0, str(INSTALLED_SOURCE))
 
 import t2_baseline
@@ -247,6 +250,7 @@ def main() -> int:
                     "operation_kind": args.operation_kind,
                     "identity_count": len(baseline["identity_records"]),
                     "baseline_reconciled": True,
+                    "same_connection_enrollment_ready": False,
                     "journal_created": True,
                     "identifiers_redacted": True,
                     "mutation_performed": False,

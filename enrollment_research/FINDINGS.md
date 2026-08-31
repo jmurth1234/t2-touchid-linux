@@ -1201,6 +1201,17 @@ between prepare/complete/confirm phases invalidates the transaction lease; the
 broker cannot reconstruct SEP pending state from a host blob and must enter
 reconciliation-required state.
 
+The executable journal layer now enforces the E0-through-E2 subset rather than
+accepting arbitrary milestone strings. It uses a guarded append whose expected
+record count and prior hash are rechecked while the journal lock is held,
+rejects stale concurrent writers, and binds E1 readiness to the exact Linux
+boot, mapping digest, caller/target pair, protocol, remaining capacity, and
+Bridge connection generation recorded at E0. This also exposes an important
+boundary in the existing research command: `t2-touchid-baseline` closes its
+inventory connection, so its otherwise valid E0 journal is evidence only and
+cannot be consumed by a later mutating connection. A future broker must collect
+the stable baseline and start enrollment under one serialized connection lease.
+
 ### Single and batched deletion milestones
 
 Deletion starts from the same reconciled baseline plus an immutable target UUID

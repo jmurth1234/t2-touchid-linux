@@ -18,6 +18,12 @@ SPEC.loader.exec_module(MODULE)
 
 
 class BaselineCommandTests(unittest.TestCase):
+    def test_repository_execution_prefers_matching_local_modules(self):
+        self.assertEqual(
+            Path(MODULE.t2_mutation_journal.__file__).resolve(),
+            (SOURCE / "t2_mutation_journal.py").resolve(),
+        )
+
     @patch.object(MODULE, "run_private_inventory", return_value={"stable": True})
     @patch.object(MODULE.subprocess, "run")
     def test_active_fprintd_is_warmed_before_locked_inventory(self, run, inventory):

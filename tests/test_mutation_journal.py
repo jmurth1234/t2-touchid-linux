@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -64,6 +65,7 @@ class MutationJournalTests(unittest.TestCase):
             self.assertEqual(len(records), 2)
             self.assertEqual(second["previous_hash"], first["record_hash"])
             self.assertTrue(journal.secure_regular_file(path))
+            self.assertEqual(journal.read(path), records)
 
     def test_detects_tampering(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -114,6 +116,39 @@ class MutationJournalTests(unittest.TestCase):
             value["identity_records"][0]["user_id"] = 502
             with self.assertRaises(journal.JournalError):
                 journal.create(Path(directory) / "journal.jsonl", "enroll", value)
+
+    def test_guarded_append_rejects_a_stale_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "journal.jsonl"
+            operation_id, first = journal.create(path, "enroll", baseline())
+            journal.append(path, operation_id, "FIRST", {})
+            with self.assertRaisesRegex(journal.JournalError, "changed"):
+                journal.append(
+                    path,
+                    operation_id,
+                    "STALE",
+                    {},
+                    expected_record_count=1,
+                    expected_previous_hash=first["record_hash"],
+                )
+            with self.assertRaisesRegex(journal.JournalError, "requires"):
+                journal.append(
+                    path,
+                    operation_id,
+                    "UNGARDED_HASH",
+                    {},
+                    expected_previous_hash=first["record_hash"],
+                )
+
+    def test_safe_reader_and_file_check_reject_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "journal.jsonl"
+            journal.create(path, "enroll", baseline())
+            link = Path(directory) / "link.jsonl"
+            os.symlink(path, link)
+            self.assertFalse(journal.secure_regular_file(link))
+            with self.assertRaises(journal.JournalError):
+                journal.read(link)
 
 
 if __name__ == "__main__":

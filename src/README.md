@@ -91,6 +91,15 @@ re-emits each component, and requires a second independent semantic reader to
 agree. Its JSON output contains counts and booleans only. It never changes the
 archive or writes to a macOS Catacomb location.
 
+`t2_enrollment_journal.py` adds typed E0/E1/E2 ordering above the generic
+durable journal. It permits start, continue, cancellation, terminal identity,
+terminal failure, and outcome-unknown records only in their recovered order;
+every append uses an atomic expected-head check. Before E1 it requires the same
+Linux boot, protected mapping, caller/target pair, protocol, capacity, and exact
+Bridge connection generation as E0. Consequently the standalone
+`t2-touchid-baseline` command remains evidence collection only: it closes its
+inventory connection and reports `same_connection_enrollment_ready: false`.
+
 The v2 platform field formerly labelled `uid` is the caller's macOS audit
 session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent
 64-bit field is the macOS process-unique ID, not a PID. Both are research-only,

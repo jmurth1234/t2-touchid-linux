@@ -240,7 +240,20 @@ def append(
     evidence: dict[str, Any],
     *,
     exclusive: bool = False,
+    expected_record_count: int | None = None,
+    expected_previous_hash: str | None = None,
 ) -> dict[str, Any]:
+    if expected_record_count is None and expected_previous_hash is not None:
+        raise JournalError("guarded append hash requires an expected record count")
+    if (
+        expected_record_count is not None
+        and (
+            not isinstance(expected_record_count, int)
+            or isinstance(expected_record_count, bool)
+            or expected_record_count < 0
+        )
+    ):
+        raise JournalError("expected record count is invalid")
     try:
         uuid.UUID(operation_id)
     except ValueError as error:
@@ -270,9 +283,17 @@ def append(
         fcntl.flock(fd, fcntl.LOCK_EX)
         with os.fdopen(os.dup(fd), "rb") as stream:
             records = validate_records(stream.readlines())
+        if expected_record_count is not None and len(records) != expected_record_count:
+            raise JournalError("journal changed before the guarded append")
+        actual_previous_hash = records[-1]["record_hash"] if records else None
+        if (
+            expected_record_count is not None
+            and actual_previous_hash != expected_previous_hash
+        ):
+            raise JournalError("journal head changed before the guarded append")
         if records and records[0]["operation_id"] != operation_id:
             raise JournalError("journal belongs to another operation")
-        previous_hash = records[-1]["record_hash"] if records else None
+        previous_hash = actual_previous_hash
         unsigned = {
             "format_version": FORMAT_VERSION,
             "operation_id": operation_id,
@@ -282,7 +303,13 @@ def append(
             "evidence": evidence,
         }
         record = {**unsigned, "record_hash": record_hash(unsigned)}
-        os.write(fd, canonical(record) + b"\n")
+        payload = canonical(record) + b"\n"
+        written = 0
+        while written < len(payload):
+            count = os.write(fd, payload[written:])
+            if count <= 0:
+                raise JournalError("journal append made no forward progress")
+            written += count
         os.fsync(fd)
         directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -317,5 +344,42 @@ def create(
 
 
 def secure_regular_file(path: Path) -> bool:
-    info = path.stat()
-    return stat.S_ISREG(info.st_mode) and not (info.st_mode & 0o077)
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.geteuid()
+        and info.st_nlink == 1
+        and not (info.st_mode & 0o077)
+    )
+
+
+def read(path: Path) -> list[dict[str, Any]]:
+    """Read and validate a bounded private journal without following links."""
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise JournalError("cannot safely open mutation journal") from error
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+            or info.st_mode & 0o077
+            or info.st_size > 8 * 1024 * 1024
+        ):
+            raise JournalError("mutation journal ownership, mode, or size is unsafe")
+        fcntl.flock(descriptor, fcntl.LOCK_SH)
+        with os.fdopen(os.dup(descriptor), "rb") as stream:
+            lines = stream.readlines()
+        if len(lines) > 4096:
+            raise JournalError("mutation journal has too many records")
+        return validate_records(lines)
+    finally:
+        os.close(descriptor)
