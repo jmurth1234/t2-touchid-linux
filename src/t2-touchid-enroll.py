@@ -12,12 +12,20 @@ from pathlib import Path
 
 LOCAL_BROKER = Path(__file__).resolve().with_name("t2-touchid-enroll-test.py")
 INSTALLED_BROKER = Path("/usr/local/sbin/t2-touchid-enroll-test")
+LOCAL_IDENTITIES = Path(__file__).resolve().with_name("t2-touchid-identities.py")
+INSTALLED_IDENTITIES = Path("/usr/local/sbin/t2-touchid-identities")
 
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description=__doc__)
     commands = value.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="show redacted enrollment state")
+    identities = commands.add_parser(
+        "list", help="list truthful reconciled identity labels"
+    )
+    identities.add_argument(
+        "--json", action="store_true", help="emit compact JSON"
+    )
 
     preflight = commands.add_parser(
         "preflight", help="validate readiness without enrolling"
@@ -107,18 +115,24 @@ def broker_arguments(args: argparse.Namespace) -> list[str]:
     raise ValueError("unsupported enrollment command")
 
 
-def broker_path() -> Path:
-    selected = LOCAL_BROKER if LOCAL_BROKER.is_file() else INSTALLED_BROKER
+def command_path(local: Path, installed: Path) -> Path:
+    selected = local if local.is_file() else installed
     if not selected.is_file():
-        raise FileNotFoundError("the enrollment broker is not installed")
+        raise FileNotFoundError(f"{installed.name} is not installed")
     return selected
+
+
+def command_invocation(args: argparse.Namespace) -> tuple[Path, list[str]]:
+    if args.command == "list":
+        arguments = ["--json"] if args.json else []
+        return command_path(LOCAL_IDENTITIES, INSTALLED_IDENTITIES), arguments
+    return command_path(LOCAL_BROKER, INSTALLED_BROKER), broker_arguments(args)
 
 
 def main() -> int:
     args = parser().parse_args()
     try:
-        selected = broker_path()
-        translated = broker_arguments(args)
+        selected, translated = command_invocation(args)
     except (FileNotFoundError, ValueError) as error:
         print(f"t2-touchid-enroll: {error}", file=sys.stderr)
         return 1

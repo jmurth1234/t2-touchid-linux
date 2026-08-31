@@ -1176,7 +1176,7 @@ def main() -> int:
     ) as error:
         if live_enrollment and configuration is not None:
             notify_user(configuration["linux_user"], "t2-touchid-failure.service")
-        print(f"t2-touchid-enroll-test: {error}", file=sys.stderr)
+        print(f"t2-touchid-enroll: {error}", file=sys.stderr)
         return 1
     finally:
         for handled, previous in previous_handlers.items():

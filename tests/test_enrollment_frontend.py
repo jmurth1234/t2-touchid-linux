@@ -32,6 +32,23 @@ class EnrollmentFrontendTests(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 self.assertEqual(self.translate(list(arguments)), expected)
 
+    def test_list_invokes_truthful_identity_command(self):
+        identities = Path("/safe/t2-touchid-identities")
+        parsed = MODULE.parser().parse_args(["list", "--json"])
+        with mock.patch.object(
+            MODULE,
+            "command_path",
+            return_value=identities,
+        ) as resolve:
+            self.assertEqual(
+                MODULE.command_invocation(parsed),
+                (identities, ["--json"]),
+            )
+        resolve.assert_called_once_with(
+            MODULE.LOCAL_IDENTITIES,
+            MODULE.INSTALLED_IDENTITIES,
+        )
+
     def test_preflight_maps_only_an_explicit_acknowledgement(self):
         self.assertEqual(self.translate(["preflight"]), ["--preflight-only"])
         self.assertEqual(
@@ -86,7 +103,11 @@ class EnrollmentFrontendTests(unittest.TestCase):
         broker = Path("/safe/t2-touchid-enroll-test")
         with (
             mock.patch.object(sys, "argv", ["t2-touchid-enroll", "status"]),
-            mock.patch.object(MODULE, "broker_path", return_value=broker),
+            mock.patch.object(
+                MODULE,
+                "command_invocation",
+                return_value=(broker, ["--status-only"]),
+            ),
             mock.patch.object(MODULE.os, "execv", side_effect=RuntimeError("exec"))
             as execute,
         ):

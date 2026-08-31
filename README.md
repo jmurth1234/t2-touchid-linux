@@ -251,6 +251,7 @@ the non-mutating preflight after confirming password fallback works:
 
 ```sh
 sudo t2-touchid-enroll status
+sudo t2-touchid-enroll list
 sudo t2-touchid-enroll preflight \
   --acknowledge-password-fallback-tested
 ```
@@ -289,7 +290,10 @@ sudo t2-touchid-enroll recover-observed \
 
 `recover-observed` persists a newly observed SEP identity and is therefore a
 mutation; it is not a generic repair command. The backend remains experimental
-and is proven only on the configuration documented here.
+and is proven only on the configuration documented here. The `list` subcommand
+is the authoritative human-readable view of the real enrolled identities;
+fprintd's one compatibility slot remains an authentication selector, not a
+template count.
 
 Rename one current identity label (this does not alter its fingerprint
 template or fprintd's compatibility-slot name):

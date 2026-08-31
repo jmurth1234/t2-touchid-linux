@@ -283,7 +283,8 @@ enrollment is exposed only through a privileged, explicitly acknowledged broker.
 
 `t2-touchid-enroll` is the stable subcommand frontend for that experimental
 broker. It maps `status`, `preflight`, `start`, `verify-post-reboot`, and the
-three typed recovery commands directly to the existing fail-closed engine; it
+three typed recovery commands directly to the existing fail-closed engine;
+`list` directly invokes the reconciled, UUID-redacting identity command. It
 does not duplicate protocol or mutation logic. `t2-touchid-enroll-test.py`
 remains the installed compatibility backend. Its `--preflight-only`
 cannot enter ACM or enrollment; it verifies the sole protected backup, private
