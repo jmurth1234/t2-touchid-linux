@@ -4391,6 +4391,14 @@ remaining bytes begin a serialized ACM requirement and are decoded only when
 the caller requested that requirement. This removes any hypothetical daemon
 object or audit-token field from the endpoint-10 policy reply.
 
+Live Linux validation on 2026-08-31 found and corrected one host-side capacity
+mismatch: userspace requested the recovered `0x1000` command-3 maximum while
+the kernel allowlist incorrectly required the transport-wide `0x4000` OOL
+capacity. With a distinct `0x1000` policy-response limit, preflight returned the
+expected unsatisfied type-1 passcode requirement and mandatory context cleanup
+succeeded. The public diagnostic reports only the requirement type and typed
+state; its payload remains private.
+
 The password-binding boundary is now confirmed against the AppleKeyStore kext
 from the **running macOS 26.1 build 25B77**, rather than inferred only from the
 older 24G830 installer payload. The live kext has Mach-O UUID
@@ -4482,6 +4490,23 @@ Thus password-only success identifies the ACM half as the blocker; `-5`
 identifies ordinary password rejection; and another `-1` remains in keybag
 lookup, raw-secret initialization, or another pre-ACM function-level failure.
 
+The staged password-only probe subsequently passed on hardware with SEP status
+zero and the expected 12-byte response. The first attached-context attempt then
+returned SEP status `-1`, isolating the remaining failure to ACM attachment.
+Instruction-level audit identified the missing transition: Apple's
+`ACMContextGetExternalForm` sends command `0x13` with the active 16-byte handle
+and zero response capacity before copying those same bytes as the external
+form. Passing the raw create reply without `0x13` preserved the right byte shape
+but did not mark the backend context externalized.
+
+After implementing the exact command-`0x13` transition, a redacted live
+create/externalize/delete control passed. The complete scoped producer then
+passed: endpoint-7 operation `0x21` returned status zero, final policy 1007 was
+satisfied, the no-mutation consumer ran, and mandatory delete/reconciliation
+succeeded. No fingerprint mutation was requested or performed. This supersedes
+the earlier negative matrix as the current result while preserving it as useful
+failure chronology.
+
 The legacy operation-`0x04` control is closer still than initially documented.
 Its wrapper clears the device-options argument before calling
 `_change_lock_state_with_opts`; the already-unlocked alias then calls the same
@@ -4491,10 +4516,9 @@ option bits `0x20`, `0x80`, and `0x100`. Bit `0x200` passes
 `_valid_device_options` but does not alter raw-secret initialization, policy
 operation, derivation, or unwrap inside this helper. Therefore the successful
 operation-`0x04` alias verification is an almost identical password-only
-control. If the staged zero-context operation-`0x21` probe still returns `-1`,
-the next work should instrument operation-specific framing and dispatch rather
-than repeat password, KDF, or ACM guesses; that result would falsify part of
-the current host-side model.
+control. The later zero-context operation-`0x21` success confirmed this model
+and moved the investigation to the explicit ACM externalization transition
+described above.
 
 A fresh manifest-verified capture from that same running 25B77 installation now
 bounds the caller-platform matrix without relying on another macOS release. The
@@ -4869,8 +4893,8 @@ production, but does not prove it is the exact producer of the object stored in
 |---|---|---|
 | Serialized per-user cache, timeout, invalidation, explicit wiping | Reproducible and desirable | Local secret hygiene only |
 | Numeric UID carried separately with enrollment | Already protocol-visible | Selects target; does not itself authorize it |
-| Password input and keybag unlock | Existing endpoint-7 tooling covers unlock; the corrected root-only canonical codec-v1 path reaches SEP but returns `-1` across the bounded handle/context/platform matrix; a zero-context stage-isolation diagnostic is ready for the next module boot | The endpoint request is session, handle, raw password blob, optional ACM-context blob, and the exact selector-42 `0x200` option qword |
-| `LAContext` policy `1007` and externalization | Exact 24G830 endpoint-10 commands and serializers are recovered; no Linux implementation yet | Produces the demonstrated mode-0 credential-set reference after backend policy success |
+| Password input and keybag unlock | The root-only canonical codec-v1 password-only path and the attached, explicitly externalized ACM-context path both pass live with SEP status zero | The endpoint request is session, handle, raw password blob, optional ACM-context blob, and the exact selector-42 `0x200` option qword |
+| `LAContext` policy `1007` and externalization | Exact endpoint-10 create, policy, command-`0x13` externalize, and delete contracts are implemented; the complete no-mutation producer passes live | Produces the demonstrated mode-0 credential-set reference after backend policy success |
 | `budd` service and private entitlement | Apple-only host IPC policy | Restricts sharing of an already-created context |
 | SEP subject binding and freshness | UID-bound context create, password/context binding, ten-minute credential selection, and enrollment-authority flag are recovered | Backend authorization is reproducible in protocol, subject to strict broker ownership |
 | Final biometric-consumer replay/one-shot behavior | Unrecovered because the matching SEP image remains device-key wrapped | Ultimate remaining device-acceptance uncertainty |
@@ -5092,15 +5116,15 @@ approved disposable-finger hardware experiment.
   external-form reconstruction behavior. It is now proven to be the
   backend-provided credential-encoding seed, distinct from explicitly settable
   16-byte credentials UUID data type `10`.
-- Complete the remaining ACMLib response and lifecycle contracts around the
+- Preserve the completed ACMLib response and lifecycle contracts around the
   now-exact authorization sequence. Context create/import/export/destroy,
   command-3 request framing, selector-42 password/context framing, the 24G830
   OD/PAM/MKB cascade, and UID-to-handle mapping are recovered. The kernel now
   restricts endpoint 10 to one open owner and one exact live context, deletes
   that context on owner exit, and makes timeout/ambiguous-create generations
-  terminal until reboot. The outstanding host work is complete ACM response
-  serialization, a dedicated PolicyKit action above that kernel lease, and the
-  final consumer's handling of the credential-set authorization bit. The
+  terminal until reboot. The outstanding host work is a dedicated PolicyKit
+  action above that kernel lease and the final consumer's handling of the
+  credential-set authorization bit. The
   current research wrapper already rejects direct-root and cross-user callers:
   its sudo/pkexec origin must match the Linux account in the protected mapping,
   and the Apple UID is never accepted from the caller. Endpoint-10 correlation
@@ -5109,30 +5133,33 @@ approved disposable-finger hardware experiment.
 The broker now also has the required operation-scoped handoff shape without
 exposing an enrollment command. `with_authorized_context` holds the exclusive
 endpoint-10 file and kernel context lease while it creates the mapped-user
-context, observes the initial passcode requirement, binds the password through
-endpoint 7, confirms policy 1007, invokes exactly one trusted callback with the
-live external form, and deletes the context on success or failure. The public
-diagnostic installs a no-mutation callback. A later mode-0 enrollment consumer
-can therefore be inserted inside the same lifetime rather than returning or
-caching an authorization object across process boundaries.
+context, observes the initial passcode requirement, explicitly externalizes it
+with command `0x13`, binds the password through endpoint 7, confirms policy
+1007, invokes exactly one trusted callback with the live external form, and
+deletes the context on success or failure. The public diagnostic installs a
+no-mutation callback. This complete producer passed on hardware on 2026-08-31.
+A later mode-0 enrollment consumer can therefore be inserted inside the same
+lifetime rather than returning or caching an authorization object across
+process boundaries.
 - The endpoint-10 registration, ordinary single-flight correlation, SCRD
   request-ID exception, timeout, and reset/re-registration contracts are now
   exact. The staged Linux driver now represents each registration as a nonzero
   generation, rejects stale generations, prevents multiple owners/contexts,
   and permanently poisons the current generation after a timeout, excess
   unrelated replies, or a successful create whose context handle is too short
-  to clean up. This conservative implementation awaits live validation after
-  the next normal reboot. It remains a separate privileged transport and does
+  to clean up. This conservative implementation and its context externalization
+  path are live-validated. It remains a separate privileged transport and does
   not widen the endpoint-7 `/dev/aks` interface.
-- Turn the now-recovered endpoint-10/ACM policy-1007 issuance sequence into a
-  future read-only-capable broker design: create `0x24`/fallback `1` for the
-  authenticated Apple numeric UID, export the 16-byte reference, bind it through
-  endpoint-7 selector-42 verify-secret with the canonical raw-secret/context
-  codec-v1 body, retry command `3` for
-  `TouchIdEnrollment`, and destroy on every failure or uncertain handoff. The
-  remaining static uncertainty is the T2 biometric consumer's replay/one-shot
-  semantics for the resulting mode-0 externalized credential set. A mode-1
-  producer is optional historical/API research, not a blocker for this path.
+- The endpoint-10/ACM policy-1007 producer now performs create
+  `0x24`/fallback `1` for the authenticated Apple numeric UID, policy preflight,
+  command-`0x13` externalization, endpoint-7 selector-42 verify-secret with the
+  canonical raw-secret/context codec-v1 body, final `TouchIdEnrollment` policy
+  evaluation, one synchronous callback, and destruction on every exit. The
+  next bounded step is to place the generation-pinned enrollment transport and
+  persistence transaction inside that callback. The remaining device
+  uncertainty is the final biometric consumer's acceptance and replay/one-shot
+  semantics for the mode-0 externalized credential set. A mode-1 producer is
+  optional historical/API research, not a blocker for this path.
 - Recover the initial producer/store call for Setup Assistant's cached biometric
   `LAContext`; `budd` is now proven to be only an entitlement-gated cache.
 - Treat producer-side decomposition of generic enrollment failure 67 as
@@ -5166,7 +5193,7 @@ plausible design to a proven result:
 | Domain | Strongest current evidence | Static-research disposition | Evidence still required |
 |---|---|---|---|
 | Existing-user enrollment wire protocol | Exact 24G830 command `0x03`, mode-0 authorization wrapper, continue/status/result events, exact target host frameworks | Host side complete enough for a protocol design | Controlled disposable-finger validation of final T2 acceptance, replay/one-shot behavior, and ambiguous completion |
-| Enrollment authorization producer | Exact UID-bound ACM create/export/destroy, endpoint-7 raw-versus-structured credential distinction, policy-1007 command/reply, no Mach audit data crossing endpoint 10; staged one-owner/one-context kernel lease with exit cleanup and poisoned generations | Protocol-feasible in outline; live password-binding and new lease validation remain in progress | Linux-session/PolicyKit broker conformance tests, followed by the same controlled T2 validation |
+| Enrollment authorization producer | Exact UID-bound ACM create/preflight/externalize/password-bind/final-policy/destroy sequence; endpoint-7 raw-versus-structured credential distinction; one-owner/one-context kernel lease with exit cleanup and poisoned generations | Hardware-validated with a synchronous no-mutation consumer; identifiers remain redacted | Production PolicyKit broker conformance and the controlled final T2 consumer validation |
 | Enrollment event flow | Exact envelope/status mappings, progress/continue range, terminal identity record, cancellation and conservative fprintd mappings | Static mapping complete for built-in enrollment; duplicate-specific reporting intentionally unavailable | Hardware traces only to validate timing/repetition behavior, not to invent unsupported result classes |
 | Single and per-user identity deletion | Exact `0x0d` target, Apple loop ordering, Catacomb-save failure windows, nil credential options | Protocol and non-atomic outcome model recovered | Future explicitly approved deletion test with before/after stable inventory; no static blocker remains |
 | Whole biometric-user removal | Exact `0x48` request and host cleanup ordering | Destructive command known, terminal proof incomplete; disabled | An explicit container-presence primitive or validated equivalent that distinguishes empty from absent |
@@ -5198,7 +5225,7 @@ static prose refinement is not progress toward the remaining unknowns.
 | Capability | Evidence status | Feasibility decision |
 |---|---|---|
 | Inventory existing SEP identities | Request/reply and user/UUID scope known | Safe candidate for read-only implementation |
-| Enroll for the currently provisioned Apple user | Start/continue/result and request structures known; the version-qualified macOS password UI, `{UserId, Credential}` secure archive, temporary type-`-5` slot, entitled extraction, type-`-1` conversion, and cleanup are joined; 24G830 ACMLib plus the running 25B77 AppleKeyStore kext confirm UID-bound context create, externalization, endpoint-7 session/handle framing and its raw-versus-structured secret distinction, command-3 `TouchIdEnrollment` evaluation, and endpoint-10 transport; BiometricSupport copies the resulting externalized credential set directly into mode 0 | Protocol-feasible in outline without forging macOS audit state. Live password-binding/policy validation, a root/PolicyKit broker, strict context lifetime, final T2 replay/one-shot validation, durable save verification, and the recovery journal remain mandatory before exposure |
+| Enroll for the currently provisioned Apple user | Start/continue/result and request structures known; the version-qualified macOS password UI, `{UserId, Credential}` secure archive, temporary type-`-5` slot, entitled extraction, type-`-1` conversion, and cleanup are joined; 24G830 ACMLib plus the running 25B77 AppleKeyStore kext confirm UID-bound context create, externalization, endpoint-7 session/handle framing and its raw-versus-structured secret distinction, command-3 `TouchIdEnrollment` evaluation, and endpoint-10 transport; the Linux create/preflight/externalize/password-bind/final-policy/delete producer now passes live, and BiometricSupport copies its resulting credential-set form directly into mode 0 | Protocol-feasible without forging macOS audit state. A root/PolicyKit production broker, same-connection final T2 replay/one-shot validation, durable save/read-back verification, and recovery-journal integration remain mandatory before exposure |
 | Delete one existing identity | Exact `userID + UUID` command known; standard Apple client sends nil options and relies on identity-management privilege; exact 24G830 Catacomb staging/promotion/recovery and typed archive schema are recovered | Technically feasible for Linux-local storage after a strict encoder, backup, independent read-back, explicit PolicyKit administration, and non-atomic failure reporting; APFS metadata is only a later macOS-resynchronization concern, and no enrollment credential ceremony is required |
 | Delete all prints of one Apple user | Exact 24G830 server loops SEP-remove plus host-object-remove for each target identity, aborts on the first command error, and saves Catacomb only once after the loop; neither a mid-loop failure nor final save failure reverses earlier SEP deletions | Feasible only as a separately confirmed, per-UUID journaled administrative batch with partial-completion reporting; never claim atomicity |
 | Rename/label a finger | Host identity metadata, exact keyed-archive graph, and Catacomb resave path known; standard Apple client sends nil options | Feasible for the Linux-local store after the strict encoder and explicit identity-management policy exist; label is not stored in the SEP template identity |

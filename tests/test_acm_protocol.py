@@ -52,6 +52,12 @@ class ACMProtocolTests(unittest.TestCase):
         self.assertEqual(command.hex(), "4452435302000001" + bytes(range(16)).hex())
         self.assertEqual(acm.validate_command(command), acm.OP_CONTEXT_DELETE)
 
+    def test_externalize_contains_only_header_and_context(self):
+        handle = acm.ContextHandle(bytes(range(16)), 0xDEADBEEF, True, 1)
+        command = acm.build_externalize(handle)
+        self.assertEqual(command.hex(), "4452435313000001" + bytes(range(16)).hex())
+        self.assertEqual(acm.validate_command(command), acm.OP_CONTEXT_EXTERNALIZE)
+
     def test_enrollment_preflight_matches_recovered_fixed_framing(self):
         handle = acm.ContextHandle(bytes(range(16)), 0, True, 1)
         command = acm.build_enrollment_policy_preflight(handle)

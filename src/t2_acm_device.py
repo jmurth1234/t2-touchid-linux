@@ -259,6 +259,14 @@ def policy_preflight_test(device: ACMDevice, user_id: int) -> dict[str, object]:
     }
 
 
+def externalize_context(device: ACMDevice, handle: protocol.ContextHandle) -> bytes:
+    """Register an active context and return its exact 16-byte external form."""
+    response = device.exchange(protocol.build_externalize(handle), 0)
+    if response:
+        raise ACMDeviceError("context externalization returned an unexpected body")
+    return handle.context
+
+
 def with_authorized_context(
     device: ACMDevice,
     user_id: int,
@@ -296,8 +304,10 @@ def with_authorized_context(
         )
         if initial.satisfied or initial.requirement_type != 1:
             raise ACMDeviceError("initial policy state is not the passcode requirement")
+        stage = "context-externalization"
+        external_form = externalize_context(device, handle)
         stage = "password-binding"
-        password_binder(handle.context)
+        password_binder(external_form)
         stage = "policy-final"
         final = protocol.parse_policy_response(
             device.exchange(
@@ -308,7 +318,7 @@ def with_authorized_context(
         if not final.satisfied:
             raise ACMDeviceError("policy 1007 remained unsatisfied after password binding")
         stage = "authorized-consumer"
-        candidate = consumer(handle.context)
+        candidate = consumer(external_form)
         if inspect.isawaitable(candidate):
             close = getattr(candidate, "close", None)
             if callable(close):

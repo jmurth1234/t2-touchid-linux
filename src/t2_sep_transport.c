@@ -543,6 +543,7 @@ static bool t2_acm_command_allowed(const u8 *request, size_t length)
 	case 0x24: /* context create with tracking */
 		return length == 12; /* command header + appended effective UID */
 	case 0x02: /* context destroy */
+	case 0x13: /* externalize the active context */
 		return length == 24; /* command header + 16-byte context */
 	case 0x03: /* TouchIdEnrollment policy, empty parameter array */
 		return length == 51 &&

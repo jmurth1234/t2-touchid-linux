@@ -48,10 +48,10 @@ so diagnostics do not depend on scraping the kernel log.
 
 `verify-password-only SESSION HANDLE` emits the same recovered codec with a
 zero-length external-context blob. It is deliberately restricted to a nonzero
-handle, session `1`, a nonempty bounded password, and option `0x200`. This is a
-stage-isolation diagnostic: success would prove password/keybag verification
-before ACM attachment, while failure remains inside that earlier stage. It
-does not enroll, delete, or evaluate an ACM policy.
+handle, session `1`, a nonempty bounded password, and option `0x200`. This
+stage-isolation diagnostic has passed on the proven machine with SEP status
+zero and the expected 12-byte response, proving password/keybag verification
+before ACM attachment. It does not enroll, delete, or evaluate an ACM policy.
 
 The installed wrapper selects the known positive runtime keybag and requires a
 narrow acknowledgement for this non-ACM path:
@@ -68,12 +68,16 @@ This is an explicit research authorization boundary; a dedicated production
 PolicyKit action is still required before any enrollment API is exposed.
 
 The internal `with_authorized_context` broker primitive holds the exclusive
-device lease across context creation, password binding, policy-1007 evaluation,
-one trusted consumer callback, and mandatory deletion. The callback is invoked
-only after policy success and before deletion; callback failure still takes the
-same cleanup path, and asynchronous consumers are rejected so work cannot
-escape the context lifetime. No command-line option exposes the context bytes,
-and the current diagnostic supplies a no-mutation consumer.
+device lease across context creation, policy preflight, explicit command-`0x13`
+externalization, password binding, final policy-1007 evaluation, one trusted
+consumer callback, and mandatory deletion. The callback is invoked only after
+policy success and before deletion; callback failure still takes the same
+cleanup path, and asynchronous consumers are rejected so work cannot escape
+the context lifetime. No command-line option exposes the context bytes, and the
+current diagnostic supplies a no-mutation consumer. This entire producer path
+has passed on hardware: the initial type-1 requirement was satisfied, policy
+1007 became true, and deletion/reconciliation succeeded without performing a
+fingerprint mutation.
 
 `t2_enrollment_protocol.py` is a transport-independent next layer. It builds
 only the exact mode-0, 16-byte ACM enrollment request, keeps that request in

@@ -17,10 +17,12 @@ class FakeDevice:
         *,
         policy_response: bytes | list[bytes] = b"",
         fail_delete: bool = False,
+        fail_externalize: bool = False,
     ):
         self.response = response
         self.policy_response = policy_response
         self.fail_delete = fail_delete
+        self.fail_externalize = fail_externalize
         self.commands = []
 
     def exchange(self, command: bytes, response_capacity: int) -> bytes:
@@ -29,6 +31,10 @@ class FakeDevice:
         if opcode == protocol.OP_CONTEXT_DELETE:
             if self.fail_delete:
                 raise device.ACMDeviceError("synthetic cleanup failure")
+            return b""
+        if opcode == protocol.OP_CONTEXT_EXTERNALIZE:
+            if self.fail_externalize:
+                raise device.ACMDeviceError("synthetic externalization failure")
             return b""
         if opcode == protocol.OP_VERIFY_POLICY:
             if isinstance(self.policy_response, list):
@@ -147,7 +153,16 @@ class ACMDeviceTests(unittest.TestCase):
         self.assertEqual(bound, [context])
         self.assertTrue(result["policy_satisfied"])
         self.assertFalse(result["fingerprint_mutation_performed"])
-        self.assertEqual(fake.commands[-1][0], protocol.OP_CONTEXT_DELETE)
+        self.assertEqual(
+            fake.commands,
+            [
+                (protocol.OP_CONTEXT_CREATE_TRACKING, 21),
+                (protocol.OP_VERIFY_POLICY, protocol.POLICY_RESPONSE_CAPACITY),
+                (protocol.OP_CONTEXT_EXTERNALIZE, 0),
+                (protocol.OP_VERIFY_POLICY, protocol.POLICY_RESPONSE_CAPACITY),
+                (protocol.OP_CONTEXT_DELETE, 0),
+            ],
+        )
 
     def test_authorized_consumer_is_scoped_before_context_delete(self):
         context = bytes(range(16))
@@ -170,6 +185,7 @@ class ACMDeviceTests(unittest.TestCase):
                 [
                     protocol.OP_CONTEXT_CREATE_TRACKING,
                     protocol.OP_VERIFY_POLICY,
+                    protocol.OP_CONTEXT_EXTERNALIZE,
                     protocol.OP_VERIFY_POLICY,
                 ],
             )
@@ -253,6 +269,7 @@ class ACMDeviceTests(unittest.TestCase):
             [
                 (protocol.OP_CONTEXT_CREATE, 17),
                 (protocol.OP_VERIFY_POLICY, protocol.POLICY_RESPONSE_CAPACITY),
+                (protocol.OP_CONTEXT_EXTERNALIZE, 0),
                 (protocol.OP_VERIFY_POLICY, protocol.POLICY_RESPONSE_CAPACITY),
                 (protocol.OP_CONTEXT_DELETE, 0),
             ],
@@ -293,6 +310,28 @@ class ACMDeviceTests(unittest.TestCase):
         with self.assertRaisesRegex(
             device.ACMDeviceError,
             "failed at policy-preflight; context was cleaned up",
+        ):
+            device.authorization_test(fake, 501, lambda _: None)
+        self.assertEqual(fake.commands[-1][0], protocol.OP_CONTEXT_DELETE)
+
+    def test_authorization_externalization_failure_reports_stage_and_cleans_up(self):
+        context = bytes(range(16))
+        requirement = (
+            b"\x00\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x01\x00\x00\x00"
+            + b"\x00\x00\x00\x00"
+        )
+        fake = FakeDevice(
+            context + b"\x00" * 4 + b"\x01",
+            policy_response=requirement,
+            fail_externalize=True,
+        )
+
+        with self.assertRaisesRegex(
+            device.ACMDeviceError,
+            "failed at context-externalization; context was cleaned up",
         ):
             device.authorization_test(fake, 501, lambda _: None)
         self.assertEqual(fake.commands[-1][0], protocol.OP_CONTEXT_DELETE)

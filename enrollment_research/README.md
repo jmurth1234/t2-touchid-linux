@@ -132,21 +132,20 @@ and observation records, rejects secret-shaped fields and raw bytes, and fails
 closed on tampering or insecure storage. It is not yet connected to any T2
 mutation command.
 
-The narrow endpoint-10 research transport has also completed a live tracked
-ACM context create/delete lifecycle on the proven machine. The client accepts
-only the recovered create and delete frames, binds creation to the configured
-macOS UID, redacts the returned context identifier, and attempts deletion even
-when response parsing fails. The staged kernel transport now additionally
-enforces one owner and one exact context lease, deletes an active context when
-its owner exits, and poisons the endpoint generation after an ambiguous reply.
-Those new fail-closed guarantees are unit-tested and await activation on the
-next normal reboot. The authorization diagnostic also accepts only a
-sudo/pkexec caller matching the Linux account in the private mapping; it never
-accepts a caller-supplied Apple UID. An internal callback-scoped broker keeps
-the exclusive device/context lease from creation through policy success, one
-trusted consumer, and deletion; the currently exposed diagnostic uses a
-no-mutation consumer. This validates transient context lifecycle only; it does
-not authorize enrollment or expose a general ACM command interface.
+The narrow endpoint-10 research transport has completed the full no-mutation
+authorization producer on the proven machine. It creates a tracked context for
+the configured macOS UID, observes the type-1 passcode requirement, explicitly
+externalizes the live context with command `0x13`, binds the password through
+endpoint 7, confirms policy 1007, invokes one no-mutation consumer, and deletes
+and reconciles the context. The public result contains typed booleans only; the
+context identifier and tracking payload remain redacted. The kernel enforces
+one owner and one exact context lease, deletes an active context when its owner
+exits, and poisons the endpoint generation after an ambiguous reply. These
+fail-closed guarantees and the complete producer path are unit-tested and live
+hardware-validated. The diagnostic accepts only a sudo/pkexec caller matching
+the Linux account in the private mapping and never accepts a caller-supplied
+Apple UID. This proves authorization production, but it neither performs nor
+exposes enrollment and is not a general ACM command interface.
 
 The recovered enrollment framing and asynchronous event matrix are now encoded
 in a pure, non-sending protocol module. It accepts only the broker's 16-byte
@@ -164,7 +163,8 @@ was performed.
 
 The following remain disabled or unverified:
 
-- policy authorization and replay behavior for a fresh mode-0 ACM context;
+- final biometric-consumer acceptance, replay, and one-shot behavior for the
+  freshly authorized mode-0 ACM context;
 - creation of new AppleKeyStore/OpenDirectory/APFS users from Linux;
 - whole-biometric-user removal with command `0x48`;
 - writing Linux-generated Catacombs back into macOS; and

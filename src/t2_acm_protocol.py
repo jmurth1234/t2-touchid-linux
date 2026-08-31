@@ -18,6 +18,7 @@ CONTEXT_SIZE = 16
 OP_CONTEXT_CREATE = 0x01
 OP_CONTEXT_DELETE = 0x02
 OP_VERIFY_POLICY = 0x03
+OP_CONTEXT_EXTERNALIZE = 0x13
 OP_CONTEXT_CREATE_TRACKING = 0x24
 ENROLLMENT_POLICY = b"TouchIdEnrollment"
 POLICY_RESPONSE_CAPACITY = 0x1000
@@ -70,6 +71,7 @@ def _header(opcode: int) -> bytes:
         OP_CONTEXT_CREATE,
         OP_CONTEXT_DELETE,
         OP_VERIFY_POLICY,
+        OP_CONTEXT_EXTERNALIZE,
         OP_CONTEXT_CREATE_TRACKING,
     }:
         raise ACMProtocolError("opcode is outside the lifecycle allowlist")
@@ -103,6 +105,13 @@ def build_delete(handle: ContextHandle) -> bytes:
     if not isinstance(handle, ContextHandle):
         raise ACMProtocolError("handle must be a ContextHandle")
     return _header(OP_CONTEXT_DELETE) + handle.context
+
+
+def build_externalize(handle: ContextHandle) -> bytes:
+    """Register and return the existing 16-byte context as an external form."""
+    if not isinstance(handle, ContextHandle):
+        raise ACMProtocolError("handle must be a ContextHandle")
+    return _header(OP_CONTEXT_EXTERNALIZE) + handle.context
 
 
 def build_enrollment_policy(handle: ContextHandle, *, preflight: bool) -> bytes:
@@ -167,6 +176,7 @@ def validate_command(command: bytes) -> int:
         OP_CONTEXT_CREATE: 12,
         OP_CONTEXT_CREATE_TRACKING: 12,
         OP_CONTEXT_DELETE: 24,
+        OP_CONTEXT_EXTERNALIZE: 24,
         OP_VERIFY_POLICY: 51,
     }.get(opcode)
     if expected is None or len(command) != expected:
