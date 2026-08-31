@@ -252,8 +252,9 @@ The fourth approved run crossed that corrected common-record parser and then
 froze on an additional service envelope; stable recovery again proved no
 persistent delta. The exact non-mutating control had already shown version-1
 statistics (`0xe3ff8004`) interleaved on the same callback stream during a
-normal operation. Statistics neither select an identity nor advance enrollment,
-so the reducer now deduplicates and ignores only that proven telemetry type.
+normal operation. Statistics neither select an identity nor advance enrollment;
+the exact daemon requires version 1 and at least 12 payload bytes, so the
+reducer deduplicates and ignores only telemetry meeting those boundaries.
 Every other unexpected envelope/version remains fail-closed, and its numeric
 type/version is included in the controlled diagnostic for the next boundary.
 

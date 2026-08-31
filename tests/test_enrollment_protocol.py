@@ -174,6 +174,23 @@ class EnrollmentProtocolTests(unittest.TestCase):
                         event(1, enrollment.SERVICE_STATISTICS, version, 0),
                     )
 
+        truncated = self.machine()
+        with self.assertRaisesRegex(
+            enrollment.EnrollmentProtocolError,
+            "statistics telemetry payload is truncated",
+        ):
+            self.accept(
+                truncated,
+                event(
+                    1,
+                    enrollment.SERVICE_STATISTICS,
+                    1,
+                    0,
+                    bytes(enrollment.STATISTICS_MIN_PAYLOAD_SIZE - 1),
+                ),
+            )
+        self.assertEqual(truncated.state, enrollment.EnrollmentState.FROZEN)
+
     def test_sks_lock_state_telemetry_is_validated_and_ignored(self):
         machine = self.machine()
         payload = enrollment.SKS_LOCK_STATE_PAYLOAD.pack(501, 0x228)

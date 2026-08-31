@@ -26,6 +26,7 @@ SERVICE_ACCESSORY_AUTHORIZATION = 0xE3FF800E
 SERVICE_HEADER = struct.Struct("<QIIQ")
 STATUS_PAYLOAD_HEADER = struct.Struct("<I4xQ")
 SKS_LOCK_STATE_PAYLOAD = struct.Struct("<IH")
+STATISTICS_MIN_PAYLOAD_SIZE = 12
 AUTH_DATA_SIZE = 40
 ACM_EXTERNAL_FORM_SIZE = 16
 BUILTIN_GROUPS = frozenset((bytes(20), struct.pack("<I16x", 1)))
@@ -326,6 +327,8 @@ class EnrollmentStateMachine:
         # these on the same callback stream during a normal match, and they do
         # not advance, complete, or select an enrollment identity.
         if event.envelope_type == SERVICE_STATISTICS and event.version == 1:
+            if len(event.payload) < STATISTICS_MIN_PAYLOAD_SIZE:
+                self._freeze("statistics telemetry payload is truncated")
             return EnrollmentTransition(EnrollmentAction.IGNORE_TELEMETRY, self.state)
         # Matching macOS accepts a version-1 record containing at least a
         # uint32 Apple user ID and uint16 SKS state, then only updates analytics

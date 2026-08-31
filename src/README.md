@@ -241,7 +241,8 @@ proof without issuing enrollment or persistence. The fourth run crossed the
 corrected common parser and stopped on another service envelope. The exact
 non-mutating control already proves type `0xe3ff8004` statistics share this
 stream during normal operations, so the reducer now ignores only version-1
-statistics without feedback or state advancement; all other non-enrollment
+statistics meeting the daemon's 12-byte minimum without feedback or state
+advancement; all other non-enrollment
 types remained fail-closed and are reported numerically. The fifth run then
 exposed version-1 `0xe3ff800a`. Exact matching-daemon disassembly requires at
 least a 32-bit user ID plus 16-bit SKS state and routes the record only to

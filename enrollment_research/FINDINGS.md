@@ -560,8 +560,8 @@ map and removes ambiguity between an envelope type and its ordinal/status:
 | `0xe3ff800c` | Accessory-list change/cache refresh |
 | `0xe3ff800d` | Sensor initialization and template-list synchronization |
 | `0xe3ff800e` | Device/accessory authorization required |
-| `0xe3ff800f` | Mesa hardware-pass report |
-| `0xe3ff8010` | Accessory image-information message |
+| `0xe3ff800f` | Accessory image-information message |
+| `0xe3ff8010` | Mesa hardware-pass report |
 
 Each case enforces its supported wire version and minimum/exact data length
 before dispatch. Unknown envelopes are not enrollment outcomes; the daemon
@@ -5271,8 +5271,9 @@ fresh reconciliation again showed no persistent delta. The non-mutating control
 had already demonstrated version-1 statistics (`0xe3ff8004`) interleaved on the
 same callback stream during an ordinary operation. Matching-host dispatch also
 classifies this type as statistics rather than enrollment progress or result.
-The reducer therefore accepts it only as deduplicated no-op telemetry: it emits
-no UI feedback, sends no continue, and leaves enrollment active. All other
+The exact daemon branch requires version 1 and at least 12 payload bytes. The
+reducer therefore accepts only that shape as deduplicated no-op telemetry: it
+emits no UI feedback, sends no continue, and leaves enrollment active. All other
 unexpected types/versions still freeze, now with a controlled numeric diagnostic
 so no raw event or biometric payload is disclosed.
 
