@@ -68,6 +68,18 @@ of that transport and no enrollment CLI; the next live-capable broker must keep
 this whole core inside the authorized ACM callback and continue through E3
 reconciliation before reporting completion.
 
+The pure E3 reconciliation layer is now executable too. Given already-collected
+host and same-connection SEP snapshots, it rejects mapping or binding drift,
+removed or multiple identities, changed existing entity numbers, component
+metadata changes, Catacomb UUID changes, and host/SEP disagreement. Identity
+success additionally needs explicit host-commit, final-confirm, generation,
+and independent-read-back attestations plus advanced user/master/SEP state. A
+reported failure can reconcile only against unchanged persistence. If that
+failure nevertheless left one new UUID, the journal records the stable read-back
+as provisional E2 success before attempting E3. This is a pure classifier: no
+snapshot collector, Catacomb writer, Bridge adapter, or hardware enrollment
+command has been added.
+
 ## Current boundary
 
 Existing, already-provisioned Apple users appear protocol-feasible for

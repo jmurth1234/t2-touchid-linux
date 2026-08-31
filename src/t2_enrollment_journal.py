@@ -28,10 +28,11 @@ class EnrollmentPhase(Enum):
     CANCEL_REQUESTED = "cancel-requested"
     TERMINAL_IDENTITY = "terminal-identity"
     TERMINAL_FAILURE = "terminal-failure"
+    RECONCILED = "reconciled"
     OUTCOME_UNKNOWN = "outcome-unknown"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class EnrollmentHistory:
     operation_id: str
     phase: EnrollmentPhase
@@ -40,6 +41,8 @@ class EnrollmentHistory:
     pending_event_sequence: int | None
     record_count: int
     head_hash: str
+    terminal_identity_uuid: str | None
+    terminal_status: int | None
 
 
 def _exact(value: Any, keys: set[str], field: str) -> dict[str, Any]:
@@ -104,6 +107,8 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
     phase = EnrollmentPhase.BASELINE
     last_event: int | None = None
     pending_event: int | None = None
+    terminal_identity_uuid: str | None = None
+    terminal_status: int | None = None
 
     for record in records[1:]:
         if record.get("operation_id") != operation_id:
@@ -152,6 +157,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             evidence = _exact(evidence, {"status"}, milestone)
             if _status(evidence["status"], "start status") == 0:
                 raise EnrollmentJournalError("rejected enrollment start has status zero")
+            terminal_status = evidence["status"]
             phase = EnrollmentPhase.TERMINAL_FAILURE
             continue
 
@@ -241,6 +247,7 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             ):
                 raise EnrollmentJournalError("terminal identity framing is invalid")
             _uuid(evidence["identity_uuid"], "identity_uuid")
+            terminal_identity_uuid = evidence["identity_uuid"]
             last_event = sequence
             phase = EnrollmentPhase.TERMINAL_IDENTITY
             continue
@@ -268,7 +275,104 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             ):
                 raise EnrollmentJournalError("terminal failure status is invalid")
             last_event = sequence
+            terminal_status = evidence["status"]
             phase = EnrollmentPhase.TERMINAL_FAILURE
+            continue
+
+        if milestone == "E2_IDENTITY_READBACK_OBSERVED":
+            if phase is not EnrollmentPhase.TERMINAL_FAILURE:
+                raise EnrollmentJournalError(
+                    "post-failure identity read-back is out of order"
+                )
+            evidence = _exact(
+                evidence,
+                {
+                    "connection_generation",
+                    "user_id",
+                    "identity_uuid",
+                    "source",
+                },
+                milestone,
+            )
+            _same_generation(evidence, baseline)
+            if (
+                evidence["user_id"] != baseline["apple_uid"]
+                or evidence["source"] != "stable-readback"
+            ):
+                raise EnrollmentJournalError(
+                    "post-failure identity read-back is invalid"
+                )
+            _uuid(evidence["identity_uuid"], "identity_uuid")
+            terminal_identity_uuid = evidence["identity_uuid"]
+            phase = EnrollmentPhase.TERMINAL_IDENTITY
+            continue
+
+        if milestone == "E3_RECONCILED":
+            if phase not in (
+                EnrollmentPhase.TERMINAL_IDENTITY,
+                EnrollmentPhase.TERMINAL_FAILURE,
+            ):
+                raise EnrollmentJournalError("E3 reconciliation is out of order")
+            evidence = _exact(
+                evidence,
+                {
+                    "connection_generation",
+                    "snapshot_sha256",
+                    "identity_uuid",
+                    "identity_present",
+                    "host_sep_identity_equal",
+                    "catacomb_reconciled",
+                    "bindings_preserved",
+                    "mapping_generation",
+                    "capacity_used",
+                    "capacity_maximum",
+                    "master_enrollment_count",
+                },
+                milestone,
+            )
+            _same_generation(evidence, baseline)
+            _sha256(evidence["snapshot_sha256"], "snapshot_sha256")
+            _sha256(evidence["mapping_generation"], "mapping_generation")
+            if evidence["mapping_generation"] != baseline["mapping_generation"]:
+                raise EnrollmentJournalError("mapping changed before E3")
+            for field in (
+                "host_sep_identity_equal",
+                "catacomb_reconciled",
+                "bindings_preserved",
+            ):
+                if evidence[field] is not True:
+                    raise EnrollmentJournalError(f"E3 field {field} is not true")
+            used = _uint(evidence["capacity_used"], "capacity used", 0xFFFFFFFF)
+            maximum = _uint(
+                evidence["capacity_maximum"], "capacity maximum", 0xFFFFFFFF
+            )
+            _uint(
+                evidence["master_enrollment_count"],
+                "master enrollment count",
+                0xFFFFFFFF,
+            )
+            if used > maximum or maximum != baseline["capacity"]["maximum"]:
+                raise EnrollmentJournalError("E3 capacity is inconsistent")
+            if phase is EnrollmentPhase.TERMINAL_IDENTITY:
+                _uuid(evidence["identity_uuid"], "identity_uuid")
+                if (
+                    evidence["identity_uuid"] != terminal_identity_uuid
+                    or evidence["identity_present"] is not True
+                    or used != baseline["capacity"]["used"] + 1
+                ):
+                    raise EnrollmentJournalError(
+                        "E3 identity or capacity does not match E2"
+                    )
+            else:
+                if (
+                    evidence["identity_uuid"] is not None
+                    or evidence["identity_present"] is not False
+                    or used != baseline["capacity"]["used"]
+                ):
+                    raise EnrollmentJournalError(
+                        "failure reconciliation observed an unexpected identity"
+                    )
+            phase = EnrollmentPhase.RECONCILED
             continue
 
         if milestone == "ENROLL_OUTCOME_UNKNOWN":
@@ -320,6 +424,8 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
         pending_event,
         len(records),
         head_hash,
+        terminal_identity_uuid,
+        terminal_status,
     )
 
 

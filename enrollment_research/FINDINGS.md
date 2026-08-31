@@ -1201,8 +1201,8 @@ between prepare/complete/confirm phases invalidates the transaction lease; the
 broker cannot reconstruct SEP pending state from a host blob and must enter
 reconciliation-required state.
 
-The executable journal layer now enforces the E0-through-E2 subset rather than
-accepting arbitrary milestone strings. It uses a guarded append whose expected
+The executable journal layer now enforces E0 through E3 rather than accepting
+arbitrary milestone strings. It uses a guarded append whose expected
 record count and prior hash are rechecked while the journal lock is held,
 rejects stale concurrent writers, and binds E1 readiness to the exact Linux
 boot, mapping digest, caller/target pair, protocol, remaining capacity, and
@@ -1222,8 +1222,23 @@ or duplicate event, event-limit exhaustion, invalid callback result, or journal
 failure after dispatch becomes durable `ENROLL_OUTCOME_UNKNOWN` whenever the
 journal remains writable. Returned identity and failure results are explicitly
 reconciliation-required. There is deliberately no BridgeXPC transport adapter,
-public CLI, fprintd enrollment method, E3 completion, or hardware mutation path
-in this layer.
+public CLI, fprintd enrollment method, or hardware mutation path in this layer.
+
+The non-exposed `t2_enrollment_reconciliation.py` classifier now makes the E3
+decision executable without adding live I/O. It requires a double-collected,
+same-generation SEP snapshot; exact protected mapping, account, bag, Catacomb
+UUID, existing UUID/entity, and host-component metadata continuity; equal host,
+per-user, and configured built-in identity sets; and at most one added UUID. A
+provisional identity additionally requires four literal persistence attestations:
+host batch committed, final SEP confirmation observed, SEP/host generation
+equal, and independent archive read-back successful. The user and master host
+components, SEP Catacomb hash, and master enrollment count must all advance. A
+terminal failure reconciles only if host components, SEP Catacomb, identity set,
+and master count are unchanged. If a nominal failure has nevertheless produced
+one stable new UUID, it is first journaled as `E2_IDENTITY_READBACK_OBSERVED` and
+then subjected to the success rules. This is not live E3 completion: the
+classifier does not collect snapshots, commit Catacombs, manufacture an
+attestation, or connect to BridgeXPC.
 
 ### Single and batched deletion milestones
 

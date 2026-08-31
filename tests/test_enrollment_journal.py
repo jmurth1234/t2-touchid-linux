@@ -225,6 +225,36 @@ class EnrollmentJournalTests(unittest.TestCase):
                     protocol_version=2,
                 )
 
+    def test_failure_with_new_identity_is_promoted_by_stable_readback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create(directory)
+            self.start(path, operation_id)
+            generation = baseline()["connection_generation"]
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "ENROLL_TERMINAL_FAILURE_OBSERVED",
+                {
+                    "connection_generation": generation,
+                    "event_sequence": 1,
+                    "envelope_type": enrollment.SERVICE_STATUS,
+                    "status": 67,
+                },
+            )
+            result = enrollment.append_checked(
+                path,
+                operation_id,
+                "E2_IDENTITY_READBACK_OBSERVED",
+                {
+                    "connection_generation": generation,
+                    "user_id": 501,
+                    "identity_uuid": str(uuid.UUID(int=8)),
+                    "source": "stable-readback",
+                },
+            )
+        self.assertEqual(result.phase, enrollment.EnrollmentPhase.TERMINAL_IDENTITY)
+        self.assertEqual(result.terminal_identity_uuid, str(uuid.UUID(int=8)))
+
 
 if __name__ == "__main__":
     unittest.main()
