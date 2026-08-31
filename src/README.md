@@ -72,8 +72,17 @@ device lease across context creation, password binding, policy-1007 evaluation,
 one trusted consumer callback, and mandatory deletion. The callback is invoked
 only after policy success and before deletion; callback failure still takes the
 same cleanup path, and asynchronous consumers are rejected so work cannot
-escape the context lifetime. No command-line option exposes the context bytes, and the
-current diagnostic supplies a no-mutation consumer.
+escape the context lifetime. No command-line option exposes the context bytes,
+and the current diagnostic supplies a no-mutation consumer.
+
+`t2_enrollment_protocol.py` is a transport-independent next layer. It builds
+only the exact mode-0, 16-byte ACM enrollment request, keeps that request in
+wipeable operation-local storage, parses the two-level service envelope, and
+implements conservative progress, feedback, cancellation, terminal-result,
+connection-generation, and duplicate-event rules. A terminal SEP identity is
+only provisional; the state machine deliberately has no `completed` state
+because durable Catacomb persistence and stable read-back are still required.
+The module opens no device or socket and is not installed as a command.
 
 The v2 platform field formerly labelled `uid` is the caller's macOS audit
 session ID (`ai_asid`). `aks_platform_asid` names it accordingly. The adjacent

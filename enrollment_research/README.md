@@ -70,6 +70,13 @@ trusted consumer, and deletion; the currently exposed diagnostic uses a
 no-mutation consumer. This validates transient context lifecycle only; it does
 not authorize enrollment or expose a general ACM command interface.
 
+The recovered enrollment framing and asynchronous event matrix are now encoded
+in a pure, non-sending protocol module. It accepts only the broker's 16-byte
+mode-0 ACM external form, wipes its request buffer, deduplicates and sequences
+events within one connection/operation generation, never treats progress as
+success, and stops at `SEP-identity-observed`. It is deliberately not wired to
+BridgeXPC, fprintd enrollment, or Catacomb mutation.
+
 The following remain disabled or unverified:
 
 - policy authorization and replay behavior for a fresh mode-0 ACM context;

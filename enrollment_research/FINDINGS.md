@@ -674,6 +674,12 @@ The transport envelope, ordinal, operation identity, and connection generation
 must all validate before an event can move enrollment state. The minimal
 conservative state machine is:
 
+This matrix is now executable in the pure `t2_enrollment_protocol.py` module.
+That module does not open a socket or device. Its start-request object permits
+only the 16-byte mode-0 ACM external form produced inside the authorized
+callback lifetime, uses wipeable storage, and its terminal state deliberately
+stops at `SEP-identity-observed` pending persistence and inventory reconciliation.
+
 | Observed event | Required transition | Automatic `0x0e` continue | External result boundary |
 |---|---|---:|---|
 | `0xe3ff8001`, ordinal 100..355 | Active -> progress; compute `floor(100 * (ordinal-100) / 255)` | yes, exactly once for that accepted event | progress only; never success |

@@ -1,0 +1,339 @@
+# SPDX-License-Identifier: GPL-2.0-only
+"""Fail-closed, transport-independent T2 enrollment protocol primitives.
+
+Nothing in this module opens BridgeXPC or sends a biometric command.  It makes
+the statically recovered request layout and asynchronous event rules testable
+before a mutating transport consumer exists.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import struct
+from collections import deque
+from dataclasses import dataclass
+from enum import Enum
+
+
+COMMAND_ENROLL_START = 0x03
+COMMAND_ENROLL_CONTINUE = 0x0E
+SERVICE_STATUS = 0xE3FF8001
+SERVICE_ENROLLMENT_RESULT = 0xE3FF8003
+SERVICE_ACCESSORY_AUTHORIZATION = 0xE3FF800E
+SERVICE_HEADER = struct.Struct("<QIIQ")
+AUTH_DATA_SIZE = 40
+ACM_EXTERNAL_FORM_SIZE = 16
+BUILTIN_GROUPS = frozenset((bytes(20), struct.pack("<I16x", 1)))
+MAX_EVENT_PAYLOAD = 1024 * 1024
+MAX_EVENT_FINGERPRINTS = 64
+
+
+class EnrollmentProtocolError(ValueError):
+    """Raised when enrollment framing or sequencing is ambiguous."""
+
+
+class EnrollmentState(Enum):
+    ACTIVE = "active"
+    CANCEL_REQUESTED = "cancel-requested"
+    SEP_IDENTITY_OBSERVED = "sep-identity-observed"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+    TIMED_OUT = "timed-out"
+    FROZEN = "frozen"
+
+
+class EnrollmentAction(Enum):
+    CONTINUE = "continue"
+    PROGRESS = "progress"
+    REMOVE_AND_RETRY = "remove-and-retry"
+    RETRY_SCAN = "retry-scan"
+    RETRY_SMALL_COVERAGE = "retry-small-coverage"
+    DIRTY_SENSOR = "dirty-sensor"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+    TIMED_OUT = "timed-out"
+    IDENTITY_OBSERVED = "identity-observed"
+
+
+@dataclass(frozen=True, repr=False)
+class EnrollmentIdentity:
+    user_id: int
+    identity_uuid: bytes
+    group_type: int
+    group_uuid: bytes
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.user_id <= 0xFFFFFFFF:
+            raise EnrollmentProtocolError("identity user ID is outside uint32 range")
+        if type(self.identity_uuid) is not bytes or len(self.identity_uuid) != 16:
+            raise EnrollmentProtocolError("identity UUID must be exactly 16 bytes")
+        if not any(self.identity_uuid):
+            raise EnrollmentProtocolError("identity UUID must not be zero")
+        if not 0 <= self.group_type <= 0xFFFFFFFF:
+            raise EnrollmentProtocolError("group type is outside uint32 range")
+        if type(self.group_uuid) is not bytes or len(self.group_uuid) != 16:
+            raise EnrollmentProtocolError("group UUID must be exactly 16 bytes")
+
+    def __repr__(self) -> str:
+        return (
+            "EnrollmentIdentity(user_id="
+            f"{self.user_id}, identity_uuid=<redacted>, group_type={self.group_type}, "
+            "group_uuid=<redacted>)"
+        )
+
+
+@dataclass(frozen=True, repr=False)
+class ServiceEvent:
+    sequence: int
+    envelope_type: int
+    version: int
+    ordinal: int
+    payload: bytes
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.sequence <= 0xFFFFFFFFFFFFFFFF:
+            raise EnrollmentProtocolError("event sequence is outside uint64 range")
+        if not 0 <= self.envelope_type <= 0xFFFFFFFF:
+            raise EnrollmentProtocolError("event type is outside uint32 range")
+        if not 0 <= self.version <= 0xFFFFFFFF:
+            raise EnrollmentProtocolError("event version is outside uint32 range")
+        if not 0 <= self.ordinal <= 0xFFFFFFFFFFFFFFFF:
+            raise EnrollmentProtocolError("event ordinal is outside uint64 range")
+        if type(self.payload) is not bytes or len(self.payload) > MAX_EVENT_PAYLOAD:
+            raise EnrollmentProtocolError("event payload is invalid or unbounded")
+
+
+@dataclass(frozen=True, repr=False)
+class EnrollmentTransition:
+    action: EnrollmentAction
+    state: EnrollmentState
+    continue_required: bool = False
+    progress_percent: int | None = None
+    identity: EnrollmentIdentity | None = None
+
+
+class SensitiveEnrollmentRequest:
+    """Operation-local start request whose backing storage can be wiped."""
+
+    __slots__ = ("_buffer", "_wiped", "protocol_version")
+
+    def __init__(self, protocol_version: int, user_id: int, acm_external_form: bytes):
+        if protocol_version not in (1, 2):
+            raise EnrollmentProtocolError("enrollment protocol must be version 1 or 2")
+        if not 0 <= user_id <= 0xFFFFFFFF:
+            raise EnrollmentProtocolError("user ID is outside uint32 range")
+        if (
+            type(acm_external_form) is not bytes
+            or len(acm_external_form) != ACM_EXTERNAL_FORM_SIZE
+        ):
+            raise EnrollmentProtocolError(
+                "ACM external form must be exactly 16 bytes"
+            )
+        size = 48 if protocol_version == 1 else 68
+        self._buffer = bytearray(size)
+        self._wiped = False
+        self.protocol_version = protocol_version
+        struct.pack_into("<IIII", self._buffer, 0, 0, user_id, 0, 16)
+        self._buffer[16:32] = acm_external_form
+        # The mode-0 credential container's remaining 16 bytes stay zero.  A
+        # protocol-v2 built-in request likewise has an all-zero device group.
+
+    def __repr__(self) -> str:
+        return (
+            "SensitiveEnrollmentRequest(protocol_version="
+            f"{self.protocol_version}, payload=<redacted>)"
+        )
+
+    @property
+    def command(self) -> int:
+        return COMMAND_ENROLL_START
+
+    @property
+    def buffer(self) -> memoryview:
+        if self._wiped:
+            raise EnrollmentProtocolError("enrollment request has been wiped")
+        return memoryview(self._buffer).toreadonly()
+
+    def wipe(self) -> None:
+        for offset in range(len(self._buffer)):
+            self._buffer[offset] = 0
+        self._wiped = True
+
+    def __enter__(self) -> SensitiveEnrollmentRequest:
+        return self
+
+    def __exit__(self, _kind: object, _value: object, _traceback: object) -> None:
+        self.wipe()
+
+    def __del__(self) -> None:
+        if hasattr(self, "_buffer"):
+            self.wipe()
+
+
+def build_continue_payload() -> bytes:
+    """Command 0x0e has no payload."""
+    return b""
+
+
+def parse_service_event(data: bytes) -> ServiceEvent:
+    if type(data) is not bytes or not SERVICE_HEADER.size <= len(data) <= (
+        SERVICE_HEADER.size + MAX_EVENT_PAYLOAD
+    ):
+        raise EnrollmentProtocolError("service event length is invalid")
+    sequence, envelope_type, version, ordinal = SERVICE_HEADER.unpack_from(data)
+    return ServiceEvent(sequence, envelope_type, version, ordinal, data[24:])
+
+
+def parse_enrollment_identity(
+    event: ServiceEvent, *, expected_user_id: int
+) -> EnrollmentIdentity:
+    if event.envelope_type != SERVICE_ENROLLMENT_RESULT:
+        raise EnrollmentProtocolError("event is not an enrollment result")
+    if event.version == 1:
+        if len(event.payload) != 20:
+            raise EnrollmentProtocolError("version-1 enrollment result must be 20 bytes")
+        record = event.payload + struct.pack("<I16x", 1)
+    elif event.version == 2:
+        if len(event.payload) < 40:
+            raise EnrollmentProtocolError(
+                "version-2 enrollment result must contain at least 40 bytes"
+            )
+        record = event.payload[:40]
+    else:
+        raise EnrollmentProtocolError("unsupported enrollment-result version")
+    user_id, identity_uuid, group_type, group_uuid = struct.unpack("<I16sI16s", record)
+    if user_id != expected_user_id:
+        raise EnrollmentProtocolError("enrollment result belongs to another Apple user")
+    if record[20:40] not in BUILTIN_GROUPS:
+        raise EnrollmentProtocolError("accessory enrollment result is unsupported")
+    return EnrollmentIdentity(user_id, identity_uuid, group_type, group_uuid)
+
+
+def validate_status_payload(event: ServiceEvent) -> None:
+    """Validate the optional message-status record without retaining its data."""
+    if not event.payload:
+        return
+    if len(event.payload) < 16:
+        raise EnrollmentProtocolError("generic status payload is truncated")
+    payload_status = struct.unpack_from("<I", event.payload)[0]
+    payload_length = struct.unpack_from("<Q", event.payload, 8)[0]
+    if payload_status != event.ordinal:
+        raise EnrollmentProtocolError("status payload disagrees with its ordinal")
+    if payload_length != len(event.payload) - 16:
+        raise EnrollmentProtocolError("status payload length is inconsistent")
+
+
+class EnrollmentStateMachine:
+    """Conservative one-operation enrollment event reducer."""
+
+    def __init__(
+        self, *, expected_user_id: int, connection_generation: str, operation_id: str
+    ) -> None:
+        if not 0 <= expected_user_id <= 0xFFFFFFFF:
+            raise EnrollmentProtocolError("expected user ID is outside uint32 range")
+        if not connection_generation or not operation_id:
+            raise EnrollmentProtocolError("generation and operation IDs are required")
+        self.expected_user_id = expected_user_id
+        self.connection_generation = connection_generation
+        self.operation_id = operation_id
+        self.state = EnrollmentState.ACTIVE
+        self._last_sequence: int | None = None
+        self._fingerprints: deque[bytes] = deque(maxlen=MAX_EVENT_FINGERPRINTS)
+
+    def request_cancel(self) -> None:
+        if self.state is not EnrollmentState.ACTIVE:
+            self._freeze("cancel requested outside an active operation")
+        self.state = EnrollmentState.CANCEL_REQUESTED
+
+    def accept(
+        self,
+        event: ServiceEvent,
+        *,
+        connection_generation: str,
+        operation_id: str,
+    ) -> EnrollmentTransition:
+        if self.state not in (EnrollmentState.ACTIVE, EnrollmentState.CANCEL_REQUESTED):
+            self._freeze("event arrived after the operation became terminal")
+        if connection_generation != self.connection_generation:
+            self._freeze("event belongs to another connection generation")
+        if operation_id != self.operation_id:
+            self._freeze("event belongs to another enrollment operation")
+        fingerprint = hashlib.sha256(
+            SERVICE_HEADER.pack(
+                event.sequence, event.envelope_type, event.version, event.ordinal
+            )
+            + event.payload
+        ).digest()
+        if fingerprint in self._fingerprints:
+            self._freeze("duplicate enrollment event")
+        if self._last_sequence is not None and event.sequence <= self._last_sequence:
+            self._freeze("enrollment event sequence is not increasing")
+        self._last_sequence = event.sequence
+        self._fingerprints.append(fingerprint)
+
+        if event.envelope_type == SERVICE_ENROLLMENT_RESULT:
+            try:
+                identity = parse_enrollment_identity(
+                    event, expected_user_id=self.expected_user_id
+                )
+            except EnrollmentProtocolError as error:
+                self.state = EnrollmentState.FROZEN
+                raise EnrollmentProtocolError(
+                    "invalid enrollment-result event"
+                ) from error
+            self.state = EnrollmentState.SEP_IDENTITY_OBSERVED
+            return EnrollmentTransition(
+                EnrollmentAction.IDENTITY_OBSERVED, self.state, identity=identity
+            )
+        if event.envelope_type == SERVICE_ACCESSORY_AUTHORIZATION or (
+            event.envelope_type == SERVICE_STATUS and event.ordinal == 501
+        ):
+            self._freeze("accessory authorization is unsupported")
+        if event.envelope_type != SERVICE_STATUS or event.version != 1:
+            self._freeze("unknown enrollment envelope or version")
+        try:
+            validate_status_payload(event)
+        except EnrollmentProtocolError as error:
+            self.state = EnrollmentState.FROZEN
+            raise EnrollmentProtocolError("invalid generic status event") from error
+
+        status = event.ordinal
+        if status == 66:
+            self.state = EnrollmentState.CANCELLED
+            return EnrollmentTransition(EnrollmentAction.CANCELLED, self.state)
+        if status == 67:
+            self.state = EnrollmentState.FAILED
+            return EnrollmentTransition(EnrollmentAction.FAILED, self.state)
+        if status == 68:
+            self.state = EnrollmentState.TIMED_OUT
+            return EnrollmentTransition(EnrollmentAction.TIMED_OUT, self.state)
+        if self.state is EnrollmentState.CANCEL_REQUESTED:
+            self._freeze("nonterminal event arrived after cancellation was requested")
+        if status == 70:
+            return EnrollmentTransition(
+                EnrollmentAction.CONTINUE,
+                self.state,
+                continue_required=True,
+            )
+        if status == 74:
+            return EnrollmentTransition(EnrollmentAction.REMOVE_AND_RETRY, self.state)
+        if status in (78, 85, 87, 88, 98):
+            return EnrollmentTransition(EnrollmentAction.RETRY_SCAN, self.state)
+        if status == 86:
+            return EnrollmentTransition(
+                EnrollmentAction.RETRY_SMALL_COVERAGE, self.state
+            )
+        if status == 93:
+            return EnrollmentTransition(EnrollmentAction.DIRTY_SENSOR, self.state)
+        if 100 <= status <= 355:
+            return EnrollmentTransition(
+                EnrollmentAction.PROGRESS,
+                self.state,
+                continue_required=True,
+                progress_percent=100 * (status - 100) // 255,
+            )
+        self._freeze("unknown enrollment status")
+
+    def _freeze(self, message: str) -> None:
+        self.state = EnrollmentState.FROZEN
+        raise EnrollmentProtocolError(message)
