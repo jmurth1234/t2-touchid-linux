@@ -950,7 +950,7 @@ def main() -> int:
                             lambda: cancellation.is_set()
                             or inhibitor.poll() is not None,
                             lambda: not cancellation.is_set()
-                            and inhibitor.poll() is None,
+                            and _sleep_inhibitor_is_registered(inhibitor),
                         )
                 result["local_store_provisioned"] = store_provisioned
         finally:

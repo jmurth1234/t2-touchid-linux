@@ -47,6 +47,7 @@ class EnrollmentCommandTests(unittest.TestCase):
         local_recovery=False,
         enrollment_error=None,
         cancel_before_dispatch=False,
+        inhibitor_registered=True,
     ):
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "operation.lock"
@@ -55,6 +56,7 @@ class EnrollmentCommandTests(unittest.TestCase):
             store_root.mkdir(mode=0o700)
             output = io.StringIO()
             lifecycle = []
+            dispatch_checks = []
             result = {
                 "schema_version": 1,
                 "identifiers_redacted": True,
@@ -75,6 +77,16 @@ class EnrollmentCommandTests(unittest.TestCase):
                 lifecycle.append("warm")
                 if cancel_before_dispatch:
                     signal.raise_signal(signal.SIGTERM)
+
+            def run_live(*call_args, **_call_kwargs):
+                dispatch_checks.append(call_args[5]())
+                if enrollment_error is not None:
+                    raise enrollment_error
+                return {
+                    **result,
+                    "mutation_performed": True,
+                    "enrollment_succeeded": True,
+                }
 
             with (
                 mock.patch.object(sys, "argv", ["enroll", *arguments]),
@@ -119,6 +131,7 @@ class EnrollmentCommandTests(unittest.TestCase):
                     MODULE,
                     require_no_unfinished_enrollment=mock.DEFAULT,
                     sleep_inhibitor=mock.DEFAULT,
+                    _sleep_inhibitor_is_registered=mock.DEFAULT,
                 ) as guards,
                 mock.patch.object(MODULE, "OPERATION_LOCK", lock),
                 mock.patch.object(
@@ -129,12 +142,7 @@ class EnrollmentCommandTests(unittest.TestCase):
                 mock.patch.object(
                     MODULE,
                     "run_enrollment",
-                    return_value={
-                        **result,
-                        "mutation_performed": True,
-                        "enrollment_succeeded": True,
-                    },
-                    side_effect=enrollment_error,
+                    side_effect=run_live,
                 ) as enrollment,
                 mock.patch.object(
                     MODULE,
@@ -164,6 +172,9 @@ class EnrollmentCommandTests(unittest.TestCase):
                 redirect_stderr(io.StringIO()),
             ):
                 guards["sleep_inhibitor"].side_effect = inhibit_sleep
+                guards[
+                    "_sleep_inhibitor_is_registered"
+                ].return_value = inhibitor_registered
                 post_reboot_verification = recovery_modes[
                     "run_post_reboot_verification"
                 ]
@@ -221,6 +232,8 @@ class EnrollmentCommandTests(unittest.TestCase):
                 self.assertEqual(lifecycle[:2], ["warm", "lock"])
             if live:
                 self.assertEqual(lifecycle[2:], ["inhibit", "uninhibit"])
+            if live and not cancel_before_dispatch:
+                self.assertEqual(dispatch_checks, [inhibitor_registered])
             if enrollment_error is not None or cancel_before_dispatch:
                 notify.assert_called_once_with(
                     CONFIGURATION["linux_user"], "t2-touchid-failure.service"
@@ -266,6 +279,17 @@ class EnrollmentCommandTests(unittest.TestCase):
             live=True,
         )
         self.assertIn('"mutation_performed": true', output)
+
+    def test_live_dispatch_guard_rechecks_the_registered_inhibitor(self):
+        self.invoke(
+            [
+                "--acknowledge-password-fallback-tested",
+                "--acknowledge-live-fingerprint-enrollment",
+                "--acknowledge-local-catacomb-mutation",
+            ],
+            live=True,
+            inhibitor_registered=False,
+        )
 
     def test_live_exception_emits_best_effort_failure_feedback(self):
         self.invoke(
