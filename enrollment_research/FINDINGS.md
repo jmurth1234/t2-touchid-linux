@@ -2068,6 +2068,24 @@ selected-identity blob. Root authenticating *for* a target account must be
 distinguished from root owning a separate fingerprint set. A process-wide
 environment variable and caller-supplied username are not adequate authority.
 
+The repository now implements the non-exposed persistent half of that boundary
+in `t2_user_mapping.py`. Schema version 1 binds a numeric Linux UID plus opaque
+account-generation digest to exactly one already-provisioned Apple UID,
+canonical account UUID, live-bag UUID expectation, canonical per-UID keybag
+path and digest, unlock mode, and explicit target capabilities. The loader uses
+a no-follow descriptor, requires a root-owned mode-0600 single-link regular
+file, rejects duplicate JSON keys and unknown fields, and hashes the exact file
+bytes as the journal-facing mapping generation. Cross-record duplication of an
+Apple UID, account UUID, bag UUID, or keybag path is rejected rather than
+resolved by ordering. The special alias is derived as `-AppleUID` and is never
+stored as caller-controlled data.
+
+This does **not** make the service multi-user: the schema has no live consumer,
+does not decide authenticated-caller or delegated authority, and does not load,
+bind, unlock, relock, or unload a bag. Those runtime steps must independently
+reconcile the protected mapping with live AKS and Catacomb state before any
+fprintd or mutation route can select a second user.
+
 ## Read-only inventory transaction specification
 
 The matching binary exposes enough non-mutating primitives to discover existing

@@ -58,6 +58,16 @@ joins the strict committed user Catacomb with a stable live per-user/global SEP
 inventory under the operation lock and emits only numbered slots and local
 labels. It fails closed on any local/live divergence and never exposes UUIDs.
 
+`t2_user_mapping.py` is the first non-exposed multi-user policy boundary. It
+strictly parses a root-owned mode-0600 JSON file through a no-follow descriptor,
+hashes the exact bytes as the mapping generation, and rejects duplicate keys,
+unknown fields, ambiguous UID/account/bag/keybag ownership, unsafe paths, and
+implicit capabilities. Each record targets an already-provisioned Apple user;
+it cannot create an account, keybag, persona, or biometric container. Its
+resolver checks only target mapping and capability. Authenticated-caller and
+delegation policy remain a separate required boundary, so this module is not
+yet connected to fprintd or any live broker.
+
 The `t2-touchid-manage` rename path resolves one slot only after that
 reconciliation gate,
 proves its strict archive rewrite changes only the selected label, and binds an

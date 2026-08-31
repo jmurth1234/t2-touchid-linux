@@ -98,6 +98,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
 - `src/t2_bridge_connection.py`: exclusive generation-pinned Bridge owner used
   by the no-CLI enrollment research coordinator.
 - `src/t2-fprintd.py`: verification-only fprintd facade.
+- `src/t2_user_mapping.py`: non-exposed, fail-closed schema for mapping Linux
+  accounts to already-provisioned Apple users and explicit capabilities.
 - `systemd/`: system and audible-feedback units.
 - `pam/`: clamshell-safe Omarchy PAM templates.
 - `tools/macos/`: private export helpers; outputs must never be committed.
@@ -294,6 +296,16 @@ and is proven only on the configuration documented here. The `list` subcommand
 is the authoritative human-readable view of the real enrolled identities;
 fprintd's one compatibility slot remains an authentication selector, not a
 template count.
+
+Multi-user live operation is not enabled. The repository now contains a pure
+mapping validator as a prerequisite: it binds each numeric Linux UID and
+account generation to one already-provisioned Apple UID, account UUID, AKS bag
+UUID, canonical private keybag path/digest, unlock mode, and explicit
+`verify`/`enroll`/`identity-management` capabilities. It rejects duplicate
+Apple authority across Linux accounts and derives the special alias as
+`-AppleUID`; callers cannot supply an alias. No command consumes this mapping
+yet, because per-user bag activation, relocking, and runtime reconciliation
+must be implemented and proven first.
 
 Rename one current identity label (this does not alter its fingerprint
 template or fprintd's compatibility-slot name):

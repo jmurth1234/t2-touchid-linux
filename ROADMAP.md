@@ -74,6 +74,8 @@ evidence, not intent.
       recovery behind explicit acknowledgements.
 - [x] Add a non-mutating live deletion-target preflight.
 - [x] Promote the live-proven enrollment broker behind a stable subcommand UX.
+- [x] Add a private, versioned multi-user mapping schema with one-to-one Apple
+      authority and explicit per-target capabilities.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
       verification on the proven machine.
 - [ ] Implement Linux-native enrollment/unenrollment policy for multiple users.
