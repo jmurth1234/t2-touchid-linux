@@ -17,10 +17,12 @@ from enum import Enum
 
 COMMAND_ENROLL_START = 0x03
 COMMAND_ENROLL_CONTINUE = 0x0E
+BRIDGE_SERVICE_STATUS = 0xE3FF8000
 SERVICE_STATUS = 0xE3FF8001
 SERVICE_ENROLLMENT_RESULT = 0xE3FF8003
 SERVICE_ACCESSORY_AUTHORIZATION = 0xE3FF800E
 SERVICE_HEADER = struct.Struct("<QIIQ")
+STATUS_PAYLOAD_HEADER = struct.Struct("<I4xQ")
 AUTH_DATA_SIZE = 40
 ACM_EXTERNAL_FORM_SIZE = 16
 BUILTIN_GROUPS = frozenset((bytes(20), struct.pack("<I16x", 1)))
@@ -180,8 +182,20 @@ def parse_service_event(data: bytes) -> ServiceEvent:
         SERVICE_HEADER.size + MAX_EVENT_PAYLOAD
     ):
         raise EnrollmentProtocolError("service event length is invalid")
-    sequence, envelope_type, version, ordinal = SERVICE_HEADER.unpack_from(data)
-    return ServiceEvent(sequence, envelope_type, version, ordinal, data[24:])
+    reserved, envelope_type, version, event_timestamp = SERVICE_HEADER.unpack_from(data)
+    payload = data[SERVICE_HEADER.size :]
+    if reserved != 0 or event_timestamp == 0:
+        raise EnrollmentProtocolError("service event header is invalid")
+    # The final qword in the common header is a monotonic event timestamp, not
+    # the generic biometric status.  Status messages carry their 32-bit
+    # ordinal at byte 24, followed by padding and a 64-bit detail length.
+    # Use the timestamp as the operation-local monotonic sequence key.
+    ordinal = 0
+    if envelope_type == SERVICE_STATUS:
+        if len(payload) < STATUS_PAYLOAD_HEADER.size:
+            raise EnrollmentProtocolError("generic status payload is truncated")
+        ordinal, _detail_length = STATUS_PAYLOAD_HEADER.unpack_from(payload)
+    return ServiceEvent(event_timestamp, envelope_type, version, ordinal, payload)
 
 
 def parse_enrollment_identity(
@@ -332,7 +346,7 @@ class EnrollmentStateMachine:
                 continue_required=True,
                 progress_percent=100 * (status - 100) // 255,
             )
-        self._freeze("unknown enrollment status")
+        self._freeze(f"unknown enrollment status {status}")
 
     def _freeze(self, message: str) -> None:
         self.state = EnrollmentState.FROZEN

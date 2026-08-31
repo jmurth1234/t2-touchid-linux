@@ -62,6 +62,18 @@ class ReplyTests(unittest.TestCase):
         self.assertIsNone(summary["output_length"])
         self.assertNotIn(sentinel, str(summary))
 
+    def test_service_status_summary_uses_payload_ordinal_not_timestamp(self):
+        timestamp = 0x6B158284DB5
+        raw = struct.pack("<QIIQ", 0, 0xE3FF8001, 1, timestamp)
+        raw += struct.pack("<I4xQ", 90, 0)
+        summary = MODULE.summarize_event([9, 0xE3FF8000, raw, None, None])
+        self.assertTrue(summary["common_record_valid"])
+        self.assertTrue(summary["reserved_zero"])
+        self.assertTrue(summary["event_timestamp_present"])
+        self.assertEqual(summary["ordinal"], 90)
+        self.assertTrue(summary["parsed_ordinal_matches"])
+        self.assertNotIn(str(timestamp), str(summary))
+
     def full_inventory(self):
         identity = struct.pack("<I", 501) + uuid.UUID(int=1).bytes
         group = struct.pack("<I", 1) + uuid.UUID(int=2).bytes

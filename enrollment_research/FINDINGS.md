@@ -579,8 +579,9 @@ enrollment-result parser, its strings, nor the shipping Touch ID enrollment UI
 contains a duplicate-specific terminal mapping.
 
 The matching daemon's lower-level dispatch resolves one more layer: raw service
-status **`0xe3ff8001`** is the generic biometric status-message envelope, and
-its 64-bit ordinal is forwarded as the public biometric status. Ordinals
+status **`0xe3ff8001`** is the generic biometric status-message envelope. The
+common record's final 64-bit field is a monotonic event timestamp; the payload's
+first 32-bit word is forwarded as the public biometric status. Logical ordinals
 100..355 are enrollment progress; selected lower ordinals, including 66..68,
 take the same forwarding path. Thus enrollment failure is physically delivered
 as envelope `0xe3ff8001`, ordinal 67. The host does not derive 67 from an error
@@ -5249,6 +5250,20 @@ diagnostic disclosed only the equality result. The public adapter consequently
 recognizes that one exact nil-output placeholder only for its zero-capacity
 commands. A different canonical UUID, case variant, arbitrary string, or
 nonempty byte output still poisons the generation and requires reconciliation.
+
+The third approved attempt confirmed the reply correction: password binding
+succeeded, start command `0x03` returned status zero, and
+`ENROLL_START_OBSERVED` was durable. The operation then froze at terminal event
+parsing. Fresh double collection again proved one unchanged identity, unchanged
+capacity, host/SEP agreement, and no Catacomb delta before recovery closure.
+A non-mutating one-second match followed by cancellation isolated the bug. Its
+normal generic status record had a zero first qword, type `0xe3ff8001`, version
+1, a nonzero increasing qword at byte 16, then a 32-bit status plus padding and
+a zero 64-bit detail length at byte 24. Multiple messages showed the byte-16
+qword changing as a monotonic timestamp while the byte-24 word carried the
+actual public status. The enrollment parser had reversed those roles. It now
+derives the ordinal from the byte-24 status record, validates the accompanying
+detail length, and uses the timestamp only for ordering/deduplication.
 
 The incident also closed a recovery gap. The broker now blocks new live
 enrollment while any mutation journal is unfinished. Its dedicated recovery

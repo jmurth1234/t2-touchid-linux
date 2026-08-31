@@ -69,15 +69,19 @@ class FakeLease:
         self.enrollment_commands.append(command)
         if command == enrollment_protocol.COMMAND_ENROLL_START:
             progress = enrollment_protocol.SERVICE_HEADER.pack(
-                1, enrollment_protocol.SERVICE_STATUS, 1, 263
-            )
-            return [0, None], [[9, 0, progress, None, None]]
+                0, enrollment_protocol.SERVICE_STATUS, 1, 1
+            ) + enrollment_protocol.STATUS_PAYLOAD_HEADER.pack(263, 0)
+            return [0, None], [
+                [9, enrollment_protocol.BRIDGE_SERVICE_STATUS, progress, None, None]
+            ]
         if command == enrollment_protocol.COMMAND_ENROLL_CONTINUE:
             result = enrollment_protocol.SERVICE_HEADER.pack(
-                2, enrollment_protocol.SERVICE_ENROLLMENT_RESULT, 2, 0
+                0, enrollment_protocol.SERVICE_ENROLLMENT_RESULT, 2, 2
             )
             result += (501).to_bytes(4, "little") + uuid.UUID(int=56).bytes + bytes(20)
-            return [0, None], [[9, 0, result, None, None]]
+            return [0, None], [
+                [9, enrollment_protocol.BRIDGE_SERVICE_STATUS, result, None, None]
+            ]
         raise AssertionError(f"unexpected command {command}")
 
     def next_service_event(self) -> object:
@@ -115,6 +119,15 @@ def acm_device() -> FakeACMDevice:
 
 
 class EnrollmentCoordinatorTests(unittest.TestCase):
+    def test_only_controlled_adapter_or_protocol_detail_is_exposed(self):
+        error = enrollment_protocol.EnrollmentProtocolError(
+            "unknown enrollment status 90"
+        )
+        self.assertEqual(
+            coordinator._safe_stop_detail(error), "unknown enrollment status 90"
+        )
+        self.assertIsNone(coordinator._safe_stop_detail(RuntimeError("private")))
+
     def run_coordinator(self, directory: str, finalizer):
         lease = FakeLease()
         device = acm_device()

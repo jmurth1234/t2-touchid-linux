@@ -17,7 +17,9 @@ from tests.test_mutation_journal import baseline
 
 
 def raw_event(sequence: int, envelope: int, version: int, ordinal: int, payload: bytes = b"") -> bytes:
-    return protocol.SERVICE_HEADER.pack(sequence, envelope, version, ordinal) + payload
+    if envelope == protocol.SERVICE_STATUS and not payload:
+        payload = protocol.STATUS_PAYLOAD_HEADER.pack(ordinal, 0)
+    return protocol.SERVICE_HEADER.pack(0, envelope, version, sequence) + payload
 
 
 class FakeTransport:

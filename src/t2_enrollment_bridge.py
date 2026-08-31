@@ -110,9 +110,7 @@ class EnrollmentBridgeTransport:
             type(value) is not list
             or len(value) != 5
             or value[0] != 9
-            or type(value[1]) is not int
-            or isinstance(value[1], bool)
-            or not -(2**31) <= value[1] < 2**32
+            or value[1] != protocol.BRIDGE_SERVICE_STATUS
             or type(value[2]) is not bytes
             or not protocol.SERVICE_HEADER.size
             <= len(value[2])

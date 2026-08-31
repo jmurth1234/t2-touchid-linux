@@ -64,12 +64,36 @@ class EnrollmentProtocolTests(unittest.TestCase):
         self.assertEqual(enrollment.build_continue_payload(), b"")
 
     def test_service_event_parser_preserves_two_level_header(self):
-        raw = enrollment.SERVICE_HEADER.pack(7, enrollment.SERVICE_STATUS, 1, 263)
+        raw = enrollment.SERVICE_HEADER.pack(
+            0, enrollment.SERVICE_STATUS, 1, 7
+        ) + enrollment.STATUS_PAYLOAD_HEADER.pack(263, 0)
         parsed = enrollment.parse_service_event(raw)
         self.assertEqual(parsed.sequence, 7)
         self.assertEqual(parsed.envelope_type, enrollment.SERVICE_STATUS)
         self.assertEqual(parsed.ordinal, 263)
-        self.assertEqual(parsed.payload, b"")
+        self.assertEqual(parsed.payload, enrollment.STATUS_PAYLOAD_HEADER.pack(263, 0))
+
+    def test_live_status_shape_uses_timestamp_not_status_as_sequence(self):
+        timestamp = 0x6B158284DB5
+        raw = enrollment.SERVICE_HEADER.pack(
+            0, enrollment.SERVICE_STATUS, 1, timestamp
+        ) + enrollment.STATUS_PAYLOAD_HEADER.pack(90, 0)
+        parsed = enrollment.parse_service_event(raw)
+        self.assertEqual(parsed.sequence, timestamp)
+        self.assertEqual(parsed.ordinal, 90)
+        self.assertEqual(parsed.version, 1)
+
+    def test_wire_parser_rejects_nonzero_reserved_or_missing_status_record(self):
+        for raw in (
+            enrollment.SERVICE_HEADER.pack(1, enrollment.SERVICE_STATUS, 1, 7)
+            + enrollment.STATUS_PAYLOAD_HEADER.pack(100, 0),
+            enrollment.SERVICE_HEADER.pack(0, enrollment.SERVICE_STATUS, 1, 0)
+            + enrollment.STATUS_PAYLOAD_HEADER.pack(100, 0),
+            enrollment.SERVICE_HEADER.pack(0, enrollment.SERVICE_STATUS, 1, 7),
+        ):
+            with self.subTest(length=len(raw)):
+                with self.assertRaises(enrollment.EnrollmentProtocolError):
+                    enrollment.parse_service_event(raw)
 
     def test_progress_requires_exactly_one_continue_and_never_completes(self):
         machine = self.machine()

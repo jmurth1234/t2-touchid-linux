@@ -13,6 +13,7 @@ import t2_baseline
 import t2_bridge_inventory
 import t2_enrollment_bridge
 import t2_enrollment_operation
+import t2_enrollment_protocol
 import t2_mutation_journal
 
 
@@ -27,6 +28,8 @@ def _safe_stop_detail(error: BaseException) -> str | None:
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         if isinstance(current, t2_enrollment_bridge.EnrollmentBridgeError):
+            return str(current)
+        if isinstance(current, t2_enrollment_protocol.EnrollmentProtocolError):
             return str(current)
         cause = current.__cause__
         current = cause if isinstance(cause, BaseException) else None

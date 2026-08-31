@@ -43,6 +43,7 @@ from t2_bridge_wire import (
     send_helo,
     send_message,
 )
+from t2_enrollment_protocol import parse_service_event
 
 
 def summarize_event(
@@ -56,22 +57,33 @@ def summarize_event(
             "data_length": len(data) if isinstance(data, bytes) else None,
         }
         if isinstance(data, bytes) and len(data) >= 24:
-            sequence, embedded_type, version, ordinal = struct.unpack_from(
+            try:
+                parsed_common_event = parse_service_event(data)
+            except (TypeError, ValueError):
+                parsed_common_event = None
+            summary["common_record_valid"] = parsed_common_event is not None
+            reserved, embedded_type, version, event_timestamp = struct.unpack_from(
                 "<QIIQ", data
             )
             summary.update(
-                sequence=sequence,
+                reserved_zero=reserved == 0,
                 embedded_type=f"0x{embedded_type:08x}",
                 version=version,
-                ordinal=ordinal,
+                event_timestamp_present=event_timestamp > 0,
             )
             event_data = data[24:]
             if embedded_type == 0xE3FF8001:
                 summary["event_kind"] = "status"
                 if len(event_data) >= 4:
-                    summary["status_code"] = struct.unpack_from(
+                    status_code = struct.unpack_from(
                         "<I", event_data
                     )[0]
+                    summary["status_code"] = status_code
+                    summary["ordinal"] = status_code
+                    summary["parsed_ordinal_matches"] = (
+                        parsed_common_event is not None
+                        and parsed_common_event.ordinal == status_code
+                    )
                 if len(event_data) >= 16:
                     summary["status_data_length"] = struct.unpack_from(
                         "<Q", event_data, 8

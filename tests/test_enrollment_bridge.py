@@ -20,9 +20,9 @@ GENERATION = str(uuid.UUID(int=10))
 
 def event(sequence: int = 1, ordinal: int = 100) -> list[object]:
     raw = protocol.SERVICE_HEADER.pack(
-        sequence, protocol.SERVICE_STATUS, 1, ordinal
-    )
-    return [9, 0, raw, None, None]
+        0, protocol.SERVICE_STATUS, 1, sequence
+    ) + protocol.STATUS_PAYLOAD_HEADER.pack(ordinal, 0)
+    return [9, protocol.BRIDGE_SERVICE_STATUS, raw, None, None]
 
 
 class FakeLease:
@@ -141,6 +141,7 @@ class EnrollmentBridgeTests(unittest.TestCase):
             ([True, None], []),
             ([0, b"unexpected"], []),
             ([0, None], [event()[2]]),
+            ([0, None], [[9, 0, event()[2], None, None]]),
             ([-5, None], [event()]),
         ]
         for result in bad_results:
@@ -198,7 +199,10 @@ class EnrollmentBridgeTests(unittest.TestCase):
         self.assertEqual(transport.state, bridge.EnrollmentBridgeState.POISONED)
 
     def test_async_receive_failure_or_bad_event_poisons(self):
-        for value in (ConnectionError("lost"), [9, 0, b"short", None, None]):
+        for value in (
+            ConnectionError("lost"),
+            [9, protocol.BRIDGE_SERVICE_STATUS, b"short", None, None],
+        ):
             with self.subTest(value=value):
                 lease = FakeLease()
                 lease.events = [value]
@@ -223,9 +227,15 @@ class EnrollmentBridgeTests(unittest.TestCase):
         identity_uuid = uuid.UUID(int=7).bytes
         progress = event(1, 263)
         result_data = protocol.SERVICE_HEADER.pack(
-            2, protocol.SERVICE_ENROLLMENT_RESULT, 2, 0
+            0, protocol.SERVICE_ENROLLMENT_RESULT, 2, 2
         ) + (501).to_bytes(4, "little") + identity_uuid + bytes(20)
-        result = [9, 0, result_data, None, None]
+        result = [
+            9,
+            protocol.BRIDGE_SERVICE_STATUS,
+            result_data,
+            None,
+            None,
+        ]
         lease.results = [([0, None], [progress]), ([0, None], [result])]
         transport = self.make(lease)
         value = baseline()

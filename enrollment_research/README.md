@@ -237,6 +237,17 @@ only `[status]`, `[status, null]`, `[status, empty-data]`, or that exact fixed
 nil placeholder. Arbitrary UUID strings and nonempty data remain fail-closed.
 Any further live run requires separate explicit approval.
 
+The third approved run crossed that boundary: command `0x03` returned success
+and the journal durably recorded `ENROLL_START_OBSERVED`. It then froze on the
+first normal service message, with stable recovery again proving no persistent
+delta. A non-mutating timed match/cancel control exposed the parser error. In
+the 24-byte common service record, the first qword is zero/reserved, the next
+fields are event type and version, and the final qword is a monotonic event
+timestamp—not the enrollment status. A generic status message carries its
+32-bit ordinal at byte 24, followed by four bytes of padding and a 64-bit detail
+length. The corrected parser derives the logical status from that record and
+uses the timestamp only as its operation-local ordering key.
+
 The negative live gate was also rehearsed on the target: an invocation with the
 password-fallback acknowledgement but without both mutation acknowledgements
 exited from argument validation with status 2, before runtime configuration,

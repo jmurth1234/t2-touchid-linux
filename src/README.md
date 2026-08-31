@@ -223,18 +223,23 @@ local store, sensor readiness, operation lock, same-connection E0, and capacity.
 The live branch additionally requires explicit live-fingerprint and local-store
 mutation acknowledgements, derives all security subjects from protected runtime
 state, retains one Bridge lease through E3, and provides cancellation/audio
-feedback. Its preflight has passed on the target hardware. Two explicitly
+feedback. Its preflight has passed on the target hardware. Three explicitly
 approved live runs reached password-bound E1, then conservatively stopped
-outcome-unknown while the adapter learned the real zero-output reply variants;
+outcome-unknown while the adapter learned the real Bridge reply/event variants;
 fresh stable read-back after each proved no identity or Catacomb delta. The
 second run exposed a fixed 36-character placeholder. Exact `bkremoted`
 disassembly proves that this constant is substituted for a nil Objective-C
 output, and a non-mutating reset command on the target matched it without
 disclosing the value. The adapter now accepts only that exact constant in
-addition to omitted/null/empty-data encodings. `--reconcile-outcome-unknown`
-records no-change proof without issuing enrollment or persistence, and live
-enrollment refuses to start while an earlier mutation journal remains
-unfinished. Any next live attempt remains explicitly operator-gated.
+addition to omitted/null/empty-data encodings. The third run then recorded a
+successful start before the event parser rejected a normal status message. A
+non-mutating match/cancel control proved the common header's final qword is a
+monotonic timestamp; the actual 32-bit status begins at byte 24, followed by
+padding and a 64-bit detail length. The parser now uses that status and the
+timestamp as its ordering key. `--reconcile-outcome-unknown` records no-change
+proof without issuing enrollment or persistence, and live enrollment refuses
+to start while an earlier mutation journal remains unfinished. Any next live
+attempt remains explicitly operator-gated.
 
 The typed journal also defines `E4_POST_REBOOT_VERIFIED` for a successful
 identity. It is accepted only after E3, on both a different Linux boot UUID and
