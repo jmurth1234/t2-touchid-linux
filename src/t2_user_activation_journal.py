@@ -28,6 +28,10 @@ class UserActivationPhase(Enum):
     READY = "ready"
     STOPPED = "stopped"
     OUTCOME_UNKNOWN = "outcome-unknown"
+    RECOVERED_READY = "recovered-ready"
+    RECOVERED_NOT_READY = "recovered-not-ready"
+    RECOVERY_BLOCKED = "recovery-blocked"
+    QUARANTINED = "quarantined"
 
 
 @dataclass(frozen=True, repr=False)
@@ -36,6 +40,9 @@ class UserActivationHistory:
     phase: UserActivationPhase
     baseline: dict[str, Any]
     temporary_handle: int | None
+    terminal_stage: str | None
+    terminal_reason: str | None
+    terminal_from_phase: UserActivationPhase | None
     record_count: int
     head_hash: str
 
@@ -132,6 +139,9 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
     _uuid(operation_id, "operation ID")
     phase = UserActivationPhase.BASELINE
     temporary_handle: int | None = None
+    terminal_stage: str | None = None
+    terminal_reason: str | None = None
+    terminal_from_phase: UserActivationPhase | None = None
 
     for record in records[1:]:
         if record.get("operation_id") != operation_id:
@@ -296,11 +306,80 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
                 or evidence["mutation_possible"] is not True
             ):
                 raise UserActivationJournalError("activation stop evidence is invalid")
+            terminal_stage = evidence["stage"]
+            terminal_reason = evidence["reason"]
+            terminal_from_phase = phase
             phase = (
                 UserActivationPhase.STOPPED
                 if milestone == "USER_ACTIVATION_STOPPED"
                 else UserActivationPhase.OUTCOME_UNKNOWN
             )
+            continue
+        if milestone == "USER_ACTIVATION_RECOVERY_OBSERVED":
+            if phase is not UserActivationPhase.OUTCOME_UNKNOWN:
+                raise UserActivationJournalError("activation recovery is out of order")
+            evidence = _exact(
+                evidence,
+                {
+                    "runtime_generation",
+                    "resolution",
+                    "readiness_state",
+                    "alias_present",
+                    "bag_uuid_matches",
+                    "match_ready",
+                    "mutation_performed",
+                },
+                milestone,
+            )
+            _uuid(evidence["runtime_generation"], "recovery runtime generation")
+            if (
+                evidence["runtime_generation"] == baseline["runtime_generation"]
+                or type(evidence["alias_present"]) is not bool
+                or type(evidence["bag_uuid_matches"]) is not bool
+                or type(evidence["match_ready"]) is not bool
+                or evidence["mutation_performed"] is not False
+            ):
+                raise UserActivationJournalError("activation recovery evidence is invalid")
+            resolution = evidence["resolution"]
+            state = evidence["readiness_state"]
+            if resolution == "ready":
+                if (
+                    state != "ready"
+                    or evidence["alias_present"] is not True
+                    or evidence["bag_uuid_matches"] is not True
+                    or evidence["match_ready"] is not True
+                ):
+                    raise UserActivationJournalError("ready recovery is invalid")
+                phase = UserActivationPhase.RECOVERED_READY
+            elif resolution == "not-ready":
+                if (
+                    state
+                    not in {
+                        "device-locked",
+                        "before-first-unlock",
+                        "keybag-lockout",
+                    }
+                    or evidence["alias_present"] is not True
+                    or evidence["bag_uuid_matches"] is not True
+                    or evidence["match_ready"] is not False
+                ):
+                    raise UserActivationJournalError("not-ready recovery is invalid")
+                phase = UserActivationPhase.RECOVERED_NOT_READY
+            elif resolution == "blocked":
+                if (
+                    state != "alias-absent"
+                    or evidence["alias_present"] is not False
+                    or evidence["bag_uuid_matches"] is not False
+                    or evidence["match_ready"] is not False
+                ):
+                    raise UserActivationJournalError("blocked recovery is invalid")
+                phase = UserActivationPhase.RECOVERY_BLOCKED
+            elif resolution == "quarantine":
+                if not isinstance(state, str) or not state or evidence["match_ready"]:
+                    raise UserActivationJournalError("quarantine recovery is invalid")
+                phase = UserActivationPhase.QUARANTINED
+            else:
+                raise UserActivationJournalError("activation recovery resolution is unknown")
             continue
         raise UserActivationJournalError("unknown activation journal milestone")
 
@@ -309,6 +388,9 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
         phase,
         baseline,
         temporary_handle,
+        terminal_stage,
+        terminal_reason,
+        terminal_from_phase,
         len(records),
         records[-1].get("record_hash", ""),
     )

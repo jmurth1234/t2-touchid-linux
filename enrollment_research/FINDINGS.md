@@ -5559,6 +5559,16 @@ reconciled slots. UUIDs and entity numbers remain internal so a future rename
 or single-delete command can resolve a slot to an immutable target only after
 acquiring the lock and recollecting the baseline.
 
+The transport-free multi-user activation model now also has a read-only
+recovery classifier for outcome-unknown journals. Recovery requires a new
+runtime-generation UUID and the byte-exact protected mapping generation, then
+performs exactly one injected alias observation. A ready or known locked state
+can be attributed only after bind/unlock intent; an absent alias remains
+blocked, and any binding drift, collision, unknown lock bits, or unattributable
+early-stage alias is quarantined. It does not replay load, bind, unlock, or
+password verification and cannot guess how to unload an unobserved temporary
+handle. This is a hardware-free safety boundary, not a live AKS adapter.
+
 The normal live path now handles the observed terminal discrepancy without a
 manual recovery command. A structurally valid result with a mismatched embedded
 owner is journaled only as a redacted terminal witness: its UUID and owner value

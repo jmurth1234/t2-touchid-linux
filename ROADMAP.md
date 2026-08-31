@@ -80,6 +80,8 @@ evidence, not intent.
       classifier with explicit quarantine and password-bootstrap outcomes.
 - [x] Add a typed runtime alias-activation journal and dependency-injected
       load/bind/unlock operation core with secret wiping and no retry.
+- [x] Add fresh-generation, read-only activation recovery that never retries
+      mutations or guesses how to clean up an unknown temporary handle.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
       verification on the proven machine.
 - [ ] Implement Linux-native enrollment/unenrollment policy for multiple users.
