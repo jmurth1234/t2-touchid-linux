@@ -641,6 +641,41 @@ def run_delete(
     }
 
 
+def run_delete_preflight(
+    configuration: dict[str, object], *, slot: int
+) -> dict[str, object]:
+    if t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
+        raise IdentityManagementError(
+            "an earlier biometric mutation is unfinished or awaits verification"
+        )
+    if os.path.lexists(STORE_ROOT / "prepare") or os.path.lexists(
+        STORE_ROOT / "commit"
+    ):
+        raise IdentityManagementError("a local Catacomb transaction needs recovery")
+    keybag_runtime(configuration["special_bag"])
+    _store, _host, local, _backup = current_host_and_local(configuration)
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"], configuration["interface"], _port(), timeout=60
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        plan = t2_identity_delete.plan(local, live, slot=slot)
+    return {
+        "schema_version": 1,
+        "delete_preflight_succeeded": True,
+        "mutation_performed": False,
+        "slot": slot,
+        "name": plan.name,
+        "identity_count_before": len(local.identities),
+        "identity_count_after": len(local.identities) - 1,
+        "last_identity_deletion_refused": True,
+        "post_reboot_verification_required_after_delete": True,
+        "selection_scope": "current-reconciled-list",
+        "identifiers_redacted": True,
+    }
+
+
 def run_post_reboot_verification(
     configuration: dict[str, object]
 ) -> dict[str, object]:
@@ -1100,6 +1135,10 @@ def main() -> int:
     delete.add_argument(
         "--acknowledge-local-catacomb-persistence", action="store_true"
     )
+    plan_delete = subparsers.add_parser(
+        "plan-delete", help="validate one deletion target without mutating it"
+    )
+    plan_delete.add_argument("--slot", type=int, required=True)
     subparsers.add_parser(
         "verify-post-reboot", help="verify a reconciled rename after reboot"
     )
@@ -1159,6 +1198,8 @@ def main() -> int:
             elif args.command == "recover-delete":
                 with sleep_inhibitor():
                     result = run_delete_recovery(configuration)
+            elif args.command == "plan-delete":
+                result = run_delete_preflight(configuration, slot=args.slot)
             elif args.command == "delete":
                 with sleep_inhibitor():
                     result = run_delete(configuration, slot=args.slot)

@@ -285,10 +285,18 @@ Any third or ambiguous state remains blocked.
 Single deletion is irreversible in SEP and its first Linux hardware test has
 not yet been performed. Back up the private Catacomb, confirm password fallback
 works, and list the current reconciled slots immediately before selecting one.
-The command refuses to delete the last identity:
+First run the read-only preflight. It opens a fresh stable Bridge inventory and
+resolves the slot, but creates no mutation journal and sends no delete command:
 
 ```sh
 sudo t2-touchid-identities
+sudo t2-touchid-manage plan-delete --slot 2
+```
+
+Review its label and before/after counts. The mutating command separately
+requires both acknowledgements and refuses to delete the last identity:
+
+```sh
 sudo t2-touchid-manage delete \
   --slot 2 \
   --acknowledge-fingerprint-deletion \

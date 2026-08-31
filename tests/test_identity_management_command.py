@@ -228,6 +228,57 @@ class IdentityManagementCommandTests(unittest.TestCase):
         self.assertTrue(result["delete_succeeded"])
         self.assertEqual(result["identity_count"], 1)
 
+    def test_delete_preflight_resolves_target_without_creating_mutation(self):
+        generation = "00000000-0000-0000-0000-000000000333"
+        configuration = {
+            "apple_uid": 501,
+            "special_bag": -501,
+            "host": "host",
+            "interface": "interface",
+        }
+        local = SimpleNamespace(identities=(object(), object()))
+        plan = SimpleNamespace(name="Linux enrolled finger")
+        lease = SimpleNamespace(connection_generation=generation)
+        lease_context = mock.MagicMock()
+        lease_context.__enter__.return_value = lease
+        lease_context.__exit__.return_value = False
+        with (
+            mock.patch.object(
+                MODULE.t2_mutation_registry,
+                "blocks_new_mutation",
+                return_value=False,
+            ),
+            mock.patch.object(MODULE.os.path, "lexists", return_value=False),
+            mock.patch.object(MODULE, "keybag_runtime"),
+            mock.patch.object(
+                MODULE,
+                "current_host_and_local",
+                return_value=(object(), {}, local, Path("backup")),
+            ),
+            mock.patch.object(MODULE, "_port", return_value=55555),
+            mock.patch.object(
+                MODULE.t2_bridge_connection.BridgeConnectionLease,
+                "connect",
+                return_value=lease_context,
+            ),
+            mock.patch.object(
+                MODULE.t2_bridge_inventory,
+                "collect_stable_private_inventory",
+                return_value={},
+            ),
+            mock.patch.object(
+                MODULE.t2_identity_delete, "plan", return_value=plan
+            ) as planner,
+            mock.patch.object(MODULE.t2_mutation_journal, "create") as create,
+        ):
+            result = MODULE.run_delete_preflight(configuration, slot=2)
+        planner.assert_called_once_with(local, {}, slot=2)
+        create.assert_not_called()
+        self.assertTrue(result["delete_preflight_succeeded"])
+        self.assertFalse(result["mutation_performed"])
+        self.assertEqual(result["name"], "Linux enrolled finger")
+        self.assertEqual(result["identity_count_after"], 1)
+
     def test_post_reboot_requires_exactly_one_candidate(self):
         with mock.patch.object(MODULE, "rename_journals", return_value=[]):
             with self.assertRaisesRegex(

@@ -89,6 +89,9 @@ is never sufficient evidence: a stable same-connection per-user/global
 inventory must prove either exact target absence or, after a failed command,
 an exact unchanged baseline. Proven absence is followed by a user-component
 only Catacomb save, independent read-back, and a different-boot verification.
+The companion `plan-delete --slot N` runs the same reconciled target planner
+but does not create a journal, dispatch `0x0d`, or write a Catacomb component.
+It reports only the selected label and before/after counts.
 
 Deletion recovery never replays command `0x0d`. It records the local
 transaction direction before resolving it and uses a fresh Bridge generation
