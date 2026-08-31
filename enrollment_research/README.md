@@ -132,6 +132,13 @@ with a terminal secure-state hash advance, unchanged mapping/account/keybag
 bindings, and no removal. The journal binds persistence
 to that fresh recovery connection before any Catacomb mutation. Every other
 delta remains manual and fail-closed.
+If a Catacomb confirm reply is lost or locally rejected, recovery does not
+blindly replay it. For the proven early-confirm case it requires the staged
+file to match the journal and a fresh state read to show that component clean
+with the next required component still dirty. Only then can persistence resume
+at the following component on the fresh connection. The bridge's exact nil
+sentinel is valid for zero-capacity confirm replies, but never for prepare or
+complete replies that requested output bytes.
 After a successful mutation, the Linux-local Catacomb—not the older copied
 macOS archive—is the current host baseline for a later enrollment. The archive
 remains the immutable recovery reference; opening advanced local state requires

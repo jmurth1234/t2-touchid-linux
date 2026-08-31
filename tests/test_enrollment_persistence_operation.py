@@ -211,6 +211,51 @@ class PersistenceOperationTests(unittest.TestCase):
         self.assertFalse((self.root / "prepare").exists())
         self.assertFalse((self.root / "commit").exists())
 
+    def test_operation_resumes_after_fresh_readback_proves_early_confirm(self):
+        with self.assertRaisesRegex(operation.PersistenceOperationError, "early-confirm"):
+            operation.run(
+                self.journal,
+                self.operation_id,
+                batches=self.specs,
+                transport=FakeTransport(fail_confirm=True),
+                encoder=self.encode,
+                store=store_module.CatacombStore(self.root, 501),
+                readback=self.readback,
+            )
+        history = enrollment.read(self.journal)
+        name, descriptor_sha256 = history.persistence.batches[0][0]
+        staged = dict(history.persistence.staged_files)
+        recovery_generation = str(uuid.UUID(int=99))
+        enrollment.append_checked(
+            self.journal,
+            self.operation_id,
+            "CATACOMB_EARLY_CONFIRM_RECOVERED",
+            {
+                "connection_generation": recovery_generation,
+                "batch_index": 0,
+                "component_index": 0,
+                "name": name,
+                "descriptor_sha256": descriptor_sha256,
+                "sep_component_clean": True,
+                "staged_file_sha256": staged[name],
+            },
+        )
+        transport = FakeTransport()
+        result = operation.run(
+            self.journal,
+            self.operation_id,
+            batches=self.specs,
+            transport=transport,
+            encoder=self.encode,
+            store=store_module.CatacombStore(self.root, 501),
+            readback=self.readback,
+        )
+        self.assertEqual(result.phase, enrollment.EnrollmentPhase.PERSISTENCE_READY)
+        self.assertEqual(
+            transport.calls[0],
+            ("prepare", self.specs[0][1].descriptor),
+        )
+
     def test_operation_composes_with_generation_pinned_bridge_adapter(self):
         generation = baseline()["connection_generation"]
         lease = FakeBridgeLease(generation)

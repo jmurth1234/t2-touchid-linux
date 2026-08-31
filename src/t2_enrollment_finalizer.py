@@ -17,11 +17,13 @@ import t2_bridge_inventory
 import t2_biolockout_protocol
 import t2_catacomb_bridge
 import t2_catacomb_codec
+import t2_catacomb_protocol
 import t2_catacomb_store
 import t2_enrollment_coordinator
 import t2_enrollment_journal
 import t2_enrollment_operation
 import t2_enrollment_persistence_bridge
+import t2_enrollment_persistence_journal
 import t2_enrollment_persistence_operation
 import t2_enrollment_reconciliation
 
@@ -51,9 +53,24 @@ def _next_entity(entities: set[int]) -> int:
 def read_local_host_snapshot(
     store: t2_catacomb_store.CatacombStore,
     baseline: dict[str, object],
+    *,
+    prepared_expected_names: set[str] | None = None,
+    prepared_expected_hashes: dict[str, str] | None = None,
 ) -> dict[str, object]:
     """Read the Linux-local store through both strict codecs and pinned metadata."""
-    components = store.read_committed_components()
+    if prepared_expected_names is None and prepared_expected_hashes is None:
+        components = store.read_committed_components()
+    elif (
+        isinstance(prepared_expected_names, set)
+        and isinstance(prepared_expected_hashes, dict)
+    ):
+        components = store.read_committed_components_during_prepare(
+            prepared_expected_names, prepared_expected_hashes
+        )
+    else:
+        raise EnrollmentFinalizerError(
+            "prepared host snapshot expectations are incomplete"
+        )
     apple_user_id = baseline.get("apple_uid")
     if type(apple_user_id) is not int:
         raise EnrollmentFinalizerError("baseline Apple user ID is invalid")
@@ -270,11 +287,24 @@ class BuiltinEnrollmentFinalizer:
         identity_uuid = history.terminal_identity_uuid
         if identity_uuid is None:
             raise EnrollmentFinalizerError("provisional identity UUID is absent")
-        components = t2_catacomb_bridge.collect_builtin_save_components(
-            self.lease,
-            apple_user_id=self.apple_user_id,
-            connection_generation=self.connection_generation,
+        resuming_confirmed_component = (
+            history.persistence.phase
+            is t2_enrollment_persistence_journal.PersistencePhase.COMPONENT_READY
+            and history.persistence.batch_index == 0
+            and history.persistence.component_index == 1
+            and bool(history.persistence.staged_files)
         )
+        if resuming_confirmed_component:
+            components = (
+                t2_catacomb_protocol.CatacombComponent.user(self.apple_user_id),
+                t2_catacomb_protocol.CatacombComponent.master(),
+            )
+        else:
+            components = t2_catacomb_bridge.collect_builtin_save_components(
+                self.lease,
+                apple_user_id=self.apple_user_id,
+                connection_generation=self.connection_generation,
+            )
         batches = (
             (
                 t2_enrollment_persistence_operation.ComponentSpec(
@@ -292,7 +322,13 @@ class BuiltinEnrollmentFinalizer:
             ),
         )
 
-        committed = self.store.read_committed_components()
+        if resuming_confirmed_component:
+            committed = self.store.read_committed_components_during_prepare(
+                {name for name, _digest in history.persistence.batches[0]},
+                dict(history.persistence.staged_files),
+            )
+        else:
+            committed = self.store.read_committed_components()
         user_name = f"user_{self.apple_user_id:08x}.cat"
         old_user = t2_catacomb_codec.decode_user_catacomb(
             committed[user_name], self.apple_user_id

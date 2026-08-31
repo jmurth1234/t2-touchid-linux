@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 import t2_enrollment_journal as enrollment_journal
+import t2_enrollment_persistence_journal as persistence_journal
 import t2_mutation_journal as mutation_journal
 import t2_catacomb_protocol as catacomb_protocol
 import t2_biolockout_protocol as biolockout_protocol
@@ -201,31 +202,63 @@ def run(
         raise PersistenceOperationError("operation ID differs from journal")
     _validate_components(history, batches)
     generation = history.persistence_connection_generation
-    _append(
-        path,
-        operation_id,
-        "CATACOMB_PERSISTENCE_PLAN",
-        {
-            "connection_generation": generation,
-            "batches": [
-                [
-                    {
-                        "name": component.name,
-                        "descriptor_sha256": component.descriptor_sha256,
-                    }
-                    for component in batch
-                ]
-                for batch in batches
-            ],
-        },
+    planned = tuple(
+        tuple((component.name, component.descriptor_sha256) for component in batch)
+        for batch in batches
     )
+    if history.persistence.phase is persistence_journal.PersistencePhase.NOT_STARTED:
+        _append(
+            path,
+            operation_id,
+            "CATACOMB_PERSISTENCE_PLAN",
+            {
+                "connection_generation": generation,
+                "batches": [
+                    [
+                        {
+                            "name": component.name,
+                            "descriptor_sha256": component.descriptor_sha256,
+                        }
+                        for component in batch
+                    ]
+                    for batch in batches
+                ],
+            },
+        )
+        start_batch = 0
+        start_component = 0
+        initial_staged: dict[str, str] = {}
+    elif (
+        history.persistence.phase
+        is persistence_journal.PersistencePhase.COMPONENT_READY
+        and history.persistence.batches == planned
+        and history.persistence.batch_index is not None
+        and history.persistence.component_index is not None
+    ):
+        start_batch = history.persistence.batch_index
+        start_component = history.persistence.component_index
+        initial_staged = dict(history.persistence.staged_files)
+        if start_component == 0 or not initial_staged:
+            raise PersistenceOperationError(
+                "persistence resume has no confirmed staged component"
+            )
+    else:
+        raise PersistenceOperationError("persistence journal is not startable")
 
     final_reference: dict[str, object] | None = None
-    for batch_index, batch in enumerate(batches):
+    for batch_index in range(start_batch, len(batches)):
+        batch = batches[batch_index]
         expected_names = {component.name for component in batch}
-        store.begin_stage(expected_names)
-        staged: dict[str, str] = {}
-        for component_index, component in enumerate(batch):
+        resuming_batch = batch_index == start_batch and start_component > 0
+        if resuming_batch:
+            staged = dict(initial_staged)
+            component_start = start_component
+        else:
+            store.begin_stage(expected_names)
+            staged = {}
+            component_start = 0
+        for component_index in range(component_start, len(batch)):
+            component = batch[component_index]
             reference = _reference(
                 history, batch_index, component_index, component
             )

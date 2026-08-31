@@ -5500,6 +5500,19 @@ single stable-readback UUID and complete persistence on a fresh, durably bound
 Bridge generation. The terminal-event field discrepancy remains under
 investigation; it is not weakened into unconditional acceptance.
 
+The first recovery persistence attempt then reached user-component confirm and
+received the bridge's exact nil-output sentinel. The adapter had incorrectly
+required byte data even though confirm advertises zero output capacity; this
+created a durable early-confirm ambiguity with one journal-bound user archive
+still in the rollback-only `prepare/` directory. A fresh state read proved the
+confirm had succeeded: the selected user component was clean while master
+remained dirty. Recovery therefore retains and validates the staged user file,
+binds the remaining work to another fresh generation, resumes at master rather
+than replaying user confirm, and then continues the normal host commit,
+bio-lockout, and independent read-back sequence. Zero-capacity Catacomb confirm
+now accepts only the exact bridge nil sentinel or empty bytes; commands with a
+nonzero output capacity still reject it.
+
 Two subsequent approved attempts exercised repeated lift/place capture and
 reported real progress at 20% and 22%. The second stopped during a quiet scan
 interval with a service-event receive failure. This isolated a host transport

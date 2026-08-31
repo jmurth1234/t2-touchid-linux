@@ -46,6 +46,8 @@ class PersistenceHistory:
     reconciliation_snapshot_sha256: str | None
     sep_host_generation_equal: bool
     independent_archive_readback: bool
+    outcome_unknown_stage: str | None
+    outcome_unknown_host_commit_possible: bool | None
 
 
 def _exact(value: Any, keys: set[str], field: str) -> dict[str, Any]:
@@ -100,6 +102,8 @@ class PersistenceTracker:
         self.reconciliation_snapshot_sha256: str | None = None
         self.sep_host_generation_equal = False
         self.independent_archive_readback = False
+        self._outcome_unknown_stage: str | None = None
+        self._outcome_unknown_host_commit_possible: bool | None = None
 
     def snapshot(self) -> PersistenceHistory:
         return PersistenceHistory(
@@ -111,6 +115,8 @@ class PersistenceTracker:
             self.reconciliation_snapshot_sha256,
             self.sep_host_generation_equal,
             self.independent_archive_readback,
+            self._outcome_unknown_stage,
+            self._outcome_unknown_host_commit_possible,
         )
 
     def _same_generation(self, evidence: dict[str, Any]) -> None:
@@ -287,6 +293,67 @@ class PersistenceTracker:
     ) -> bool:
         if not isinstance(milestone, str) or not milestone.startswith("CATACOMB_"):
             return False
+        if milestone == "CATACOMB_EARLY_CONFIRM_RECOVERED":
+            if (
+                self.phase is not PersistencePhase.OUTCOME_UNKNOWN
+                or self._outcome_unknown_stage != "early-confirm"
+                or self._outcome_unknown_host_commit_possible is not False
+            ):
+                raise PersistenceJournalError(
+                    "early Catacomb confirm recovery is out of order"
+                )
+            evidence = _exact(
+                value,
+                {
+                    "connection_generation",
+                    "batch_index",
+                    "component_index",
+                    "name",
+                    "descriptor_sha256",
+                    "sep_component_clean",
+                    "staged_file_sha256",
+                },
+                milestone,
+            )
+            connection_generation = evidence["connection_generation"]
+            try:
+                journal.require_uuid(
+                    connection_generation, "recovery connection generation"
+                )
+            except journal.JournalError as error:
+                raise PersistenceJournalError(str(error)) from error
+            if connection_generation == self._connection_generation:
+                raise PersistenceJournalError(
+                    "early confirm recovery reused the ambiguous connection"
+                )
+            batch_index = _uint(evidence["batch_index"], "batch index")
+            component_index = _uint(
+                evidence["component_index"], "component index"
+            )
+            name, descriptor_sha256 = self._current()
+            if (
+                batch_index != self.batch_index
+                or component_index != self.component_index
+                or evidence["name"] != name
+                or evidence["descriptor_sha256"] != descriptor_sha256
+                or evidence["sep_component_clean"] is not True
+                or evidence["staged_file_sha256"] != self._staged.get(name)
+            ):
+                raise PersistenceJournalError(
+                    "early confirm recovery evidence differs from the journal"
+                )
+            self._connection_generation = connection_generation
+            self.component_index += 1
+            if self.component_index >= len(self.batches[self.batch_index]):
+                raise PersistenceJournalError(
+                    "early confirm recovery has no following component"
+                )
+            self._captured_blob_sha256 = None
+            self._expected_blob_length = None
+            self._outcome_unknown_stage = None
+            self._outcome_unknown_host_commit_possible = None
+            self.phase = PersistencePhase.COMPONENT_READY
+            return True
         if milestone == "CATACOMB_PERSISTENCE_PLAN":
             self._plan(
                 value,
@@ -342,6 +409,10 @@ class PersistenceTracker:
                 raise PersistenceJournalError(
                     "persistence ambiguity flags are invalid"
                 )
+            self._outcome_unknown_stage = evidence["stage"]
+            self._outcome_unknown_host_commit_possible = evidence[
+                "host_commit_possible"
+            ]
             self.phase = PersistencePhase.OUTCOME_UNKNOWN
             return True
 

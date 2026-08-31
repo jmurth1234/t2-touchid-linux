@@ -433,13 +433,21 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             failure_biolockout_persistence = (
                 terminal_identity_uuid is None and terminal_status is not None
             )
+            early_confirm_recovery = (
+                milestone == "CATACOMB_EARLY_CONFIRM_RECOVERED"
+                and phase is EnrollmentPhase.OUTCOME_UNKNOWN
+                and identity_persistence
+            )
             if (
                 not identity_persistence
                 and not failure_biolockout_persistence
-            ) or phase not in (
-                EnrollmentPhase.TERMINAL_IDENTITY,
-                EnrollmentPhase.TERMINAL_FAILURE,
-                EnrollmentPhase.PERSISTING,
+            ) or (
+                not early_confirm_recovery
+                and phase not in (
+                    EnrollmentPhase.TERMINAL_IDENTITY,
+                    EnrollmentPhase.TERMINAL_FAILURE,
+                    EnrollmentPhase.PERSISTING,
+                )
             ):
                 raise EnrollmentJournalError(
                     "Catacomb persistence has no terminal identity or failure"
@@ -452,6 +460,10 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
                 )
             except persistence_journal.PersistenceJournalError as error:
                 raise EnrollmentJournalError(str(error)) from error
+            if early_confirm_recovery:
+                persistence_connection_generation = evidence[
+                    "connection_generation"
+                ]
             phase = (
                 EnrollmentPhase.PERSISTENCE_READY
                 if persistence.phase is persistence_journal.PersistencePhase.COMPLETE
@@ -459,7 +471,11 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
                     EnrollmentPhase.OUTCOME_UNKNOWN
                     if persistence.phase
                     is persistence_journal.PersistencePhase.OUTCOME_UNKNOWN
-                    else EnrollmentPhase.PERSISTING
+                    else (
+                        EnrollmentPhase.TERMINAL_IDENTITY
+                        if early_confirm_recovery
+                        else EnrollmentPhase.PERSISTING
+                    )
                 )
             )
             continue

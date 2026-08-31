@@ -14,6 +14,7 @@ from enum import Enum
 from typing import Protocol
 
 import t2_catacomb_protocol as protocol
+import t2_bridge_wire as wire
 
 
 class CatacombBridgeError(RuntimeError):
@@ -200,6 +201,8 @@ class CatacombBridgeTransport:
             status, output = reply
             if type(status) is not int or not -(2**31) <= status < 2**32:
                 raise CatacombBridgeError("Bridge command status is malformed")
+            if request.output_capacity == 0 and wire.is_biometric_nil_output(output):
+                output = b""
             if type(output) is not bytes:
                 raise CatacombBridgeError("Bridge command output is not byte data")
             if len(output) > request.output_capacity:

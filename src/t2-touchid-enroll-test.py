@@ -621,23 +621,85 @@ def run_observed_identity_recovery(
         live = t2_bridge_inventory.collect_stable_private_inventory(
             lease, configuration["apple_uid"]
         )
-        host = t2_enrollment_finalizer.read_local_host_snapshot(
-            store, history.baseline
+        persistence = history.persistence
+        resuming_early_confirm = (
+            persistence.phase
+            is t2_enrollment_persistence_journal.PersistencePhase.OUTCOME_UNKNOWN
+            and persistence.outcome_unknown_stage == "early-confirm"
+            and persistence.outcome_unknown_host_commit_possible is False
+            and persistence.batch_index == 0
+            and persistence.component_index == 0
+            and len(persistence.staged_files) == 1
         )
-        recovery = (
-            t2_enrollment_reconciliation.classify_observed_identity_recovery(
+        if resuming_early_confirm:
+            expected_names = {
+                name for name, _digest in persistence.batches[0]
+            }
+            expected_hashes = dict(persistence.staged_files)
+            host = t2_enrollment_finalizer.read_local_host_snapshot(
+                store,
+                history.baseline,
+                prepared_expected_names=expected_names,
+                prepared_expected_hashes=expected_hashes,
+            )
+        else:
+            host = t2_enrollment_finalizer.read_local_host_snapshot(
+                store, history.baseline
+            )
+        recovery = t2_enrollment_reconciliation.classify_observed_identity_recovery(
                 history,
                 host=host,
                 live=live,
                 mapping_generation=configuration["mapping_generation"],
             )
-        )
-        recovered = t2_enrollment_journal.append_checked(
-            journal_path,
-            history.operation_id,
-            "E2_RECOVERY_IDENTITY_READBACK_OBSERVED",
-            recovery.evidence,
-        )
+        if resuming_early_confirm:
+            if recovery.identity_uuid != history.terminal_identity_uuid:
+                raise EnrollmentCommandError(
+                    "early-confirm recovery identity changed"
+                )
+            states = live["catacomb"]["user_states"]
+            selected_user = [
+                item
+                for item in states
+                if item["kind"] == "user"
+                and item["user_id"] == configuration["apple_uid"]
+            ]
+            dirty_non_master = [
+                item for item in states if item["kind"] != "master" and item["needs_save"]
+            ]
+            masters = [item for item in states if item["kind"] == "master"]
+            if (
+                len(selected_user) != 1
+                or selected_user[0]["needs_save"] is not False
+                or dirty_non_master
+                or len(masters) != 1
+                or masters[0]["needs_save"] is not True
+            ):
+                raise EnrollmentCommandError(
+                    "fresh Catacomb state does not prove the early confirm succeeded"
+                )
+            name, descriptor_sha256 = persistence.batches[0][0]
+            recovered = t2_enrollment_journal.append_checked(
+                journal_path,
+                history.operation_id,
+                "CATACOMB_EARLY_CONFIRM_RECOVERED",
+                {
+                    "connection_generation": lease.connection_generation,
+                    "batch_index": 0,
+                    "component_index": 0,
+                    "name": name,
+                    "descriptor_sha256": descriptor_sha256,
+                    "sep_component_clean": True,
+                    "staged_file_sha256": expected_hashes[name],
+                },
+            )
+        else:
+            recovered = t2_enrollment_journal.append_checked(
+                journal_path,
+                history.operation_id,
+                "E2_RECOVERY_IDENTITY_READBACK_OBSERVED",
+                recovery.evidence,
+            )
         if (
             recovered.phase
             is not t2_enrollment_journal.EnrollmentPhase.TERMINAL_IDENTITY

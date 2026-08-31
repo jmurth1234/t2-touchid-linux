@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import t2_catacomb_bridge as bridge
+import t2_bridge_wire as wire
 
 
 GENERATION = str(uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
@@ -234,6 +235,24 @@ class CatacombBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(bridge.CatacombBridgeError, "poisoned"):
             transport.confirm(bytes(24))
         self.assertEqual(len(lease.calls), 3)
+
+    def test_confirm_accepts_exact_bridge_nil_output_sentinel(self):
+        replies = success_replies()
+        replies[-1] = ([0, wire.BIOMETRIC_NIL_OUTPUT_SENTINEL], [])
+        transport = self.transport(FakeLease(replies))
+        transport.prepare(bytes(24))
+        transport.complete(bytes(24))
+        self.assertEqual(transport.confirm(bytes(24)), 0)
+        self.assertEqual(transport.state, bridge.TransactionState.IDLE)
+
+    def test_nil_output_sentinel_is_rejected_for_commands_with_capacity(self):
+        lease = FakeLease(
+            [([0, wire.BIOMETRIC_NIL_OUTPUT_SENTINEL], [])]
+        )
+        transport = self.transport(lease)
+        with self.assertRaisesRegex(bridge.CatacombBridgeError, "byte data"):
+            transport.prepare(bytes(24))
+        self.assertEqual(transport.state, bridge.TransactionState.POISONED)
 
     def test_constructor_rejects_stale_or_noncanonical_generation(self):
         lease = FakeLease([])

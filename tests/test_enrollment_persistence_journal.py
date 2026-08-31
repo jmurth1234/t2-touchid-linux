@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import t2_enrollment_journal as enrollment
+import t2_enrollment_persistence_journal as persistence_journal
 import t2_mutation_journal as mutation
 from tests.test_mutation_journal import baseline
 
@@ -293,6 +294,92 @@ class EnrollmentPersistenceJournalTests(unittest.TestCase):
             )
         self.assertEqual(result.phase, enrollment.EnrollmentPhase.PERSISTENCE_READY)
         self.assertEqual(len(result.persistence.batches), 2)
+
+    def test_ambiguous_early_confirm_can_resume_only_from_fresh_clean_readback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, operation_id = self.create_identity(directory)
+            generation = baseline()["connection_generation"]
+            user = component_ref(0, 0, "user_000001f5.cat", "1" * 64)
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_PERSISTENCE_PLAN",
+                {
+                    "connection_generation": generation,
+                    "batches": [
+                        [
+                            {"name": "user_000001f5.cat", "descriptor_sha256": "1" * 64},
+                            {"name": "master.cat", "descriptor_sha256": "2" * 64},
+                        ],
+                        [{"name": "biolockout.cat", "descriptor_sha256": "3" * 64}],
+                    ],
+                },
+            )
+            enrollment.append_checked(path, operation_id, "CATACOMB_PREPARE_INTENT", user)
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_PREPARED",
+                {**user, "status": 0, "expected_blob_length": 32},
+            )
+            enrollment.append_checked(path, operation_id, "CATACOMB_COMPLETE_INTENT", user)
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_SECURE_BLOB_CAPTURED",
+                {
+                    **user,
+                    "status": 0,
+                    "blob_length": 32,
+                    "secure_blob_sha256": "4" * 64,
+                },
+            )
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_HOST_STAGED",
+                {
+                    **user,
+                    "secure_blob_sha256": "4" * 64,
+                    "final_file_sha256": "7" * 64,
+                },
+            )
+            enrollment.append_checked(path, operation_id, "CATACOMB_CONFIRM_INTENT", user)
+            enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_PERSISTENCE_OUTCOME_UNKNOWN",
+                {
+                    **user,
+                    "stage": "early-confirm",
+                    "reason": "transport-error",
+                    "sep_mutation_possible": True,
+                    "host_commit_possible": False,
+                },
+            )
+            recovery_generation = str(uuid.UUID(int=99))
+            result = enrollment.append_checked(
+                path,
+                operation_id,
+                "CATACOMB_EARLY_CONFIRM_RECOVERED",
+                {
+                    **user,
+                    "connection_generation": recovery_generation,
+                    "sep_component_clean": True,
+                    "staged_file_sha256": "7" * 64,
+                },
+            )
+            self.assertEqual(
+                result.phase, enrollment.EnrollmentPhase.TERMINAL_IDENTITY
+            )
+            self.assertEqual(
+                result.persistence.phase,
+                persistence_journal.PersistencePhase.COMPONENT_READY,
+            )
+            self.assertEqual(result.persistence.component_index, 1)
+            self.assertEqual(
+                result.persistence_connection_generation, recovery_generation
+            )
 
     def test_terminal_failure_allows_only_one_biolockout_batch(self):
         generation = baseline()["connection_generation"]

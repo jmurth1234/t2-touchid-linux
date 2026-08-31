@@ -181,14 +181,7 @@ class CatacombStore:
         finally:
             os.close(descriptor)
 
-    def read_committed_components(self) -> dict[str, bytes]:
-        """Read and independently validate the complete committed local set."""
-        if os.path.lexists(self.root / "prepare") or os.path.lexists(
-            self.root / "commit"
-        ):
-            raise CatacombStoreError(
-                "Catacomb transaction is incomplete; recovery is required"
-            )
+    def _read_root_components(self) -> dict[str, bytes]:
         components: dict[str, bytes] = {}
         for name in sorted(self.allowed_names):
             data = self._read_regular(self.root / name)
@@ -200,6 +193,41 @@ class CatacombStore:
                 ) from error
             components[name] = data
         return components
+
+    def read_committed_components(self) -> dict[str, bytes]:
+        """Read and independently validate the complete committed local set."""
+        if os.path.lexists(self.root / "prepare") or os.path.lexists(
+            self.root / "commit"
+        ):
+            raise CatacombStoreError(
+                "Catacomb transaction is incomplete; recovery is required"
+            )
+        return self._read_root_components()
+
+    def read_committed_components_during_prepare(
+        self,
+        expected_names: set[str],
+        expected_hashes: dict[str, str],
+    ) -> dict[str, bytes]:
+        """Read the old root after proving one journal-bound partial prepare."""
+        if (
+            not expected_names
+            or not expected_names <= self.allowed_names
+            or not expected_hashes
+            or not set(expected_hashes) < expected_names
+            or os.path.lexists(self.root / "commit")
+        ):
+            raise CatacombStoreError("prepared root read expectation is invalid")
+        prepare = self.root / "prepare"
+        names = self._directory_entries(prepare)
+        if names != set(expected_hashes):
+            raise CatacombStoreError("prepared root read differs from journal")
+        for name in sorted(names):
+            data = self._read_regular(prepare / name)
+            if sha256(data) != expected_hashes[name]:
+                raise CatacombStoreError(f"prepare hash mismatch for {name}")
+            validate_component(name, data, self.apple_uid)
+        return self._read_root_components()
 
     def _directory_entries(self, path: Path) -> set[str]:
         self._require_private_directory(path)
