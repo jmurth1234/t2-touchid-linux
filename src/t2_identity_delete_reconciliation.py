@@ -84,7 +84,8 @@ def classify(
         or history.target_entity != plan.entity
         or history.survivor_snapshot_sha256 != plan.survivor_snapshot_sha256
         or baseline["apple_uid"] != plan.apple_user_id
-        or live.get("connection_generation") != baseline["connection_generation"]
+        or live.get("connection_generation")
+        != history.persistence_connection_generation
         or mapping_generation != baseline["mapping_generation"]
     ):
         raise IdentityDeleteReconciliationError("delete read-back binding changed")
@@ -238,7 +239,8 @@ def verify_post_reboot(
         raise IdentityDeleteReconciliationError(str(error)) from error
     if (
         linux_boot_uuid == baseline["linux_boot_uuid"]
-        or live.get("connection_generation") == baseline["connection_generation"]
+        or live.get("connection_generation")
+        == history.reconciled_connection_generation
         or mapping_generation != baseline["mapping_generation"]
         or local.expected_user_id != baseline["apple_uid"]
     ):

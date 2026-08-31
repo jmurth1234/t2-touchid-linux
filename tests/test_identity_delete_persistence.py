@@ -145,7 +145,8 @@ class IdentityDeletePersistenceTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def execute(self, transport=None, store=None, readback=None):
+    def execute(self, transport=None, store=None, readback=None, generation=None):
+        generation = generation or self.value["connection_generation"]
         return persistence.run(
             self.path,
             self.operation_id,
@@ -155,7 +156,7 @@ class IdentityDeletePersistenceTests(unittest.TestCase):
             mapping_generation=self.value["mapping_generation"],
             readback=readback
             or (lambda: persistence.DeleteReadbackAttestation(
-                connection_generation=self.value["connection_generation"],
+                connection_generation=generation,
                 snapshot_sha256="8" * 64,
                 identity_count=1,
             )),
@@ -171,6 +172,41 @@ class IdentityDeletePersistenceTests(unittest.TestCase):
         decoded = codec.decode_user_catacomb(store.committed, 501)
         self.assertEqual(decoded.identities, (self.local.identities[0],))
         self.assertEqual(decoded.secure_data, b"LTFC" + b"z" * 28)
+
+    def test_forward_recovery_uses_its_fresh_connection_generation(self):
+        generation = str(uuid.UUID(int=9301))
+        journal.append_checked(
+            self.path,
+            self.operation_id,
+            "DELETE_RECOVERY_INTENT",
+            {
+                "action": "prepare-discarded",
+                "mapping_generation": self.value["mapping_generation"],
+                "host_commit_possible": False,
+                "mutation_possible": True,
+            },
+        )
+        journal.append_checked(
+            self.path,
+            self.operation_id,
+            "DELETE_RECOVERY_SEP_ABSENCE_OBSERVED",
+            {
+                "connection_generation": generation,
+                "identity_uuid": self.plan.identity_uuid,
+                "survivor_snapshot_sha256": self.plan.survivor_snapshot_sha256,
+                "survivor_count": 1,
+                "mapping_generation": self.value["mapping_generation"],
+                "target_absent": True,
+                "local_baseline_equal": True,
+                "host_baseline_equal": True,
+                "sep_clean": True,
+                "stable_double_read": True,
+                "recovery_action": "prepare-discarded",
+            },
+        )
+        result = self.execute(generation=generation)
+        self.assertEqual(result.phase, journal.IdentityDeletePhase.RECONCILED)
+        self.assertEqual(result.reconciled_connection_generation, generation)
 
     def test_every_post_sep_failure_freezes_without_claiming_rollback(self):
         cases = (

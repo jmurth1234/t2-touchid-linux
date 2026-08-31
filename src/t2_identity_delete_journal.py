@@ -43,7 +43,10 @@ class IdentityDeleteHistory:
     command_status: int | None
     persistence: persistence_journal.PersistenceHistory
     reconciled_snapshot_sha256: str | None
+    reconciled_connection_generation: str | None
     outcome_unknown_stage: str | None
+    recovery_action: str | None
+    persistence_connection_generation: str
     record_count: int
     head_hash: str
 
@@ -94,7 +97,10 @@ def validate_history(records: list[dict[str, Any]]) -> IdentityDeleteHistory:
     survivor_hash = None
     command_status = None
     reconciled_hash = None
+    reconciled_generation = None
     outcome_stage = None
+    recovery_action = None
+    persistence_connection_generation = baseline["connection_generation"]
     persistence = persistence_journal.PersistenceTracker(
         baseline, plan_kind="identity-metadata"
     )
@@ -316,6 +322,187 @@ def validate_history(records: list[dict[str, Any]]) -> IdentityDeleteHistory:
             phase = IdentityDeletePhase.OUTCOME_UNKNOWN
             continue
 
+        if milestone == "DELETE_RECOVERY_INTENT":
+            if phase not in {
+                IdentityDeletePhase.INTENT,
+                IdentityDeletePhase.DISPATCH_INTENT,
+                IdentityDeletePhase.COMMAND_OBSERVED,
+                IdentityDeletePhase.SEP_DELETED,
+                IdentityDeletePhase.PERSISTING,
+                IdentityDeletePhase.PERSISTENCE_READY,
+                IdentityDeletePhase.OUTCOME_UNKNOWN,
+            } or recovery_action is not None:
+                raise IdentityDeleteJournalError(
+                    "delete recovery intent is out of order"
+                )
+            evidence = _exact(
+                evidence,
+                {
+                    "action",
+                    "mapping_generation",
+                    "host_commit_possible",
+                    "mutation_possible",
+                },
+                milestone,
+            )
+            action = evidence["action"]
+            if action not in {
+                "prepare-discarded",
+                "commit-rolled-forward",
+                "no-local-transaction",
+            }:
+                raise IdentityDeleteJournalError(
+                    "delete recovery action is invalid"
+                )
+            _sha256(evidence["mapping_generation"], "mapping generation")
+            if (
+                evidence["mapping_generation"] != baseline["mapping_generation"]
+                or evidence["mutation_possible"] is not True
+                or evidence["host_commit_possible"]
+                != (action != "prepare-discarded")
+            ):
+                raise IdentityDeleteJournalError(
+                    "delete recovery binding is invalid"
+                )
+            recovery_action = action
+            phase = IdentityDeletePhase.OUTCOME_UNKNOWN
+            continue
+
+        if milestone == "DELETE_RECOVERY_SEP_ABSENCE_OBSERVED":
+            if (
+                phase is not IdentityDeletePhase.OUTCOME_UNKNOWN
+                or recovery_action is None
+                or target_uuid is None
+            ):
+                raise IdentityDeleteJournalError(
+                    "delete forward recovery is out of order"
+                )
+            evidence = _exact(
+                evidence,
+                {
+                    "connection_generation",
+                    "identity_uuid",
+                    "survivor_snapshot_sha256",
+                    "survivor_count",
+                    "mapping_generation",
+                    "target_absent",
+                    "local_baseline_equal",
+                    "host_baseline_equal",
+                    "sep_clean",
+                    "stable_double_read",
+                    "recovery_action",
+                },
+                milestone,
+            )
+            for field in ("connection_generation", "identity_uuid"):
+                _uuid(evidence[field], field)
+            for field in ("survivor_snapshot_sha256", "mapping_generation"):
+                _sha256(evidence[field], field)
+            if (
+                evidence["connection_generation"]
+                == baseline["connection_generation"]
+                or evidence["identity_uuid"] != target_uuid
+                or evidence["survivor_snapshot_sha256"] != survivor_hash
+                or evidence["survivor_count"]
+                != len(baseline["identity_records"]) - 1
+                or evidence["mapping_generation"] != baseline["mapping_generation"]
+                or evidence["recovery_action"] != recovery_action
+                or recovery_action == "commit-rolled-forward"
+                or any(
+                    evidence[field] is not True
+                    for field in (
+                        "target_absent",
+                        "local_baseline_equal",
+                        "host_baseline_equal",
+                        "sep_clean",
+                        "stable_double_read",
+                    )
+                )
+            ):
+                raise IdentityDeleteJournalError(
+                    "delete forward recovery evidence is invalid"
+                )
+            persistence = persistence_journal.PersistenceTracker(
+                baseline, plan_kind="identity-metadata"
+            )
+            try:
+                persistence.use_recovery_generation(
+                    evidence["connection_generation"]
+                )
+            except persistence_journal.PersistenceJournalError as error:
+                raise IdentityDeleteJournalError(str(error)) from error
+            persistence_connection_generation = evidence["connection_generation"]
+            outcome_stage = None
+            phase = IdentityDeletePhase.SEP_DELETED
+            continue
+
+        if milestone in {
+            "DELETE_RECOVERY_RECONCILED_NO_CHANGE",
+            "DELETE_RECOVERY_RECONCILED_COMMITTED",
+        }:
+            if (
+                phase is not IdentityDeletePhase.OUTCOME_UNKNOWN
+                or recovery_action is None
+                or target_uuid is None
+            ):
+                raise IdentityDeleteJournalError(
+                    "delete recovery reconciliation is out of order"
+                )
+            evidence = _exact(
+                evidence,
+                {
+                    "connection_generation",
+                    "identity_uuid",
+                    "snapshot_sha256",
+                    "mapping_generation",
+                    "identity_count",
+                    "target_absent",
+                    "local_live_equal",
+                    "host_reconciled",
+                    "sep_clean",
+                    "recovery_action",
+                },
+                milestone,
+            )
+            for field in ("connection_generation", "identity_uuid"):
+                _uuid(evidence[field], field)
+            for field in ("snapshot_sha256", "mapping_generation"):
+                _sha256(evidence[field], field)
+            committed = milestone.endswith("COMMITTED")
+            staged = dict(persistence.snapshot().staged_files)
+            user_name = f'user_{baseline["apple_uid"]:08x}.cat'
+            if (
+                evidence["connection_generation"]
+                == baseline["connection_generation"]
+                or evidence["identity_uuid"] != target_uuid
+                or evidence["mapping_generation"] != baseline["mapping_generation"]
+                or evidence["identity_count"]
+                != len(baseline["identity_records"]) - int(committed)
+                or evidence["target_absent"] is not committed
+                or evidence["local_live_equal"] is not True
+                or evidence["host_reconciled"] is not True
+                or evidence["sep_clean"] is not True
+                or evidence["recovery_action"] != recovery_action
+                or (committed and set(staged) != {user_name})
+            ):
+                raise IdentityDeleteJournalError(
+                    "delete recovery reconciliation is invalid"
+                )
+            if not committed and recovery_action == "commit-rolled-forward":
+                raise IdentityDeleteJournalError(
+                    "rolled-forward delete cannot reconcile as unchanged"
+                )
+            reconciled_hash = evidence["snapshot_sha256"] if committed else None
+            reconciled_generation = (
+                evidence["connection_generation"] if committed else None
+            )
+            phase = (
+                IdentityDeletePhase.RECONCILED
+                if committed
+                else IdentityDeletePhase.ABORTED
+            )
+            continue
+
         if isinstance(milestone, str) and milestone.startswith("CATACOMB_"):
             if phase not in {IdentityDeletePhase.SEP_DELETED, IdentityDeletePhase.PERSISTING}:
                 raise IdentityDeleteJournalError("delete persistence is out of order")
@@ -360,7 +547,7 @@ def validate_history(records: list[dict[str, Any]]) -> IdentityDeleteHistory:
                 _sha256(evidence[field], field)
             if (
                 evidence["connection_generation"]
-                != baseline["connection_generation"]
+                != persistence_connection_generation
                 or evidence["identity_uuid"] != target_uuid
                 or evidence["survivor_snapshot_sha256"] != survivor_hash
                 or evidence["mapping_generation"] != baseline["mapping_generation"]
@@ -378,6 +565,7 @@ def validate_history(records: list[dict[str, Any]]) -> IdentityDeleteHistory:
             ):
                 raise IdentityDeleteJournalError("delete reconciliation is invalid")
             reconciled_hash = evidence["snapshot_sha256"]
+            reconciled_generation = evidence["connection_generation"]
             phase = IdentityDeletePhase.RECONCILED
             continue
 
@@ -410,7 +598,7 @@ def validate_history(records: list[dict[str, Any]]) -> IdentityDeleteHistory:
             if (
                 evidence["linux_boot_uuid"] == baseline["linux_boot_uuid"]
                 or evidence["connection_generation"]
-                == baseline["connection_generation"]
+                == reconciled_generation
                 or evidence["identity_uuid"] != target_uuid
                 or evidence["survivor_snapshot_sha256"] != survivor_hash
                 or evidence["snapshot_sha256"] != reconciled_hash
@@ -439,7 +627,10 @@ def validate_history(records: list[dict[str, Any]]) -> IdentityDeleteHistory:
         command_status,
         persistence.snapshot(),
         reconciled_hash,
+        reconciled_generation,
         outcome_stage,
+        recovery_action,
+        persistence_connection_generation,
         len(records),
         head_hash,
     )

@@ -12,9 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import t2_catacomb_codec as codec
 import t2_catacomb_protocol
+import t2_enrollment_persistence_journal
 import t2_identity_delete as delete
 import t2_identity_delete_journal as journal
 import t2_identity_delete_reconciliation as reconciliation
+import t2_identity_delete_recovery as recovery
 import t2_mutation_journal as mutation
 from tests.test_catacomb_codec import fixture
 from tests.test_identity_delete_journal import delete_baseline
@@ -210,6 +212,56 @@ class IdentityDeleteReconciliationTests(unittest.TestCase):
             },
         )
 
+    def recovery_intent(self, *, action="no-local-transaction"):
+        self.append(
+            "DELETE_OUTCOME_UNKNOWN",
+            {
+                "connection_generation": self.value["connection_generation"],
+                "stage": "reconciliation",
+                "reason": "process-interrupted",
+                "mutation_possible": True,
+            },
+        )
+        return self.append(
+            "DELETE_RECOVERY_INTENT",
+            {
+                "action": action,
+                "mapping_generation": self.value["mapping_generation"],
+                "host_commit_possible": action != "prepare-discarded",
+                "mutation_possible": True,
+            },
+        )
+
+    def fresh_live(self, local, generation_int, *, catacomb_hash="4" * 64):
+        live = live_for(local)
+        live.update(
+            {
+                "connection_generation": str(uuid.UUID(int=generation_int)),
+                "catacomb": {
+                    "present": True,
+                    "uuid": self.value["sep_catacomb"]["uuid"],
+                    "hash": catacomb_hash,
+                    "user_states": [
+                        {"kind": "master", "user_id": None, "needs_save": False},
+                        {"kind": "user", "user_id": 501, "needs_save": False},
+                    ],
+                },
+            }
+        )
+        return live
+
+    def baseline_host(self):
+        return {
+            "account_uuid": self.before.account_uuid,
+            "bag_uuid": self.before.keybag_uuid,
+            "identity_records": [
+                {"user_id": item.user_id, "uuid": item.uuid, "entity": item.entity}
+                for item in self.before.identities
+            ],
+            "master_enrollment_count": self.value["master_enrollment_count"],
+            "host_components": copy.deepcopy(self.value["host_components"]),
+        }
+
     def test_post_reboot_verifier_proves_persistent_absence(self):
         history = self.reconciled_history()
         live = copy.deepcopy(self.live)
@@ -270,6 +322,76 @@ class IdentityDeleteReconciliationTests(unittest.TestCase):
                 linux_boot_uuid=str(uuid.UUID(int=9105)),
                 mapping_generation=self.value["mapping_generation"],
             )
+
+    def test_recovery_classifies_already_committed_delete(self):
+        history = self.recovery_intent()
+        observed = recovery.classify(
+            history,
+            local=self.after,
+            host=self.host,
+            live=self.fresh_live(self.after, 9201),
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(observed.outcome, "committed")
+        final = recovery.append_observed(
+            self.path,
+            self.operation_id,
+            observed,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(final.phase, journal.IdentityDeletePhase.RECONCILED)
+        self.assertEqual(
+            final.reconciled_connection_generation,
+            str(uuid.UUID(int=9201)),
+        )
+
+    def test_recovery_classifies_strict_no_change(self):
+        history = self.recovery_intent(action="prepare-discarded")
+        observed = recovery.classify(
+            history,
+            local=self.before,
+            host=self.baseline_host(),
+            live=self.fresh_live(
+                self.before,
+                9202,
+                catacomb_hash=self.value["sep_catacomb"]["hash"],
+            ),
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(observed.outcome, "no-change")
+        final = recovery.append_observed(
+            self.path,
+            self.operation_id,
+            observed,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(final.phase, journal.IdentityDeletePhase.ABORTED)
+
+    def test_recovery_routes_sep_only_delete_to_forward_persistence(self):
+        history = self.recovery_intent(action="prepare-discarded")
+        observed = recovery.classify(
+            history,
+            local=self.before,
+            host=self.baseline_host(),
+            live=self.fresh_live(self.after, 9203),
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(observed.outcome, "forward-required")
+        final = recovery.append_observed(
+            self.path,
+            self.operation_id,
+            observed,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(final.phase, journal.IdentityDeletePhase.SEP_DELETED)
+        self.assertEqual(
+            final.persistence_connection_generation,
+            str(uuid.UUID(int=9203)),
+        )
+        self.assertEqual(
+            final.persistence.phase,
+            t2_enrollment_persistence_journal.PersistencePhase.NOT_STARTED,
+        )
 
 
 if __name__ == "__main__":

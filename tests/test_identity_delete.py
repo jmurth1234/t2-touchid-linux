@@ -43,6 +43,11 @@ class IdentityDeleteTests(unittest.TestCase):
         with self.assertRaisesRegex(delete.IdentityDeleteError, "zero-identity"):
             delete.plan(one, live_for(one), slot=1)
 
+    def test_plan_target_rebuilds_the_same_journal_bound_plan(self):
+        selected = delete.plan(self.local, self.live, slot=2)
+        rebuilt = delete.plan_target(self.local, selected.identity_uuid)
+        self.assertEqual(rebuilt, selected)
+
     def test_secure_blob_binding_preserves_exact_survivors(self):
         value = delete.plan(self.local, self.live, slot=1)
         output = delete.bind_secure_blob(value, b"LTFC" + b"z" * 28)

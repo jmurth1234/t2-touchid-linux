@@ -62,41 +62,55 @@ def plan(
     slot: int,
 ) -> IdentityDeletePlan:
     """Resolve a current slot and prove a strict one-identity archive rewrite."""
+    try:
+        selected = t2_identity_inventory.resolve_slot(local, live, slot)
+    except t2_identity_inventory.IdentityInventoryError as error:
+        raise IdentityDeleteError(str(error)) from error
+    return plan_target(local, selected.identity_uuid)
+
+
+def plan_target(
+    local: t2_catacomb_codec.UserCatacomb,
+    identity_uuid: str,
+) -> IdentityDeletePlan:
+    """Rebuild a journal-bound target plan without trusting an ephemeral slot."""
     if not isinstance(local, t2_catacomb_codec.UserCatacomb):
         raise IdentityDeleteError("local identity archive is not validated")
     if len(local.identities) <= 1:
         raise IdentityDeleteError(
             "single deletion would leave an unverified zero-identity component"
         )
+    matches = [
+        identity for identity in local.identities if identity.uuid == identity_uuid
+    ]
+    if len(matches) != 1:
+        raise IdentityDeleteError("delete target is not unique in the local archive")
+    selected = matches[0]
     try:
-        selected = t2_identity_inventory.resolve_slot(local, live, slot)
-        archive = local.delete(selected.identity_uuid)
+        archive = local.delete(selected.uuid)
         decoded = t2_catacomb_codec.decode_user_catacomb(
-            archive, selected.apple_user_id
+            archive, selected.user_id
         )
-    except (
-        t2_identity_inventory.IdentityInventoryError,
-        t2_catacomb_codec.CatacombCodecError,
-    ) as error:
+    except t2_catacomb_codec.CatacombCodecError as error:
         raise IdentityDeleteError(str(error)) from error
     before = {identity.uuid: identity for identity in local.identities}
     after = {identity.uuid: identity for identity in decoded.identities}
     if (
-        selected.identity_uuid not in before
-        or selected.identity_uuid in after
-        or set(after) != set(before) - {selected.identity_uuid}
+        selected.uuid not in before
+        or selected.uuid in after
+        or set(after) != set(before) - {selected.uuid}
     ):
         raise IdentityDeleteError("delete plan did not remove exactly its target")
     if any(after[identity_uuid] != before[identity_uuid] for identity_uuid in after):
         raise IdentityDeleteError("delete plan changed surviving identity metadata")
-    request = uuid.UUID(selected.identity_uuid).bytes + struct.pack(
-        "<I", selected.apple_user_id
+    request = uuid.UUID(selected.uuid).bytes + struct.pack(
+        "<I", selected.user_id
     )
     if len(request) != 20:
         raise IdentityDeleteError("delete request is not the recovered 20-byte form")
     return IdentityDeletePlan(
-        selected.apple_user_id,
-        selected.identity_uuid,
+        selected.user_id,
+        selected.uuid,
         selected.entity,
         selected.name,
         request,

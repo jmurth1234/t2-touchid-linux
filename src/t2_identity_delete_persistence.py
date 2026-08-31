@@ -121,7 +121,7 @@ def run(
         plan.apple_user_id
     ).descriptor
     descriptor_hash = hashlib.sha256(descriptor).hexdigest()
-    generation = history.baseline["connection_generation"]
+    generation = history.persistence_connection_generation
     reference = {
         "connection_generation": generation,
         "batch_index": 0,
