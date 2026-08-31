@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import t2_catacomb_codec
@@ -26,6 +27,15 @@ class IdentityRenameReconciliation:
     identity_count: int
     identity_set_unchanged: bool = True
     label_updated: bool = True
+    local_live_equal: bool = True
+
+
+@dataclass(frozen=True)
+class IdentityRenamePostRebootVerification:
+    connection_generation: str
+    identity_count: int
+    identity_set_unchanged: bool = True
+    label_preserved: bool = True
     local_live_equal: bool = True
 
 
@@ -147,6 +157,14 @@ def classify(
         raise IdentityRenameReconciliationError(
             "rename did not change the user Catacomb"
         )
+    staged = dict(history.persistence.staged_files)
+    if (
+        set(staged) != {user_name}
+        or staged[user_name] != after_components[user_name]["sha256"]
+    ):
+        raise IdentityRenameReconciliationError(
+            "committed user Catacomb differs from the journaled transaction"
+        )
 
     catacomb = live.get("catacomb")
     if (
@@ -209,4 +227,183 @@ def classify(
         live["connection_generation"],
         hashlib.sha256(t2_mutation_journal.canonical(snapshot)).hexdigest(),
         public["identity_count"],
+    )
+
+
+def verify_post_reboot(
+    history: rename_journal.IdentityRenameHistory,
+    *,
+    local: t2_catacomb_codec.UserCatacomb,
+    host: dict[str, Any],
+    live: dict[str, Any],
+    linux_boot_uuid: str,
+    mapping_generation: str,
+) -> IdentityRenamePostRebootVerification:
+    """Prove a reconciled label transaction survived a fresh Linux boot."""
+    if (
+        not isinstance(history, rename_journal.IdentityRenameHistory)
+        or history.phase is not rename_journal.IdentityRenamePhase.RECONCILED
+        or history.target_identity_uuid is None
+        or history.new_name_sha256 is None
+        or history.reconciled_snapshot_sha256 is None
+    ):
+        raise IdentityRenameReconciliationError(
+            "rename journal is not awaiting post-reboot verification"
+        )
+    baseline = history.baseline
+    try:
+        t2_mutation_journal.require_uuid(linux_boot_uuid, "Linux boot UUID")
+    except t2_mutation_journal.JournalError as error:
+        raise IdentityRenameReconciliationError(str(error)) from error
+    if (
+        linux_boot_uuid == baseline["linux_boot_uuid"]
+        or live.get("connection_generation") == baseline["connection_generation"]
+        or mapping_generation != baseline["mapping_generation"]
+        or local.expected_user_id != baseline["apple_uid"]
+    ):
+        raise IdentityRenameReconciliationError(
+            "rename post-reboot binding did not advance safely"
+        )
+
+    try:
+        public = t2_identity_inventory.summarize(local, live)
+    except t2_identity_inventory.IdentityInventoryError as error:
+        raise IdentityRenameReconciliationError(
+            "renamed local and live identities do not reconcile after reboot"
+        ) from error
+    baseline_pairs = {
+        (record["user_id"], record["uuid"], record["entity"])
+        for record in baseline["identity_records"]
+    }
+    local_pairs = {
+        (identity.user_id, identity.uuid, identity.entity)
+        for identity in local.identities
+    }
+    if local_pairs != baseline_pairs:
+        raise IdentityRenameReconciliationError(
+            "rename identity set changed after reboot"
+        )
+    targets = [
+        identity
+        for identity in local.identities
+        if identity.uuid == history.target_identity_uuid
+        and identity.entity == history.target_entity
+    ]
+    if len(targets) != 1 or (
+        hashlib.sha256(targets[0].name.encode("utf-8")).hexdigest()
+        != history.new_name_sha256
+    ):
+        raise IdentityRenameReconciliationError(
+            "renamed identity label was not preserved after reboot"
+        )
+
+    if (
+        host.get("account_uuid") != baseline["account_uuid"]
+        or host.get("bag_uuid") != baseline["bag_uuid"]
+        or host.get("master_enrollment_count")
+        != baseline["master_enrollment_count"]
+    ):
+        raise IdentityRenameReconciliationError(
+            "rename changed account, keybag, or enrollment count after reboot"
+        )
+    before_components = _component_map(baseline["host_components"])
+    after_components = _component_map(host.get("host_components"))
+    if set(before_components) != set(after_components):
+        raise IdentityRenameReconciliationError(
+            "rename component set changed after reboot"
+        )
+    user_name = f'user_{baseline["apple_uid"]:08x}.cat'
+    staged = dict(history.persistence.staged_files)
+    if set(staged) != {user_name}:
+        raise IdentityRenameReconciliationError(
+            "rename journal has no unique committed user component"
+        )
+    for name in before_components:
+        before = before_components[name]
+        after = after_components[name]
+        if any(before[field] != after[field] for field in ("mode", "uid", "gid")):
+            raise IdentityRenameReconciliationError(
+                "rename component metadata changed after reboot"
+            )
+        expected_hash = staged[user_name] if name == user_name else before["sha256"]
+        if after["sha256"] != expected_hash:
+            raise IdentityRenameReconciliationError(
+                "rename component contents changed after reboot"
+            )
+
+    catacomb = live.get("catacomb")
+    states = catacomb.get("user_states") if isinstance(catacomb, dict) else None
+    if (
+        not isinstance(catacomb, dict)
+        or catacomb.get("present") is not True
+        or catacomb.get("uuid") != baseline["sep_catacomb"]["uuid"]
+        or not isinstance(states, list)
+    ):
+        raise IdentityRenameReconciliationError(
+            "SEP Catacomb binding changed after reboot"
+        )
+    selected = [
+        state
+        for state in states
+        if isinstance(state, dict)
+        and state.get("kind") == "user"
+        and state.get("user_id") == baseline["apple_uid"]
+    ]
+    masters = [
+        state
+        for state in states
+        if isinstance(state, dict) and state.get("kind") == "master"
+    ]
+    if (
+        len(selected) != 1
+        or len(masters) != 1
+        or selected[0].get("needs_save") is not False
+        or masters[0].get("needs_save") is not False
+    ):
+        raise IdentityRenameReconciliationError(
+            "SEP Catacomb is not clean after reboot"
+        )
+    return IdentityRenamePostRebootVerification(
+        live["connection_generation"], public["identity_count"]
+    )
+
+
+def append_post_reboot_verified(
+    path: Path,
+    operation_id: str,
+    *,
+    local: t2_catacomb_codec.UserCatacomb,
+    host: dict[str, Any],
+    live: dict[str, Any],
+    linux_boot_uuid: str,
+    mapping_generation: str,
+) -> rename_journal.IdentityRenameHistory:
+    history = rename_journal.read(path)
+    if history.operation_id != operation_id:
+        raise IdentityRenameReconciliationError(
+            "rename operation ID changed before post-reboot verification"
+        )
+    verified = verify_post_reboot(
+        history,
+        local=local,
+        host=host,
+        live=live,
+        linux_boot_uuid=linux_boot_uuid,
+        mapping_generation=mapping_generation,
+    )
+    return rename_journal.append_checked(
+        path,
+        operation_id,
+        "RENAME_POST_REBOOT_VERIFIED",
+        {
+            "linux_boot_uuid": linux_boot_uuid,
+            "connection_generation": verified.connection_generation,
+            "identity_uuid": history.target_identity_uuid,
+            "new_name_sha256": history.new_name_sha256,
+            "snapshot_sha256": history.reconciled_snapshot_sha256,
+            "mapping_generation": mapping_generation,
+            "identity_set_unchanged": True,
+            "label_preserved": True,
+            "local_live_equal": True,
+        },
     )

@@ -4,6 +4,7 @@ import hashlib
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 
@@ -78,7 +79,7 @@ class IdentityRenameReconciliationTests(unittest.TestCase):
         }
         for component in self.host["host_components"]:
             if component["name"] == "user_000001f5.cat":
-                component["sha256"] = "9" * 64
+                component["sha256"] = "7" * 64
         self.live = live_for(self.after)
         self.live.update(
             {
@@ -180,6 +181,102 @@ class IdentityRenameReconciliationTests(unittest.TestCase):
             reconciliation.IdentityRenameReconciliationError, "not clean"
         ):
             self.classify(live=live)
+
+    def reconciled_history(self):
+        result = self.classify()
+        journal.append_checked(
+            self.path,
+            self.operation_id,
+            "CATACOMB_PERSISTENCE_ATTESTED",
+            {
+                "connection_generation": self.value["connection_generation"],
+                "batch_count": 1,
+                "reconciliation_snapshot_sha256": result.snapshot_sha256,
+                "sep_host_generation_equal": True,
+                "independent_archive_readback": True,
+            },
+        )
+        return journal.append_checked(
+            self.path,
+            self.operation_id,
+            "RENAME_RECONCILED",
+            {
+                "connection_generation": self.value["connection_generation"],
+                "identity_uuid": self.plan.identity_uuid,
+                "new_name_sha256": hashlib.sha256(
+                    self.plan.new_name.encode()
+                ).hexdigest(),
+                "snapshot_sha256": result.snapshot_sha256,
+                "mapping_generation": self.value["mapping_generation"],
+                "identity_count": result.identity_count,
+                "identity_set_unchanged": True,
+                "label_updated": True,
+                "local_live_equal": True,
+            },
+        )
+
+    def post_reboot_inputs(self):
+        live = copy.deepcopy(self.live)
+        live["connection_generation"] = str(uuid.UUID(int=8001))
+        return live, str(uuid.UUID(int=8002))
+
+    def test_post_reboot_verifier_binds_committed_label_and_component(self):
+        history = self.reconciled_history()
+        live, boot_id = self.post_reboot_inputs()
+        result = reconciliation.verify_post_reboot(
+            history,
+            local=self.after,
+            host=self.host,
+            live=live,
+            linux_boot_uuid=boot_id,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(result.identity_count, 1)
+        final = reconciliation.append_post_reboot_verified(
+            self.path,
+            self.operation_id,
+            local=self.after,
+            host=self.host,
+            live=live,
+            linux_boot_uuid=boot_id,
+            mapping_generation=self.value["mapping_generation"],
+        )
+        self.assertEqual(
+            final.phase, journal.IdentityRenamePhase.POST_REBOOT_VERIFIED
+        )
+
+    def test_post_reboot_verifier_rejects_same_boot_or_changed_component(self):
+        history = self.reconciled_history()
+        live, _boot_id = self.post_reboot_inputs()
+        with self.assertRaisesRegex(
+            reconciliation.IdentityRenameReconciliationError, "did not advance"
+        ):
+            reconciliation.verify_post_reboot(
+                history,
+                local=self.after,
+                host=self.host,
+                live=live,
+                linux_boot_uuid=self.value["linux_boot_uuid"],
+                mapping_generation=self.value["mapping_generation"],
+            )
+        host = copy.deepcopy(self.host)
+        next(
+            item
+            for item in host["host_components"]
+            if item["name"] == "user_000001f5.cat"
+        )["sha256"] = "4" * 64
+        with self.assertRaisesRegex(
+            reconciliation.IdentityRenameReconciliationError,
+            "contents changed",
+        ):
+            reconciliation.verify_post_reboot(
+                history,
+                local=self.after,
+                host=host,
+                live=live,
+                linux_boot_uuid=str(uuid.UUID(int=8002)),
+                mapping_generation=self.value["mapping_generation"],
+            )
 
 
 if __name__ == "__main__":
