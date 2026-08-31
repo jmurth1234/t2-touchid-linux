@@ -106,6 +106,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
   resolver with exact operation, boot, mapping, and authorization bindings.
 - `src/t2_polkit_grant.py`: race-resistant `PID,start-time,UID` PolicyKit
   adapter that creates bounded in-process grants for the policy resolver.
+- `src/t2_ipc_session.py`: `SO_PEERCRED`/`SO_PEERPIDFD` and libsystemd session
+  collector that joins one live local session to the PolicyKit decision.
 - `src/t2_user_activation_{journal,operation,recovery}.py`: transport-free
   durable activation, execution, and read-only recovery core; no CLI exists.
 - `src/t2_aks_{state,observer,transport}.py`: strict operation-`0x19` state
@@ -326,16 +328,18 @@ separate `activate-user` grant is mandatory before a locked or absent alias may
 enter the keybag activation core. The activation journal then uses the same
 bound operation UUID.
 
-The non-exposed PolicyKit adapter creates those grants using only a caller PID
-and UID obtained from a future trusted IPC peer. It reads the kernel process
-start time and all four process UIDs, invokes the locally documented
-`PID,start-time,UID` subject form, then repeats the reads before accepting the
-result. PID reuse, setuid subjects, unknown actions, cross-user targets,
-timeouts, and ambiguous exit statuses never create an authorized grant. The
-installed action manifest keeps verify, inventory, activation, enrollment, and
-identity management distinct. There is still no public multi-user broker;
-trusted IPC peer/session collection, per-user relocking, and runtime/session
-orchestration remain incomplete.
+The non-exposed IPC/session adapter now obtains those inputs directly from a
+connected Unix socket using `SO_PEERCRED` and `SO_PEERPIDFD`. It keeps the peer
+pidfd open, reads the kernel process start time and all four process UIDs,
+resolves the exact process through libsystemd's pidfd API, and requires one
+active, local, physical-seat user session. Apps launched through the user
+manager may use a same-UID fallback only when exactly one acceptable active
+session exists. Session ID/start time and process identity are checked again
+after PolicyKit returns. PID reuse, setuid subjects, session switching, remote
+or greeter sessions, unknown actions, cross-user targets, timeouts, and
+ambiguous exits never create an authorized grant. There is still no public
+multi-user broker; live account-generation collection, per-user relocking, and
+runtime/session orchestration remain incomplete.
 
 The accompanying pure readiness classifier already defines the fail-closed
 outcomes for that future runtime: absent aliases require activation and fresh

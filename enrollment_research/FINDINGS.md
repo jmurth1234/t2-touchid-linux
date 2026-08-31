@@ -3010,6 +3010,33 @@ identity through CLI/environment state. A trusted IPC peer-credential and
 login-session broker is still required before these actions can authorize live
 multi-user work.
 
+The target kernel and systemd provide a stronger implementation for that
+remaining peer/session join. Linux exposes `SO_PEERPIDFD` (socket option 77),
+and systemd 261 documents `sd_pidfd_get_session()` as immune to PID recycling.
+The new non-exposed IPC layer accepts only a connected Unix stream/seqpacket
+socket, obtains immutable `SO_PEERCRED` plus the peer pidfd, marks the received
+descriptor close-on-exec, and holds it throughout session and PolicyKit
+collection. Numeric PID/start/UID reads must continue to match the live pidfd
+subject before and after the check.
+
+Direct pidfd-to-session membership is preferred. systemd notes that GUI apps
+launched by a user manager may not be direct members of a login session, so a
+narrow same-UID fallback enumerates active sessions only. It accepts exactly
+one session that is active, non-remote, `user` class, Wayland/X11/TTY, and
+attached to a seat. Greeter, lock-screen, background, manager, remote,
+seat-less, unknown-type, wrong-UID, and ambiguous multiple local sessions are
+ineligible. Unreadable stale fallback rows are ignored but can never be chosen;
+a direct pidfd session read failure remains fatal. The selected internal
+session ID and realtime start value are compared again after `pkcheck`, closing
+logout/login and same-description session-replacement races. A live read-only
+check on the proven machine selected its active local Wayland session and
+excluded both a remote TTY and a stale logind row.
+
+This produces trustworthy caller/session and PolicyKit evidence inside one
+pidfd lifetime, but is still not a public service. The next missing persistent
+input is a live Linux account-generation assertion that can detect UID/account
+replacement without trusting a mutable username.
+
 The safest host-side activation is not to reuse `-501` for every Linux user.
 Each already-provisioned Apple user retains its Apple UID-derived alias
 (`-UID`), so switching from UID 501 to 502 selects `-502` rather than rebinding

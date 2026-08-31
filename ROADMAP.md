@@ -94,6 +94,9 @@ evidence, not intent.
 - [x] Add a race-resistant PolicyKit grant producer using the exact
       `PID,start-time,UID` subject, post-check PID-reuse detection, bounded
       grants, and installed distinct action definitions.
+- [x] Add connected-Unix-peer collection with `SO_PEERPIDFD`, libsystemd pidfd
+      session resolution, strict active/local/seat policy, stable fallback for
+      user-manager apps, and post-PolicyKit session revalidation.
 - [ ] Validate operation `0x06` and the read-only alias observer on hardware
       after loading the rebuilt pinned module at reboot.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
