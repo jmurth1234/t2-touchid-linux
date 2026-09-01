@@ -53,7 +53,10 @@ evidence, not intent.
 - [x] Fail closed unless live enrollment holds a verified sleep inhibitor.
 - [x] Recheck the inhibitor inside the authorized consumer immediately before
       the first enrollment dispatch and durably abort if it was lost.
-- [ ] Validate any kernel fix or alternative sleep mode on the proven machine.
+- [x] Validate `s2idle` on the proven machine: SEP, BridgeXPC, keybags, fprintd,
+      enrolled-finger verification, and watchdog health all survived resume
+      without a service restart; install it as the default sleep policy.
+- [ ] Validate an upstream kernel fix before allowing lower-power `deep` sleep.
 
 ## 8. Security, tests, and releases
 

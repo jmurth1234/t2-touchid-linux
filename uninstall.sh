@@ -30,6 +30,7 @@ for file in /etc/systemd/system/{fprintd,t2-touchid-adaptive-sync,t2-touchid-pos
   /etc/systemd/system/t2-touchid-adaptive-sync.service.d/05-account-home.conf \
   /etc/systemd/system/fprintd.service.d/10-native-enrollment.conf \
   /etc/systemd/system/fprintd.service.d/20-native-identity-management.conf \
+  /etc/systemd/sleep.conf.d/90-t2-touchid-s2idle.conf \
   /etc/modprobe.d/t2-sep-transport.conf \
   /usr/share/polkit-1/actions/org.t2linux.touchid.policy \
   /etc/dbus-1/system.d/99-t2-touchid-fprint.conf; do
@@ -37,6 +38,7 @@ for file in /etc/systemd/system/{fprintd,t2-touchid-adaptive-sync,t2-touchid-pos
 done
 rmdir /etc/systemd/system/fprintd.service.d 2>/dev/null || true
 rmdir /etc/systemd/system/t2-touchid-adaptive-sync.service.d 2>/dev/null || true
+rmdir /etc/systemd/sleep.conf.d 2>/dev/null || true
 rm -rf -- /opt/t2-touchid /usr/local/lib/t2-touchid
 if [[ -n $target_home && -d $target_home/.config/systemd/user ]]; then
   for unit in t2-touchid-alert.service t2-touchid-failure.service t2-touchid-success.service; do

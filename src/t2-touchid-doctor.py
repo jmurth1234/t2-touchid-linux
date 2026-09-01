@@ -21,6 +21,7 @@ STATE = Path("/run/t2-touchid/keybag.env")
 PORT_CACHE = Path("/var/lib/t2-touchid/biometric-port")
 CREDENTIAL = Path("/etc/credstore.encrypted/t2-touchid-password")
 ACM_PREFLIGHT = Path("/usr/local/sbin/t2-acm-preflight")
+MEM_SLEEP = Path("/sys/power/mem_sleep")
 SERVICES = (
     "t2-sep-transport.service",
     "t2-keybag-load.service",
@@ -208,6 +209,29 @@ def watchdog_check() -> Check:
     )
 
 
+def sleep_mode_check() -> Check:
+    try:
+        modes = MEM_SLEEP.read_text(encoding="ascii").strip().split()
+    except (OSError, UnicodeError):
+        return Check("warn", "suspend-mode", "kernel sleep mode unavailable")
+    selected = [
+        mode[1:-1]
+        for mode in modes
+        if mode.startswith("[") and mode.endswith("]")
+    ]
+    if len(selected) != 1:
+        return Check("warn", "suspend-mode", "kernel sleep mode is ambiguous")
+    if selected[0] == "s2idle":
+        return Check(
+            "pass", "suspend-mode", "s2idle selected; T2 resume path preserved"
+        )
+    return Check(
+        "warn",
+        "suspend-mode",
+        f"{selected[0]} selected; use s2idle to preserve T2 communication",
+    )
+
+
 def acm_transport_check(enabled: bool) -> Check:
     if not enabled:
         return Check("pass", "acm-transport", "research endpoint disabled")
@@ -320,6 +344,7 @@ def collect() -> list[Check]:
     if config and cached_port:
         checks.append(network_check(config, cached_port))
 
+    checks.append(sleep_mode_check())
     if os.geteuid() == 0:
         checks.append(watchdog_check())
     else:

@@ -50,7 +50,7 @@ below, and nowhere else.
 | Native `fprintd-enroll` / `fprintd-delete` | No; default-off flags and an uninstalled drop-in | No |
 | Multi-user / mapped Linux accounts | No; `t2-touchid-user-map` only writes forced-disabled records | Read-only AKS gates only; no live multi-user operation |
 | Endpoint-10 / ACM transport | Opt-in research only (`T2_TOUCHID_ENABLE_ACM_RESEARCH=1`) | Preflight and one transient-context lifecycle test only |
-| Suspend/resume | n/a | No; known broken, treat as unsupported |
+| Suspend/resume | Yes, installer selects `s2idle` | Yes; live match and all health controls passed after resume. `deep` remains broken |
 
 The `fprintd` service never exposes enrollment or deletion. The experimental
 mutation commands are separate root-only, journaled brokers.
@@ -125,9 +125,9 @@ document. Read these first:
   the positive and negative fingerprint controls pass, keep a root shell open
   while you test, and remember that `sudo tools/rollback-pam.sh` restores the
   originals from `/var/lib/t2-touchid/pam-backups`.
-- **Suspend is unsupported.** After a deep-S3 suspend, Touch ID fails closed
-  until the machine is rebooted and the keybags are unlocked again. See
-  [Suspend/resume](#suspendresume).
+- **Use `s2idle`, not `deep`.** The installer selects the live-proven mode with
+  a systemd sleep drop-in. Deep-S3 resume still breaks T2 communication until
+  reboot on the proven machine; see [Suspend/resume](#suspendresume).
 - **The kernel module is pinned after DMA registration.** Never unload it;
   reboot before replacing it.
 - **Deletion is irreversible in SEP** and has never been tested on hardware.
@@ -810,9 +810,20 @@ See [`SECURITY.md`](SECURITY.md) for reporting and threat-model notes.
 
 ### Suspend/resume
 
-Treat suspend as unsupported until the underlying T2 BCE resume path is fixed,
-or until an alternative sleep mode has been validated on your specific Mac
-model.
+Suspend/resume works on the proven machine through `s2idle`. The installer
+places `90-t2-touchid-s2idle.conf` under `/etc/systemd/sleep.conf.d/`; ordinary
+desktop and `systemctl suspend` requests therefore select suspend-to-idle. The
+mode can be confirmed before or after sleep with:
+
+```sh
+cat /sys/power/mem_sleep
+```
+
+The selected value must be bracketed: `[s2idle] deep`. A live suspend/resume
+control preserved the SEP and Bridge transports, unlocked keybags, fprintd,
+the enrolled-finger match, and a clean doctor report without restarting any
+service. Suspend-to-idle is lighter-weight than deep suspend and may consume
+more battery while asleep.
 
 The failure was reproduced with the `t2bce` stack on the proven configuration.
 The kernel reported repeated `NETDEV WATCHDOG` transmit timeouts for the T2's
@@ -824,8 +835,9 @@ fails closed until the machine is rebooted.
 
 Rebinding the `cdc_ncm` interface, and deauthorizing then reauthorizing its
 virtual USB device, both recreated the interface but did not restore RemoteXPC.
-**Do not unload `t2_sep_transport` as a recovery attempt**: its SEP-registered
-DMA memory is deliberately pinned until reboot. The known recovery is:
+**Do not select `deep` or unload `t2_sep_transport` as a recovery attempt**:
+the module's SEP-registered DMA memory is deliberately pinned until reboot. If
+deep sleep was entered accidentally, the known recovery is:
 
 1. Reboot Linux.
 2. Unlock the normal and special user keybags again.

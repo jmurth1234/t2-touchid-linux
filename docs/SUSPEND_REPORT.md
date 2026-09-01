@@ -7,7 +7,7 @@ raw keybags, captures, addresses, UUIDs, or biometric replies.
 
 - Mac model: `MacBookPro16,2`
 - Kernel and t2bce revisions: fill from the tested boot
-- Sleep mode: `deep` (reproduced); test `s2idle` separately
+- Sleep mode: `deep` (failure reproduced); `s2idle` live control passed
 - bridgeOS build: `23P1072`
 
 ## Reproduction
@@ -26,6 +26,9 @@ raw keybags, captures, addresses, UUIDs, or biometric replies.
 - Reboot restored operation.
 - The SEP transport module deliberately cannot be safely unloaded after DMA
   registration.
+- `s2idle` preserved RemoteXPC, SEP/keybag state, fprintd verification, and a
+  clean watchdog report without restarting services. It is the installed
+  workaround while the deep-resume defect remains.
 
 ## Attachments
 

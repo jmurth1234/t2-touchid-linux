@@ -144,6 +144,10 @@ install -o root -g root -m 0700 "$source_dir/src/t2-credential-unlock.sh" /usr/l
 install -o root -g root -m 0700 "$source_dir/src/t2-biometric-ready.sh" /usr/local/sbin/t2-biometric-ready
 install -o root -g root -m 0700 "$source_dir/src/t2-sep-transport-load.sh" /usr/local/sbin/t2-sep-transport-load
 install -o root -g root -m 0644 "$source_dir/systemd/system/"*.service /etc/systemd/system/
+install -d -o root -g root -m 0755 /etc/systemd/sleep.conf.d
+install -o root -g root -m 0644 \
+  "$source_dir/systemd/sleep.conf.d/90-t2-touchid-s2idle.conf" \
+  /etc/systemd/sleep.conf.d/90-t2-touchid-s2idle.conf
 if [[ ! $target_home =~ ^/[A-Za-z0-9._/-]+$ ]] || \
     [[ $target_home == *//* || $target_home == */../* || \
        $target_home == */./* || $target_home == */.. || $target_home == */. ]] || \
