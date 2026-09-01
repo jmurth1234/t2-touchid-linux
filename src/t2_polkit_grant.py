@@ -44,6 +44,7 @@ class ProcessSubject:
     pid: int
     uid: int
     start_time_ticks: int
+    setuid_real_uid: int | None = None
 
 
 @dataclass(frozen=True, repr=False)
@@ -132,12 +133,14 @@ def read_process_subject(
     *,
     proc_root: Path = PROC_ROOT,
     allow_root: bool = False,
+    allow_setuid_root: bool = False,
 ) -> ProcessSubject:
     if (
         type(pid) is not int
         or not 1 <= pid <= MAX_PID
         or type(peer_uid) is not int
         or type(allow_root) is not bool
+        or type(allow_setuid_root) is not bool
         or not (0 if allow_root else 1) <= peer_uid < (1 << 32) - 1
         or not isinstance(proc_root, Path)
         or not proc_root.is_absolute()
@@ -146,11 +149,23 @@ def read_process_subject(
     process_root = proc_root / str(pid)
     start_time = _stat_start_time(_read_bounded(process_root / "stat"), pid)
     uids = _status_uids(_read_bounded(process_root / "status"))
-    if any(value != peer_uid for value in uids):
-        raise PolkitGrantError(
-            "caller real/effective/saved/filesystem UIDs are not the peer UID"
-        )
-    return ProcessSubject(pid, peer_uid, start_time)
+    if all(value == peer_uid for value in uids):
+        return ProcessSubject(pid, peer_uid, start_time)
+    real_uid, effective_uid, saved_uid, filesystem_uid = uids
+    if (
+        allow_setuid_root
+        and allow_root
+        and 1 <= real_uid < (1 << 32) - 1
+        and peer_uid in (0, real_uid)
+        and effective_uid == saved_uid == filesystem_uid == 0
+    ):
+        # A system-bus peer credential reflects the effective UID. Preserve
+        # the non-root real UID in the immutable subject so a setuid-root PAM
+        # client cannot change its originating account while a claim is live.
+        return ProcessSubject(pid, peer_uid, start_time, real_uid)
+    raise PolkitGrantError(
+        "caller real/effective/saved/filesystem UIDs are not the peer UID"
+    )
 
 
 def _default_runner(

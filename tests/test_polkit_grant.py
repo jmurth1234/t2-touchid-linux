@@ -164,6 +164,34 @@ class PolkitGrantTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(collector.PolkitGrantError, "peer UID"):
             self.collect()
+        self.assertEqual(
+            collector.read_process_subject(
+                self.pid,
+                0,
+                proc_root=self.proc,
+                allow_root=True,
+                allow_setuid_root=True,
+            ),
+            collector.ProcessSubject(self.pid, 0, 777, 1000),
+        )
+        self.assertEqual(
+            collector.read_process_subject(
+                self.pid,
+                1000,
+                proc_root=self.proc,
+                allow_root=True,
+                allow_setuid_root=True,
+            ),
+            collector.ProcessSubject(self.pid, 1000, 777, 1000),
+        )
+        with self.assertRaisesRegex(collector.PolkitGrantError, "peer UID"):
+            collector.read_process_subject(
+                self.pid,
+                0,
+                proc_root=self.proc,
+                allow_root=True,
+                allow_setuid_root=False,
+            )
         (self.process / "status").write_text(
             "Uid:\t1000\t1000\t1000\t1000\n", encoding="ascii"
         )

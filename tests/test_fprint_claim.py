@@ -196,6 +196,40 @@ class FprintClaimTests(unittest.TestCase):
                 caller.close()
         self.assertEqual(original_subject.uid, os.getuid())
 
+    def test_setuid_root_claim_is_always_verification_only(self):
+        target_uid = os.getuid()
+        original = polkit.read_process_subject(os.getpid(), target_uid)
+        setuid_subject = polkit.ProcessSubject(
+            original.pid,
+            target_uid,
+            original.start_time_ticks,
+            target_uid,
+        )
+        caller = dbus_identity.PinnedDBusCaller(
+            ":1.51", setuid_subject, os.pidfd_open(os.getpid())
+        )
+        evidence = claim.ClaimEvidence(
+            "jess",
+            target_uid,
+            collect_account(target_uid),
+            ipc.SessionEvidence(
+                "pidfd-session", "session-1", "wayland", "user", True, 10
+            ),
+            FakeBackend(target_uid),
+            resolver,
+            collect_account,
+        )
+        try:
+            with mock.patch.object(caller, "verify", return_value=setuid_subject), mock.patch.object(
+                claim, "_session", return_value=evidence.session
+            ):
+                with self.assertRaisesRegex(
+                    claim.FprintClaimError, "cannot authorize mutation"
+                ):
+                    evidence.authorization_session(caller)
+        finally:
+            caller.close()
+
 
 if __name__ == "__main__":
     unittest.main()

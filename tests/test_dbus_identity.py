@@ -91,6 +91,34 @@ class DBusIdentityTests(unittest.IsolatedAsyncioTestCase):
         finally:
             caller.close()
 
+    async def test_setuid_root_pam_identity_pins_originating_real_uid(self):
+        message = reply(uid=0)
+        bus = FakeBus(message)
+        subject = identity.t2_polkit_grant.ProcessSubject(
+            os.getpid(), 0, 1, 1000
+        )
+        with mock.patch.object(
+            identity.t2_polkit_grant,
+            "read_process_subject",
+            return_value=subject,
+        ) as reader:
+            caller = await identity.collect(bus, ":1.10")
+            try:
+                self.assertEqual(caller.subject.uid, 0)
+                self.assertEqual(caller.subject.setuid_real_uid, 1000)
+                caller.verify()
+                with caller.duplicate_peer() as peer:
+                    self.assertEqual(peer.subject, subject)
+                    self.assertTrue(peer.allow_setuid_root)
+            finally:
+                caller.close()
+        self.assertTrue(
+            all(
+                call.kwargs.get("allow_setuid_root") is True
+                for call in reader.call_args_list
+            )
+        )
+
     async def test_missing_fd_wrong_pid_and_malformed_sender_fail_closed(self):
         cases = (
             (FakeBus(reply(process_fd=False)), ":1.2"),

@@ -112,7 +112,10 @@ class ClaimEvidence:
     ) -> t2_ipc_session.AuthorizationSession:
         """Create self-service authority only for a same-UID non-root caller."""
         self.revalidate(caller)
-        if caller.subject.uid != self.linux_uid:
+        if (
+            caller.subject.uid != self.linux_uid
+            or caller.subject.setuid_real_uid is not None
+        ):
             raise FprintClaimError(
                 "root or cross-user fprint claims cannot authorize mutation"
             )

@@ -81,10 +81,13 @@ descriptor is a pidfd for that exact PID, and pins the process UID/start time.
 Every claim-scoped call must retain both the exact sender and the live pinned
 process identity. The pidfd is then duplicated into the existing libsystemd
 session collector and joined to a protected local-account generation. A normal
-user may use the existing unique same-UID active-session fallback; a root PAM
-client must be directly attached to the claimed non-root user's exact active
-local physical login session and can never borrow an arbitrary session. Both
-the session and account generation are revalidated on every claim-scoped call.
+user may use the existing unique same-UID active-session fallback. A
+setuid-root PAM client is accepted only with the exact four-UID shape
+`real=user; effective=saved=filesystem=root`; its real UID is pinned alongside
+the bus UID and start time. It must be directly attached to that claimed
+non-root user's exact active local physical login session and can never borrow
+an arbitrary session. Both the process credentials, session, and account
+generation are revalidated on every claim-scoped call.
 Claims are serialized so a concurrent claim cannot pass while evidence
 collection is suspended. `NameOwnerChanged` cleanup cancels active
 verification, closes the pidfd, and releases the claim when that connection
@@ -95,9 +98,10 @@ mutation is enabled.
 
 The claim can now derive an independently owned `AuthorizationSession` from
 the same pidfd/session/account snapshot for a future mutation request. This is
-strictly self-service: the D-Bus process UID must equal the claimed Linux UID.
-A root PAM claim may continue through verification, but cannot be converted
-into mutation authority. The derived session retains the existing
+strictly self-service: the D-Bus process UID must equal the claimed Linux UID,
+and the process must not carry the setuid-root PAM marker. A privileged PAM
+claim may continue through verification, but cannot be converted into mutation
+authority. The derived session retains the existing
 revalidation and bounded PolicyKit collector. `t2_fprint_broker` can hand that
 session to the existing joined broker through a mutually exclusive,
 pre-created authorization path. It permits only the exact `enroll`, `rename`,

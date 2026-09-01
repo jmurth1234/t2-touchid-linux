@@ -84,6 +84,7 @@ class PinnedDBusCaller:
                 self.subject.uid,
                 proc_root=self.proc_root,
                 allow_root=True,
+                allow_setuid_root=self.subject.setuid_real_uid is not None,
             )
         except (OSError, t2_polkit_grant.PolkitGrantError) as error:
             raise DBusIdentityError("D-Bus caller process disappeared") from error
@@ -112,6 +113,7 @@ class PinnedDBusCaller:
                 self.subject.uid,
                 proc_root=self.proc_root,
                 allow_root=True,
+                allow_setuid_root=self.subject.setuid_real_uid is not None,
             )
             self.verify()
             return peer
@@ -207,6 +209,7 @@ async def collect(
                 uid,
                 proc_root=proc_root,
                 allow_root=True,
+                allow_setuid_root=True,
             )
         except t2_polkit_grant.PolkitGrantError as error:
             raise DBusIdentityError("D-Bus process identity is invalid") from error

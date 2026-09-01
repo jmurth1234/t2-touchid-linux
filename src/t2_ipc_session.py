@@ -327,11 +327,13 @@ class PinnedPeer:
         *,
         proc_root: Path,
         allow_root: bool = False,
+        allow_setuid_root: bool = False,
     ) -> None:
         self.pidfd = pidfd
         self.subject = subject
         self.proc_root = proc_root
         self.allow_root = allow_root
+        self.allow_setuid_root = allow_setuid_root
         self._closed = False
 
     @classmethod
@@ -343,6 +345,7 @@ class PinnedPeer:
         *,
         proc_root: Path = t2_polkit_grant.PROC_ROOT,
         allow_root: bool = False,
+        allow_setuid_root: bool = False,
     ) -> "PinnedPeer":
         """Take ownership of a D-Bus/SO_PEERPIDFD process descriptor."""
         if (
@@ -352,6 +355,7 @@ class PinnedPeer:
             or not 1 <= pid <= t2_polkit_grant.MAX_PID
             or type(uid) is not int
             or type(allow_root) is not bool
+            or type(allow_setuid_root) is not bool
             or not (0 if allow_root else 1) <= uid < (1 << 32) - 1
             or not isinstance(proc_root, Path)
             or not proc_root.is_absolute()
@@ -384,10 +388,18 @@ class PinnedPeer:
             ):
                 raise IPCSessionError("pidfd does not match the credential PID")
             subject = t2_polkit_grant.read_process_subject(
-                pid, uid, proc_root=proc_root, allow_root=allow_root
+                pid,
+                uid,
+                proc_root=proc_root,
+                allow_root=allow_root,
+                allow_setuid_root=allow_setuid_root,
             )
             peer = cls(
-                pidfd, subject, proc_root=proc_root, allow_root=allow_root
+                pidfd,
+                subject,
+                proc_root=proc_root,
+                allow_root=allow_root,
+                allow_setuid_root=allow_setuid_root,
             )
             peer.verify()
             return peer
@@ -451,6 +463,7 @@ class PinnedPeer:
             self.subject.uid,
             proc_root=self.proc_root,
             allow_root=self.allow_root,
+            allow_setuid_root=self.allow_setuid_root,
         )
         if current != self.subject:
             raise IPCSessionError("IPC peer process identity changed")
