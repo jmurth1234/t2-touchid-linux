@@ -35,6 +35,7 @@ evidence, not intent.
 - [x] Cache only a port that passed a BiometricKit warm-up.
 - [x] Write the cache atomically.
 - [x] Invalidate and rediscover after a cached endpoint fails.
+- [x] Refresh the dynamic port independently before the keybag service chain.
 - [ ] Test bridgeOS restart and port-change behavior.
 
 ## 6. Installation and rollback

@@ -297,8 +297,9 @@ the decrypted Linux filesystem, but root can decrypt it. Since the credential
 is also the Linux and macOS login password on the proven configuration,
 understand this tradeoff before provisioning it.
 
-With an unattended credential present, `t2-biometric-ready.service` also waits
-for the T2 network path, discovers the dynamic RemoteXPC port, and performs a
+At boot, `t2-biometric-port-refresh.service` waits for the T2 network path and
+refreshes the dynamic RemoteXPC port independently of keybag readiness. With
+an unattended credential present, `t2-biometric-ready.service` then performs a
 non-matching initialization, calibration, and identity-list warm-up before
 fprintd starts. This avoids exposing the first Omarchy lock-screen scan to the
 cold BiometricKit startup race observed on the proven configuration. Its

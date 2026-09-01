@@ -142,6 +142,7 @@ install -o root -g root -m 0755 "$source_dir/src/t2-keybag-load.sh" /usr/local/s
 install -o root -g root -m 0700 "$source_dir/src/t2-pam-unlock.sh" /usr/local/sbin/t2-pam-unlock
 install -o root -g root -m 0700 "$source_dir/src/t2-credential-unlock.sh" /usr/local/sbin/t2-credential-unlock
 install -o root -g root -m 0700 "$source_dir/src/t2-biometric-ready.sh" /usr/local/sbin/t2-biometric-ready
+install -o root -g root -m 0700 "$source_dir/src/t2-biometric-port-refresh.sh" /usr/local/sbin/t2-biometric-port-refresh
 install -o root -g root -m 0700 "$source_dir/src/t2-sep-transport-load.sh" /usr/local/sbin/t2-sep-transport-load
 install -o root -g root -m 0644 "$source_dir/systemd/system/"*.service /etc/systemd/system/
 install -d -o root -g root -m 0755 /etc/systemd/sleep.conf.d
@@ -195,7 +196,7 @@ EOF
 chmod 0644 /etc/dbus-1/system.d/99-t2-touchid-fprint.conf
 
 systemctl daemon-reload
-systemctl enable t2-sep-transport.service t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service fprintd.service
+systemctl enable t2-sep-transport.service t2-biometric-port-refresh.service t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service fprintd.service
 systemctl reload dbus.service
 target_runtime_dir=/run/user/$target_uid
 if [[ -S $target_runtime_dir/bus ]]; then

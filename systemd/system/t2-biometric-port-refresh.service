@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Discover the current Apple T2 BiometricKit BridgeXPC port
+Wants=network-online.target
+After=NetworkManager.service network-online.target
+Before=t2-keybag-load.service t2-biometric-ready.service
+ConditionPathExists=/etc/t2-touchid.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/t2-biometric-port-refresh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
