@@ -626,9 +626,27 @@ class FprintDevice(ServiceInterface):
             ) from error
         async with self.claim_lock:
             if self.claimed_user is not None:
-                raise DBusError(
-                    f"{FPRINT_ERROR}.AlreadyInUse", "device is claimed"
-                )
+                # NameOwnerChanged delivery can trail a short-lived PAM
+                # client's replacement by a few milliseconds.  The pinned
+                # process identity is stronger evidence than D-Bus signal
+                # ordering: reap only a claim whose exact process is already
+                # provably gone.  A live owner remains strictly exclusive.
+                old_caller = self.claimed_caller
+                old_caller_dead = False
+                if old_caller is not None:
+                    try:
+                        old_caller.verify()
+                    except t2_dbus_identity.DBusIdentityError:
+                        old_caller_dead = True
+                if old_caller_dead:
+                    await self._stop_verification(require_running=False)
+                    await self._stop_enrollment(require_running=False)
+                    await self._wait_deletion(require_running=False)
+                    self._clear_claim()
+                else:
+                    raise DBusError(
+                        f"{FPRINT_ERROR}.AlreadyInUse", "device is claimed"
+                    )
             caller = None
             try:
                 caller = await self.caller_collector(

@@ -575,6 +575,32 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
         await MODULE.FprintDevice.Release.__wrapped__(device)
 
+    async def test_dead_completed_claim_is_reaped_before_replacement(self):
+        backend = FakeBackend()
+        device = make_device(backend)
+        old_sender = MODULE.current_dbus_sender
+        try:
+            await claim(device)
+            first_caller = device.claimed_caller
+            await verify_start(device, "any")
+            first_task = device.verify_task
+            self.assertIsNotNone(first_task)
+            await first_task
+            self.assertIsNotNone(device.claim_expiry_task)
+
+            first_caller.closed = True
+            MODULE.current_dbus_sender = lambda: ":1.101"
+            await claim(device)
+
+            self.assertEqual(device.claimed_sender, ":1.101")
+            self.assertIsNot(device.claimed_caller, first_caller)
+            self.assertTrue(first_caller.closed)
+            self.assertIsNone(device.verify_task)
+            self.assertEqual(backend.cancel_count, 1)
+            await MODULE.FprintDevice.Release.__wrapped__(device)
+        finally:
+            MODULE.current_dbus_sender = old_sender
+
     async def test_claim_is_bound_to_exact_dbus_sender(self):
         device = make_device()
         await claim(device)

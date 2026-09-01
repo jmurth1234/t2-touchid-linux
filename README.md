@@ -179,8 +179,10 @@ or an alternative sleep mode has been validated on the specific Mac model.
    `/etc/pam.d/` with `sudo tools/install-pam.sh`. Keep password authentication
    as fallback; `sudo tools/rollback-pam.sh` restores the originals.
 
-   The sudo template displays a generic pre-capture sensor message through
-   `pam_echo`. This is intentional: fprintd 1.94.5's PAM client suppresses the
+   The sudo template displays a generic pre-capture sensor message through a
+   fixed-text helper that writes only to the controlling terminal. This is
+   intentional: sudo sets `PAM_SILENT`, which hides conversation-based
+   `pam_echo` messages, while fprintd 1.94.5's PAM client suppresses the
    ABI-valid `VerifyFingerSelected("any")` prompt when multiple identities are
    available. The message never names one finger because either enrolled
    identity is valid, and the clamshell guard skips both the message and

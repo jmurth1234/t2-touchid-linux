@@ -8,6 +8,7 @@ __pycache__/
 Module.symvers
 modules.order
 src/t2-aks-tool
+src/t2-pam-fingerprint-prompt
 .venv/
 *.tar.gz
 *.cat

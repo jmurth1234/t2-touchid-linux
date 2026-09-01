@@ -133,6 +133,9 @@ fi
 
 make -C "$source_dir/src"
 install -o root -g root -m 0755 "$source_dir/src/t2-aks-tool" /usr/local/sbin/t2-aks-tool
+install -o root -g root -m 0755 \
+  "$source_dir/src/t2-pam-fingerprint-prompt" \
+  /usr/local/sbin/t2-pam-fingerprint-prompt
 install -o root -g root -m 0644 "$source_dir/src/t2_sep_transport.ko" /usr/local/lib/t2-touchid/t2_sep_transport.ko
 install -o root -g root -m 0755 "$source_dir/src/t2-keybag-load.sh" /usr/local/sbin/t2-keybag-load
 install -o root -g root -m 0700 "$source_dir/src/t2-pam-unlock.sh" /usr/local/sbin/t2-pam-unlock

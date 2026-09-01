@@ -6,8 +6,6 @@ set -euo pipefail
 source_dir=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 backup_dir=/var/lib/t2-touchid/pam-backups
 install -d -o root -g root -m 0700 "$backup_dir"
-install -o root -g root -m 0644 \
-  "$source_dir/pam/sudo-prompt" /etc/security/t2-touchid-sudo-prompt
 
 install_one() {
   local source=$2 target=/etc/pam.d/$1 backup=$backup_dir/$1.original
@@ -22,6 +20,7 @@ install_one sudo "$source_dir/pam/sudo"
 if [[ -e /etc/pam.d/omarchy-lock-password ]]; then
   install_one omarchy-lock-password "$source_dir/pam/omarchy-lock-password"
 fi
+rm -f -- /etc/security/t2-touchid-sudo-prompt
 
 echo "PAM templates installed; originals are in $backup_dir."
 echo "Keep this terminal open and validate password fallback before closing it."
