@@ -3101,6 +3101,20 @@ after mapping/live drift, reconnect, or expiry. This is the joined internal
 transaction boundary; it is not yet a public socket protocol or mutation
 consumer.
 
+The next internal boundary now has an executable protocol without exposing a
+listener. It accepts exactly one canonical bounded Unix `SOCK_SEQPACKET`
+request containing schema version 1, the `preflight` command, and a named
+operation. The packet cannot carry a Linux or Apple UID, UUID, alias, keybag
+path, raw operation number, or file descriptor. The broker derives every
+target identifier from its protected mapping after authenticating the kernel
+peer. Preflight deliberately declines to collect activation authority: a
+locked or absent alias is reported as requiring activation, never activated as
+a side effect. A successful response claims authorization only after a typed
+read-only callback ran synchronously under the same live Bridge generation;
+denied responses cannot carry operation authority or a handoff claim. This
+closes request framing and non-mutating policy/readiness inspection, but it is
+not a public service and conveys no mutation capability.
+
 The protected mapping administrator now has one concrete disabled-state writer.
 `t2-touchid-user-map bind-disabled` requires an explicit already-provisioned
 Apple UID/account UUID/bag UUID, explicit capabilities, the canonical private

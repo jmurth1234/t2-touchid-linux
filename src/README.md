@@ -125,6 +125,17 @@ target Linux UID comes only from the kernel peer; request data cannot select an
 Apple UID, alias, account UUID, bag UUID, or keybag path. A denied operation
 never requests activation authority or invokes the consumer.
 
+`t2_user_broker_protocol.py` defines the non-exposed local boundary as one
+canonical, bounded Unix `SOCK_SEQPACKET` message. A request contains only
+schema version 1, `preflight`, and one named policy operation; numeric commands,
+identifiers, extra fields, noncanonical JSON, truncation, stream sockets, and
+ancillary file descriptors fail closed. `t2_user_broker_preflight.py` joins
+that packet to the full broker transaction but deliberately suppresses
+activation collection and all T2 mutation. An authorized response is valid only
+when the broker invoked its typed synchronous consumer while holding the same
+live runtime generation; every denied response carries no authority or handoff
+claim. No listener or public service installs these modules yet.
+
 `t2_linux_account.py` supplies the previously abstract caller account
 generation. It supports a strict local-files profile only: one numeric UID must
 have one root-owned local passwd row, NSS must resolve the same complete record,

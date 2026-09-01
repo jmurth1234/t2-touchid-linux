@@ -215,6 +215,7 @@ def run_self_service(
     boot_reader: BootReader = _boot_id,
     clock: Clock = time.monotonic_ns,
     allow_user_interaction: bool = True,
+    collect_activation_authority: bool = True,
     grant_lifetime_ns: int = 60 * 1_000_000_000,
 ) -> BrokerResult:
     """Authorize and invoke one internal consumer while all leases remain held."""
@@ -229,6 +230,8 @@ def run_self_service(
         raise UserBrokerError("modification policy must be Boolean")
     if type(allow_user_interaction) is not bool:
         raise UserBrokerError("interaction policy must be Boolean")
+    if type(collect_activation_authority) is not bool:
+        raise UserBrokerError("activation collection policy must be Boolean")
     if not callable(consumer):
         raise UserBrokerError("broker consumer is unavailable")
     try:
@@ -313,11 +316,16 @@ def run_self_service(
                     grant_lifetime_ns=grant_lifetime_ns,
                 )
                 activation_evidence = None
-                if operation_evidence.policy.grant.authorized and readiness.state in {
-                    "alias-absent",
-                    "device-locked",
-                    "before-first-unlock",
-                }:
+                if (
+                    collect_activation_authority
+                    and operation_evidence.policy.grant.authorized
+                    and readiness.state
+                    in {
+                        "alias-absent",
+                        "device-locked",
+                        "before-first-unlock",
+                    }
+                ):
                     activation_evidence = _authorization_collect(
                         authorization,
                         target_linux_uid=target_uid,

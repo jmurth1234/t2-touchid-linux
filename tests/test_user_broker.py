@@ -195,6 +195,7 @@ class UserBrokerTests(unittest.TestCase):
         *,
         operation="enroll",
         modification_allowed=True,
+        collect_activation_authority=True,
         clock=None,
         grant_lifetime_ns=500,
         keybag_reader=None,
@@ -211,6 +212,7 @@ class UserBrokerTests(unittest.TestCase):
             boot_reader=lambda: identifier(21),
             clock=clock or StepClock(),
             allow_user_interaction=False,
+            collect_activation_authority=collect_activation_authority,
             grant_lifetime_ns=grant_lifetime_ns,
         )
 
@@ -266,6 +268,25 @@ class UserBrokerTests(unittest.TestCase):
                 "org.t2linux.touchid.enroll",
                 "org.t2linux.touchid.activate-user",
             ],
+        )
+
+    def test_preflight_reports_activation_without_collecting_its_grant(self):
+        evidence = (persistent(), ABSENT)
+        authorization = FakeAuthorizationSession(self.uid)
+        live = FakeLiveSession((evidence, evidence))
+        result = self.invoke(
+            authorization,
+            live,
+            lambda authority, session: self.fail("consumer must not run"),
+            collect_activation_authority=False,
+        )
+        self.assertFalse(result.consumer_invoked)
+        self.assertEqual(
+            result.decision.state, "activation-authorization-required"
+        )
+        self.assertTrue(result.decision.activation_required)
+        self.assertEqual(
+            authorization.actions, ["org.t2linux.touchid.enroll"]
         )
 
     def test_denied_operation_never_prompts_for_activation_or_calls_consumer(self):

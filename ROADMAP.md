@@ -102,6 +102,8 @@ evidence, not intent.
 - [x] Join the pinned peer, mapping writer lock, biometric operation lock,
       stable live evidence, runtime generation, policy grants, and synchronous
       consumer handoff in one non-exposed self-service broker transaction.
+- [x] Add strict identifier-free `SOCK_SEQPACKET` framing and a non-mutating
+      preflight consumer that cannot collect activation authority.
 - [x] Add a live local-files account-generation assertion over the exact
       UID/passwd/shadow/database/home binding and revalidate it after PolicyKit.
 - [x] Add atomic administrator creation/rebinding for protected account
