@@ -245,6 +245,42 @@ evidence, not intent.
       delete, cancellation, contention, PAM, and desktop UI—without requiring
       repository-specific commands for ordinary use.
 
+## 10. Parked-work resume order
+
+This is the handoff sequence after the proven two-finger sudo/PAM milestone.
+Keep the installed service mutation-free until the first gate passes, and do
+not combine a destructive control with an untested authorization boundary.
+
+- [x] Prove both canonical fingerprints through sudo, reject an unenrolled
+      finger, display a pre-capture terminal prompt, support immediate
+      back-to-back sudo clients, and retain working password fallback.
+- [ ] Add and run a repeatable live negative-control harness for
+      mapping-disabled, wrong-caller, expired-grant, disconnect,
+      wrong-Bridge-generation, and cancellation cases. Require every case to
+      fail before a worker receives mutation authority. Exercise the automatic
+      E4 read-only reconciler separately when a reboot is available.
+- [ ] Run the read-only activation gate, then stage the rollbackable combined
+      native enrollment/deletion fprintd research drop-in. Confirm its exact
+      `ExecStart` and retain the documented one-file rollback path.
+- [ ] Exercise ordinary `fprintd-enroll`: canonical target selection,
+      progress feedback, cancellation/recovery, fresh per-identity listing,
+      named verification, and survival of daemon/client contention. Keep sudo
+      and password fallback as independent controls throughout.
+- [ ] Exercise ordinary single-target `fprintd-delete` against a deliberately
+      disposable Linux-enrolled identity. Before reboot, prove that the named
+      target no longer matches, the untouched identity still matches, the
+      canonical listing is correct, and password fallback remains available.
+- [ ] Reboot once for the deletion/E4 boundary. Require automatic read-only
+      reconciliation, persistent absence of the deleted target, successful
+      named verification of the survivor, clean journals, and working password
+      fallback before considering native deletion live-proven.
+- [ ] Validate the desktop settings experience after the standard CLI
+      lifecycle passes, then extend the same protected Apple-authority model to
+      mapped Linux users with explicit negative cross-user tests.
+
+Suspend/resume remains a separate kernel/transport reliability track. It must
+fail closed but does not block the standard fprint lifecycle work above.
+
 ## Hardware/root-only gates
 
 These require an interactive user or a reboot and cannot be inferred from unit
