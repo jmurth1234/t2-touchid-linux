@@ -55,9 +55,9 @@ class FprintWorkerLauncherTests(unittest.TestCase):
         endpoint = Path(command[-1])
 
         def connect():
+            self.peer_pid = os.getpid()
             connection = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
             connection.connect(str(endpoint))
-            self.peer_pid = os.getpid()
             connection.recv(1)
             connection.close()
 
