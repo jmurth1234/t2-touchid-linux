@@ -344,10 +344,11 @@ sudo t2-touchid-enroll verify-post-reboot
 
 Current development builds also install
 `t2-touchid-post-reboot.service`, a credential-free read-only oneshot ordered
-before fprintd. It performs the same strict E4 proof automatically and leaves
-the E3 journal untouched on any mismatch. The manual command remains the
-diagnostic fallback until the automatic service has passed the installed
-hardware controls documented in the roadmap.
+before fprintd. It performs the same strict E4 proof automatically, also
+closes a completed label rename with that transaction's typed post-reboot
+proof, and leaves either journal untouched on any mismatch. Manual commands
+remain diagnostic fallbacks until the automatic service has passed the
+installed hardware controls documented in the roadmap.
 
 Do not simply repeat `start` after an interruption or ambiguous result. Inspect
 `status`, then use only the recovery path it identifies:
@@ -609,7 +610,9 @@ global operation lock and a verified sleep inhibitor, writes durable intent
 before dispatch, persists exactly the selected user's Catacomb, and performs
 same-connection independent read-back. A successful rename remains the only
 blocking mutation until it survives a different Linux boot and Bridge
-connection:
+connection. The credential-free boot service now performs this read-only proof
+automatically before fprintd starts; the manual command remains available for
+diagnosis:
 
 ```sh
 sudo t2-touchid-manage verify-post-reboot

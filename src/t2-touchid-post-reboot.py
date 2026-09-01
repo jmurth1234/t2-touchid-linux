@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Automatically prove a completed enrollment survived a fresh boot."""
+"""Automatically prove a completed biometric mutation survived a fresh boot."""
 
 from __future__ import annotations
 

@@ -15,11 +15,14 @@ SOURCE = Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SOURCE))
 
 import t2_enrollment_journal as enrollment_journal
+import t2_catacomb_codec as catacomb_codec
+import t2_identity_rename_journal as rename_journal
 import t2_linux_account as linux_account
 import t2_post_reboot_reconciler as reconciler
 import t2_user_mapping as mapping
 import t2_user_readiness as readiness
 import t2_user_reconciliation_live as live_reconciliation
+from tests.test_catacomb_codec import fixture
 
 
 def identifier(number: int) -> str:
@@ -89,7 +92,7 @@ class PostRebootReconcilerTests(unittest.TestCase):
             "/var/lib/t2-touchid/users/1000/user.kb",
             "b" * 64,
             "host-encrypted-credential",
-            frozenset({"enroll", "verify"}),
+            frozenset({"enroll", "identity-management", "verify"}),
             True,
         )
         self.mapping_set = mapping.UserMappingSet(
@@ -114,22 +117,28 @@ class PostRebootReconcilerTests(unittest.TestCase):
         self.path = Path("/var/lib/t2-touchid/mutations") / (
             f"{self.history.operation_id}.jsonl"
         )
+        self.local = catacomb_codec.decode_user_catacomb(fixture(), 501)
         self.material = live_reconciliation.PostRebootMaterial(
             {"host": True},
             {"live": True},
+            self.local,
             501,
             identifier(30),
         )
         self.live = Live(self.mapping, self.material)
         self.account = linux_account.AccountEvidence(1000, "a" * 64)
 
-    def common_patches(self):
+        self.candidate = reconciler.PendingMutation(
+            "enroll", "enroll", self.path, self.history
+        )
+
+    def common_patches(self, candidate=None):
         return (
             mock.patch.object(reconciler, "ROOT_UID", os.geteuid()),
             mock.patch.object(
                 reconciler,
                 "_pending_candidate",
-                return_value=(self.path, self.history),
+                return_value=candidate or self.candidate,
             ),
             mock.patch.object(
                 reconciler.t2_user_mapping_admin,
@@ -157,7 +166,7 @@ class PostRebootReconcilerTests(unittest.TestCase):
             reconciler.t2_user_mapping_admin, "_open_parent"
         ) as open_parent:
             result = reconciler.run()
-        self.assertEqual(result.state, "no-pending-enrollment")
+        self.assertEqual(result.state, "no-pending-mutation")
         self.assertFalse(result.journal_updated)
         open_parent.assert_not_called()
 
@@ -179,7 +188,7 @@ class PostRebootReconcilerTests(unittest.TestCase):
                 runtime_state=lambda _alias: (1, 42),
                 boot_reader=lambda: identifier(40),
             )
-        self.assertEqual(result.state, "post-reboot-verified")
+        self.assertEqual(result.state, "enroll-post-reboot-verified")
         self.assertTrue(result.journal_updated)
         self.assertEqual(self.live.collect_count, 2)
         self.assertTrue(self.live.exited)
@@ -254,10 +263,11 @@ class PostRebootReconcilerTests(unittest.TestCase):
                 "validate_history",
                 return_value=self.history,
             ):
-                self.assertEqual(
-                    reconciler._pending_candidate(),
-                    (path, self.history),
-                )
+                candidate = reconciler._pending_candidate()
+                self.assertEqual(candidate.kind, "enroll")
+                self.assertEqual(candidate.capability, "enroll")
+                self.assertEqual(candidate.path, path)
+                self.assertIs(candidate.history, self.history)
 
                 with mock.patch.object(
                     reconciler.t2_mutation_registry,
@@ -269,6 +279,93 @@ class PostRebootReconcilerTests(unittest.TestCase):
                         "another biometric mutation",
                     ):
                         reconciler._pending_candidate()
+
+    def test_stable_rename_appends_only_rename_post_reboot_proof(self):
+        history = SimpleNamespace(
+            operation_id=identifier(50),
+            phase=rename_journal.IdentityRenamePhase.RECONCILED,
+            record_count=12,
+            head_hash="f" * 64,
+            baseline=dict(self.baseline),
+        )
+        path = Path("/var/lib/t2-touchid/mutations") / (
+            f"{history.operation_id}.jsonl"
+        )
+        candidate = reconciler.PendingMutation(
+            "rename", "identity-management", path, history
+        )
+        verified = SimpleNamespace(
+            phase=rename_journal.IdentityRenamePhase.POST_REBOOT_VERIFIED
+        )
+        rename_append = mock.Mock(return_value=verified)
+        enrollment_append = mock.Mock()
+        patches = self.common_patches(candidate)
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6],
+            mock.patch.object(
+                reconciler.t2_identity_rename_reconciliation,
+                "append_post_reboot_verified",
+                rename_append,
+            ),
+            mock.patch.object(
+                reconciler.t2_enrollment_reconciliation,
+                "append_post_reboot_verified",
+                enrollment_append,
+            ),
+        ):
+            result = reconciler.run(
+                live_factory=lambda: self.live,
+                account_collector=lambda _uid: self.account,
+                keybag_reader=lambda _path: "b" * 64,
+                runtime_state=lambda _alias: (1, 42),
+                boot_reader=lambda: identifier(40),
+            )
+        self.assertEqual(result.state, "rename-post-reboot-verified")
+        self.assertTrue(result.journal_updated)
+        enrollment_append.assert_not_called()
+        self.assertIs(rename_append.call_args.kwargs["local"], self.local)
+        self.assertIs(rename_append.call_args.kwargs["host"], self.material.host)
+        self.assertIs(rename_append.call_args.kwargs["live"], self.material.live)
+
+    def test_candidate_scan_selects_one_reconciled_rename(self):
+        history = SimpleNamespace(
+            operation_id=identifier(60),
+            phase=rename_journal.IdentityRenamePhase.RECONCILED,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / f"{history.operation_id}.jsonl"
+            path.touch()
+            entry = SimpleNamespace(blocks_new_mutation=True)
+            with (
+                mock.patch.object(reconciler, "MUTATION_ROOT", root),
+                mock.patch.object(
+                    reconciler.t2_mutation_registry,
+                    "scan",
+                    return_value=(entry,),
+                ),
+                mock.patch.object(
+                    reconciler.t2_mutation_journal,
+                    "read",
+                    return_value=[{"evidence": {"operation_kind": "rename"}}],
+                ),
+                mock.patch.object(
+                    reconciler.t2_identity_rename_journal,
+                    "validate_history",
+                    return_value=history,
+                ),
+            ):
+                candidate = reconciler._pending_candidate()
+        self.assertEqual(candidate.kind, "rename")
+        self.assertEqual(candidate.capability, "identity-management")
+        self.assertEqual(candidate.path, path)
+        self.assertIs(candidate.history, history)
 
     def test_service_is_read_only_ordered_and_installed(self):
         root = Path(__file__).parents[1]

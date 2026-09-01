@@ -286,6 +286,7 @@ class LiveUserReconciliationTests(unittest.TestCase):
             )
         self.assertIs(material.host, host)
         self.assertEqual(material.live, self.live)
+        self.assertIs(material.local, self.local)
         self.assertEqual(material.apple_uid, 501)
         self.assertEqual(material.connection_generation, identifier(10))
         self.assertNotIn(identifier(1), repr(material))

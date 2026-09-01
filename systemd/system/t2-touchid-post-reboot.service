@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 [Unit]
-Description=Reconcile completed Apple T2 Touch ID enrollment after reboot
+Description=Reconcile completed Apple T2 Touch ID mutation after reboot
 Documentation=file:/opt/t2-touchid/README.md
 Requires=t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service
 After=local-fs.target network-online.target t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service

@@ -64,6 +64,7 @@ class PostRebootMaterial:
 
     host: dict[str, object] = field(repr=False)
     live: dict[str, object] = field(repr=False)
+    local: t2_catacomb_codec.UserCatacomb = field(repr=False)
     apple_uid: int
     connection_generation: str
 
@@ -71,7 +72,7 @@ class PostRebootMaterial:
         return (
             "PostRebootMaterial(apple_uid=<redacted>, "
             f"connection_generation={self.connection_generation!r}, "
-            "stable=True, private=True)"
+            "local_reconciled=True, stable=True, private=True)"
         )
 
 
@@ -543,6 +544,10 @@ class LiveUserReconciliationSession:
                 store, baseline
             )
             after = store.read_committed_components()
+            local = t2_catacomb_codec.decode_user_catacomb(
+                after[f"user_{selected.apple_uid:08x}.cat"],
+                selected.apple_uid,
+            )
         except (
             KeyError,
             UnicodeError,
@@ -570,7 +575,7 @@ class LiveUserReconciliationSession:
                 "post-reboot read-back changed during collection"
             )
         return PostRebootMaterial(
-            host, live, selected.apple_uid, self._generation
+            host, live, local, selected.apple_uid, self._generation
         )
 
     def revalidate_runtime_keybag(

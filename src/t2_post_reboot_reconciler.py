@@ -1,16 +1,19 @@
 # SPDX-License-Identifier: GPL-2.0-only
-"""Automatic read-only E4 reconciliation for one completed enrollment."""
+"""Automatic read-only post-reboot proof for one completed mutation."""
 
 from __future__ import annotations
 
 import os
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import t2_enrollment_journal
 import t2_enrollment_reconciliation
+import t2_catacomb_codec
+import t2_identity_rename_journal
+import t2_identity_rename_reconciliation
 import t2_linux_account
 import t2_mutation_journal
 import t2_mutation_registry
@@ -50,6 +53,14 @@ class PostRebootReconcilerResult:
         }
 
 
+@dataclass(frozen=True, repr=False)
+class PendingMutation:
+    kind: str
+    capability: str
+    path: Path
+    history: object = field(repr=False)
+
+
 def _boot_id() -> str:
     try:
         first = BOOT_ID.read_text(encoding="ascii").strip()
@@ -66,9 +77,7 @@ def _boot_id() -> str:
     return first
 
 
-def _pending_candidate() -> tuple[
-    Path, t2_enrollment_journal.EnrollmentHistory
-] | None:
+def _pending_candidate() -> PendingMutation | None:
     try:
         entries = t2_mutation_registry.scan(MUTATION_ROOT)
         candidates = []
@@ -84,14 +93,28 @@ def _pending_candidate() -> tuple[
                     "mutation journal has no typed baseline"
                 )
             if evidence.get("operation_kind") != "enroll":
-                continue
-            history = t2_enrollment_journal.validate_history(records)
-            if (
-                history.phase
-                is t2_enrollment_journal.EnrollmentPhase.RECONCILED
-                and history.terminal_identity_uuid is not None
-            ):
-                candidates.append((path, history))
+                if evidence.get("operation_kind") != "rename":
+                    continue
+                history = t2_identity_rename_journal.validate_history(records)
+                if (
+                    history.phase
+                    is t2_identity_rename_journal.IdentityRenamePhase.RECONCILED
+                ):
+                    candidates.append(
+                        PendingMutation(
+                            "rename", "identity-management", path, history
+                        )
+                    )
+            else:
+                history = t2_enrollment_journal.validate_history(records)
+                if (
+                    history.phase
+                    is t2_enrollment_journal.EnrollmentPhase.RECONCILED
+                    and history.terminal_identity_uuid is not None
+                ):
+                    candidates.append(
+                        PendingMutation("enroll", "enroll", path, history)
+                    )
     except PostRebootReconcilerError:
         raise
     except (
@@ -99,13 +122,14 @@ def _pending_candidate() -> tuple[
         t2_mutation_registry.MutationRegistryError,
         t2_mutation_journal.JournalError,
         t2_enrollment_journal.EnrollmentJournalError,
+        t2_identity_rename_journal.IdentityRenameJournalError,
     ) as error:
         raise PostRebootReconcilerError(
             "mutation journal inventory is invalid"
         ) from error
     if len(candidates) > 1:
         raise PostRebootReconcilerError(
-            "multiple enrollment journals await post-reboot verification"
+            "multiple mutation journals await post-reboot verification"
         )
     if candidates and sum(entry.blocks_new_mutation for entry in entries) != 1:
         raise PostRebootReconcilerError(
@@ -116,12 +140,13 @@ def _pending_candidate() -> tuple[
 
 def _select_mapping(
     mapping_set: t2_user_mapping.UserMappingSet,
-    history: t2_enrollment_journal.EnrollmentHistory,
+    candidate: PendingMutation,
 ) -> t2_user_mapping.UserMapping:
+    history = candidate.history
     baseline = history.baseline
     linux_uid = baseline["target_linux_uid"]
     try:
-        selected = mapping_set.resolve(linux_uid, "enroll")
+        selected = mapping_set.resolve(linux_uid, candidate.capability)
     except t2_user_mapping.UserMappingError as error:
         raise PostRebootReconcilerError(
             "post-reboot mapping is absent or disabled"
@@ -139,12 +164,18 @@ def _select_mapping(
     return selected
 
 
-def _unchanged_history(
-    path: Path, expected: t2_enrollment_journal.EnrollmentHistory
-) -> None:
+def _unchanged_history(candidate: PendingMutation) -> None:
+    expected = candidate.history
     try:
-        current = t2_enrollment_journal.read(path)
-    except t2_enrollment_journal.EnrollmentJournalError as error:
+        current = (
+            t2_enrollment_journal.read(candidate.path)
+            if candidate.kind == "enroll"
+            else t2_identity_rename_journal.read(candidate.path)
+        )
+    except (
+        t2_enrollment_journal.EnrollmentJournalError,
+        t2_identity_rename_journal.IdentityRenameJournalError,
+    ) as error:
         raise PostRebootReconcilerError(
             "post-reboot journal changed or became invalid"
         ) from error
@@ -168,7 +199,7 @@ def run(
     runtime_state=t2_system_credential._runtime_state,
     boot_reader=_boot_id,
 ) -> PostRebootReconcilerResult:
-    """Append E4 only after a fresh boot reproduces the complete E3 state."""
+    """Append only a typed proof after a fresh boot reproduces committed state."""
 
     if os.geteuid() != ROOT_UID:
         raise PostRebootReconcilerError(
@@ -189,8 +220,9 @@ def run(
         )
     candidate = _pending_candidate()
     if candidate is None:
-        return PostRebootReconcilerResult("no-pending-enrollment", False)
-    journal_path, history = candidate
+        return PostRebootReconcilerResult("no-pending-mutation", False)
+    journal_path = candidate.path
+    history = candidate.history
 
     directory = -1
     mapping_lock = -1
@@ -202,7 +234,7 @@ def run(
             raise PostRebootReconcilerError(
                 "protected mapping does not exist"
             )
-        selected = _select_mapping(mapping_set, history)
+        selected = _select_mapping(mapping_set, candidate)
         account = account_collector(selected.linux_uid)
         expected_account = t2_linux_account.AccountEvidence(
             selected.linux_uid, selected.linux_account_generation
@@ -250,7 +282,7 @@ def run(
                 )
             try:
                 readiness = t2_user_readiness.assess(
-                    selected, "enroll", *first
+                    selected, candidate.capability, *first
                 )
             except t2_user_readiness.UserReadinessError as error:
                 raise PostRebootReconcilerError(
@@ -281,11 +313,15 @@ def run(
                 )
                 or material.apple_uid != selected.apple_uid
                 or material.connection_generation != live.runtime_generation
+                or not isinstance(
+                    material.local, t2_catacomb_codec.UserCatacomb
+                )
+                or material.local.expected_user_id != selected.apple_uid
             ):
                 raise PostRebootReconcilerError(
                     "post-reboot material is inconsistent"
                 )
-            _unchanged_history(journal_path, history)
+            _unchanged_history(candidate)
             current_mapping = t2_user_mapping_admin._load_optional(
                 directory, name
             )
@@ -300,31 +336,54 @@ def run(
             if keybag_reader(Path(selected.keybag_path)) != keybag_sha256:
                 raise PostRebootReconcilerError(
                     "keybag changed during reconciliation"
-                )
-            verified = (
-                t2_enrollment_reconciliation.append_post_reboot_verified(
-                    journal_path,
-                    history.operation_id,
-                    host=material.host,
-                    live=material.live,
-                    linux_boot_uuid=boot_uuid,
-                    mapping_generation=mapping_set.generation,
-                    keybag_runtime_revalidated=True,
-                )
             )
-        if (
-            verified.phase
-            is not t2_enrollment_journal.EnrollmentPhase.POST_REBOOT_VERIFIED
-        ):
+            if candidate.kind == "enroll":
+                verified = (
+                    t2_enrollment_reconciliation.append_post_reboot_verified(
+                        journal_path,
+                        history.operation_id,
+                        host=material.host,
+                        live=material.live,
+                        linux_boot_uuid=boot_uuid,
+                        mapping_generation=mapping_set.generation,
+                        keybag_runtime_revalidated=True,
+                    )
+                )
+                expected_phase = (
+                    t2_enrollment_journal.EnrollmentPhase.POST_REBOOT_VERIFIED
+                )
+            elif candidate.kind == "rename":
+                verified = (
+                    t2_identity_rename_reconciliation.append_post_reboot_verified(
+                        journal_path,
+                        history.operation_id,
+                        local=material.local,
+                        host=material.host,
+                        live=material.live,
+                        linux_boot_uuid=boot_uuid,
+                        mapping_generation=mapping_set.generation,
+                    )
+                )
+                expected_phase = (
+                    t2_identity_rename_journal.IdentityRenamePhase.POST_REBOOT_VERIFIED
+                )
+            else:
+                raise PostRebootReconcilerError(
+                    "post-reboot mutation kind is unsupported"
+                )
+        if verified.phase is not expected_phase:
             raise PostRebootReconcilerError(
-                "post-reboot verification did not reach E4"
+                "post-reboot verification did not reach its terminal proof"
             )
-        return PostRebootReconcilerResult("post-reboot-verified", True)
+        return PostRebootReconcilerResult(
+            f"{candidate.kind}-post-reboot-verified", True
+        )
     except PostRebootReconcilerError:
         raise
     except (
         OSError,
         t2_enrollment_reconciliation.EnrollmentReconciliationError,
+        t2_identity_rename_reconciliation.IdentityRenameReconciliationError,
         t2_linux_account.LinuxAccountError,
         t2_system_credential.SystemCredentialError,
         t2_user_mapping_admin.UserMappingAdminError,
