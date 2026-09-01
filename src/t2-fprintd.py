@@ -52,6 +52,9 @@ MACOS_USER_ID = int(os.environ.get("T2_TOUCHID_MACOS_USER_ID", "501"))
 ENROLLED_FINGER = os.environ.get(
     "T2_TOUCHID_ENROLLED_FINGER", "right-index-finger"
 )
+AUTO_SYNC_ADAPTIVE_VALUE = os.environ.get(
+    "T2_TOUCHID_AUTO_SYNC_ADAPTIVE", "0"
+)
 ALLOWED_PAM_USERS = (LINUX_USER,)
 UNSTARTED_CLAIM_SECONDS = 5.0
 COMPLETED_CLAIM_SECONDS = 0.5
@@ -77,6 +80,9 @@ if ENROLLED_FINGER not in {
     )
 }:
     raise RuntimeError("T2_TOUCHID_ENROLLED_FINGER is invalid")
+if AUTO_SYNC_ADAPTIVE_VALUE not in {"0", "1"}:
+    raise RuntimeError("T2_TOUCHID_AUTO_SYNC_ADAPTIVE is invalid")
+AUTO_SYNC_ADAPTIVE = AUTO_SYNC_ADAPTIVE_VALUE == "1"
 
 
 def verdict_from_result(
@@ -220,13 +226,22 @@ def desktop_user_unit_command(unit: object) -> tuple[str, ...] | None:
 
 
 class T2Backend:
-    def __init__(self, project_dir: Path, match_seconds: float) -> None:
+    def __init__(
+        self,
+        project_dir: Path,
+        match_seconds: float,
+        auto_sync_adaptive: bool = AUTO_SYNC_ADAPTIVE,
+    ) -> None:
         if not LINUX_USER:
             raise RuntimeError("T2_TOUCHID_USER is not configured")
         self.project_dir = project_dir
         self.match_seconds = match_seconds
         self.process: asyncio.subprocess.Process | None = None
         self.operation_lock = asyncio.Lock()
+        if type(auto_sync_adaptive) is not bool:
+            raise RuntimeError("adaptive Catacomb sync activation is invalid")
+        self.auto_sync_adaptive = auto_sync_adaptive
+        self.adaptive_sync_tasks: set[asyncio.Task] = set()
         self.port: int | None = None
         self.port_from_cache = False
         port_file = Path(
@@ -397,6 +412,46 @@ class T2Backend:
                     request.requested_finger == "any" and view.complete
                 ),
             )
+
+    async def _request_adaptive_sync(self) -> None:
+        """Ask systemd to persist an adaptive update outside authentication."""
+
+        process = await asyncio.create_subprocess_exec(
+            "/usr/bin/systemctl",
+            "start",
+            "--no-block",
+            "t2-touchid-adaptive-sync.service",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=3
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise RuntimeError("adaptive Catacomb sync request timed out")
+        if process.returncode != 0:
+            detail = stderr.decode(errors="replace").strip()
+            raise RuntimeError(detail or "adaptive Catacomb sync request failed")
+
+    @staticmethod
+    def _consume_adaptive_sync_task(task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except BaseException as error:
+            print(f"Adaptive Catacomb sync request failed: {error}", flush=True)
+
+    def schedule_adaptive_sync(self) -> None:
+        """Coalesce a best-effort post-verdict persistence request."""
+
+        if not self.auto_sync_adaptive:
+            return
+        task = asyncio.create_task(self._request_adaptive_sync())
+        self.adaptive_sync_tasks.add(task)
+        task.add_done_callback(self.adaptive_sync_tasks.discard)
+        task.add_done_callback(self._consume_adaptive_sync_task)
 
     async def notify_feedback(self, verdict: str) -> None:
         unit = (
@@ -788,6 +843,17 @@ class FprintDevice(ServiceInterface):
             elif verdict == "verify-match":
                 self.VerifyFingerMatched(requested_finger)
             self.VerifyStatus(verdict, True)
+            if verdict == "verify-match":
+                # Authentication is already terminal. Persistence is a
+                # separately journaled best-effort operation and can neither
+                # delay nor replace the emitted verdict.
+                try:
+                    self.backend.schedule_adaptive_sync()
+                except Exception as error:
+                    print(
+                        f"Adaptive Catacomb sync scheduling failed: {error}",
+                        flush=True,
+                    )
         except asyncio.CancelledError:
             raise
         except Exception:

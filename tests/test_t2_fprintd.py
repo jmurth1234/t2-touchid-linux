@@ -27,6 +27,7 @@ class FakeBackend:
     def __init__(self, verdict="verify-match"):
         self.verdict = verdict
         self.cancel_count = 0
+        self.adaptive_sync_requests = 0
         self.operation_lock = asyncio.Lock()
         self.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
             (MODULE.ENROLLED_FINGER,),
@@ -50,6 +51,9 @@ class FakeBackend:
 
     async def cancel(self):
         self.cancel_count += 1
+
+    def schedule_adaptive_sync(self):
+        self.adaptive_sync_requests += 1
 
 
 class FakePinnedCaller:
@@ -523,6 +527,18 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 ("status", "verify-match", True),
             ],
         )
+        self.assertEqual(backend.adaptive_sync_requests, 1)
+
+    async def test_negative_match_never_requests_adaptive_sync(self):
+        backend = FakeBackend("verify-no-match")
+        device = make_device(backend)
+        statuses = []
+        device.VerifyStatus = lambda result, done: statuses.append((result, done))
+        await claim(device)
+        await verify_start(device, "any")
+        await device.verify_task
+        self.assertEqual(statuses, [("verify-no-match", True)])
+        self.assertEqual(backend.adaptive_sync_requests, 0)
 
     async def test_empty_listing_uses_upstream_no_prints_error(self):
         backend = FakeBackend()
@@ -1311,6 +1327,61 @@ class VerdictTests(unittest.TestCase):
 
 
 class BackendRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    def test_adaptive_sync_service_is_static_and_default_off(self):
+        root = MODULE_PATH.parents[1]
+        unit = (
+            root / "systemd/system/t2-touchid-adaptive-sync.service"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Type=oneshot", unit)
+        self.assertIn(
+            "ExecStart=/usr/local/sbin/t2-touchid-manage "
+            "sync-user-catacomb "
+            "--acknowledge-adaptive-template-persistence "
+            "--acknowledge-local-catacomb-persistence",
+            unit,
+        )
+        self.assertNotIn("[Install]", unit)
+        config = (root / "t2-touchid.conf.example").read_text(encoding="utf-8")
+        self.assertIn("T2_TOUCHID_AUTO_SYNC_ADAPTIVE=0", config)
+        installer = (root / "install.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "ensure_config_default T2_TOUCHID_AUTO_SYNC_ADAPTIVE 0",
+            installer,
+        )
+
+    async def test_adaptive_sync_dispatch_is_explicit_and_exact(self):
+        backend = MODULE.T2Backend.__new__(MODULE.T2Backend)
+        backend.auto_sync_adaptive = False
+        backend.adaptive_sync_tasks = set()
+        backend._request_adaptive_sync = AsyncMock()
+        backend.schedule_adaptive_sync()
+        backend._request_adaptive_sync.assert_not_called()
+
+        backend.auto_sync_adaptive = True
+        backend.schedule_adaptive_sync()
+        await asyncio.gather(*tuple(backend.adaptive_sync_tasks))
+        backend._request_adaptive_sync.assert_awaited_once_with()
+
+    async def test_adaptive_sync_requests_only_the_static_systemd_unit(self):
+        backend = MODULE.T2Backend.__new__(MODULE.T2Backend)
+        process = mock.Mock()
+        process.communicate = AsyncMock(return_value=(b"", b""))
+        process.returncode = 0
+        with mock.patch.object(
+            MODULE.asyncio,
+            "create_subprocess_exec",
+            AsyncMock(return_value=process),
+        ) as spawn:
+            await backend._request_adaptive_sync()
+        spawn.assert_awaited_once_with(
+            "/usr/bin/systemctl",
+            "start",
+            "--no-block",
+            "t2-touchid-adaptive-sync.service",
+            stdout=MODULE.asyncio.subprocess.DEVNULL,
+            stderr=MODULE.asyncio.subprocess.PIPE,
+        )
+
     async def test_runtime_policy_routes_complete_named_and_legacy_alias(self):
         backend = MODULE.T2Backend.__new__(MODULE.T2Backend)
         backend.operation_lock = asyncio.Lock()

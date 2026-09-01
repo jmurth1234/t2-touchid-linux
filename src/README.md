@@ -157,6 +157,13 @@ The installed, no-argument `t2-touchid-fprint-status` command feeds it only the
 existing root-only fresh reconciled identity collector and prints the redacted
 projection. It is diagnostic-only and cannot rename, enroll, or delete.
 
+The normal daemon also supports default-off automatic adaptive-template
+persistence through `T2_TOUCHID_AUTO_SYNC_ADAPTIVE=1`. Only an already-emitted
+successful match schedules the static systemd oneshot; negative and unknown
+verdicts do not. The oneshot invokes the same typed, blocking
+`sync-user-catacomb` journal and exact Apple user-then-master save order, so
+authentication never waits for or inherits a persistence result.
+
 The fprint enrollment consumer treats that projection as a mutation boundary
 as well as presentation. Under the worker's owned operation lock and Bridge
 generation, it requires the broker's fresh reconciled projection to be

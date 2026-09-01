@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Persist Apple T2 Touch ID adaptive template updates
+Documentation=file:/opt/t2-touchid/README.md
+Requires=t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service
+After=t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/t2-touchid-manage sync-user-catacomb --acknowledge-adaptive-template-persistence --acknowledge-local-catacomb-persistence
+StateDirectory=t2-touchid
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectKernelModules=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_LOCAL AF_NETLINK AF_INET6
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service

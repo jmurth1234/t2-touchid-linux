@@ -658,6 +658,27 @@ sudo t2-touchid-manage sync-user-catacomb \
 An already-clean result is a read-only no-op. Any ambiguous dispatch or host
 commit remains blocking and must not be retried blindly.
 
+Automatic post-match persistence is installed but defaults off. To opt in,
+set the following exact root-owned configuration value, then restart fprintd:
+
+```ini
+T2_TOUCHID_AUTO_SYNC_ADAPTIVE=1
+```
+
+```sh
+sudoedit /etc/t2-touchid.conf
+sudo systemctl restart fprintd.service
+```
+
+This opt-in acknowledges that every successful match may update authenticated
+template state and the committed local Catacomb. fprintd emits the terminal
+authentication verdict first, then asks the static
+`t2-touchid-adaptive-sync.service` to run the same journaled user-then-master
+operation. Scheduling or persistence failure cannot replace a successful
+authentication verdict; the unit and mutation journal retain diagnostic or
+blocking state instead. Negative and unknown matches never schedule a write.
+Set the value back to `0` and restart fprintd to disable automatic persistence.
+
 ```sh
 sudo t2-touchid-manage status
 sudo t2-touchid-identities

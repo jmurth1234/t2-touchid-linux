@@ -136,8 +136,10 @@ evidence, not intent.
       alias for the configured Apple user.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
       verification on the proven machine.
-- [ ] Replace the verification-only fprintd compatibility alias with truthful
+- [x] Replace the verification-only fprintd compatibility alias with truthful
       per-identity listing derived from fresh reconciled T2 inventory.
+- [x] Add default-off, post-verdict adaptive Catacomb persistence through a
+      separately journaled static service; negative matches never write.
 - [x] Define a fail-closed identifier-free projection onto fprint's ten standard
       finger names; incomplete, duplicate, or legacy labels require migration
       and never produce a misleading partial per-finger list.

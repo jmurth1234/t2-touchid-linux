@@ -36,6 +36,7 @@ ensure_config_default() {
 ensure_config_default T2_TOUCHID_MACOS_USER_ID 501
 ensure_config_default T2_TOUCHID_SPECIAL_BAG -501
 ensure_config_default T2_TOUCHID_ENROLLED_FINGER right-index-finger
+ensure_config_default T2_TOUCHID_AUTO_SYNC_ADAPTIVE 0
 ensure_config_default T2_TOUCHID_ENABLE_ACM_RESEARCH 0
 ensure_config_default T2_TOUCHID_AKS_PLATFORM_ASID 0
 ensure_config_default T2_TOUCHID_AKS_PLATFORM_CDHASH ''
@@ -44,6 +45,11 @@ chmod 0600 /etc/t2-touchid.conf
 acm_research=$(sed -n 's/^T2_TOUCHID_ENABLE_ACM_RESEARCH=//p' /etc/t2-touchid.conf | tail -n 1)
 if [[ $acm_research != 0 && $acm_research != 1 ]]; then
   echo "T2_TOUCHID_ENABLE_ACM_RESEARCH must be exactly 0 or 1." >&2
+  exit 2
+fi
+auto_sync_adaptive=$(sed -n 's/^T2_TOUCHID_AUTO_SYNC_ADAPTIVE=//p' /etc/t2-touchid.conf | tail -n 1)
+if [[ $auto_sync_adaptive != 0 && $auto_sync_adaptive != 1 ]]; then
+  echo "T2_TOUCHID_AUTO_SYNC_ADAPTIVE must be exactly 0 or 1." >&2
   exit 2
 fi
 mapfile -t macos_user_ids < <(
