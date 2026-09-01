@@ -3150,6 +3150,15 @@ does not install a socket unit, service template, executable entry point, or
 public client, so this does not widen the live attack surface before the
 endpoint-7 hardware gate passes.
 
+The matching non-exposed client transport now sends one canonical request and
+receives one bounded seqpacket response. It rejects response truncation and
+ancillary descriptors just as the service rejects them on input. A preflight
+reply must repeat the exact requested operation, while `identities/inventory`
+accepts only the typed inventory response. Cross-command replies, operation
+substitution, malformed responses, stream sockets, retries, and fallback
+commands all fail closed. There is still no socket-path constructor or public
+CLI, so this completes transport mechanics without activating the service.
+
 The protected mapping administrator now has one concrete disabled-state writer.
 `t2-touchid-user-map bind-disabled` requires an explicit already-provisioned
 Apple UID/account UUID/bag UUID, explicit capabilities, the canonical private

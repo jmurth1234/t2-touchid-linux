@@ -356,9 +356,8 @@ operation and an `identities` command fixed to the inventory policy. It accepts
 no UID, UUID, alias, keybag path, raw operation number, or file descriptor; its
 bounded responses expose only policy/readiness state, synchronous read-only
 handoff proof, and—only for authorized inventory—the reconciled labels. The
-internal
-`t2_user_broker.py`
-transaction now keeps one pinned peer, mapping writer lock, biometric operation
+internal `t2_user_broker.py` transaction now keeps one pinned peer, mapping
+writer lock, biometric operation
 lock, Bridge generation, stable live evidence, and both policy grants together
 through a synchronous consumer handoff. It derives the target from the kernel
 peer UID and never accepts an Apple identifier from the request. Public request
@@ -366,8 +365,8 @@ exposure, operation-specific mutating consumers, and per-user relocking remain
 incomplete.
 
 The first operation-specific consumer and its dispatcher are also internal and
-read-only. The live
-session retains a canonical identifier-free identity list only after the exact
+read-only. The live session retains a canonical identifier-free identity list
+only after the exact
 local Catacomb, per-user SEP list, global SEP list, clean Catacomb state, alias
 binding, and Bridge generation have survived the broker's stable recollection.
 The `inventory` policy handoff can return only sequential slots, labels, count,
@@ -383,6 +382,12 @@ then independently proves it is a connected, non-listening Unix seqpacket
 socket. The root process dispatches one request and closes the descriptor on
 every outcome. No daemon loop, socket path, unit, executable, or enablement is
 installed yet.
+
+The matching non-exposed client core sends exactly one canonical request and
+receives one bounded seqpacket response with the same truncation/ancillary-data
+rejection. It requires a preflight response to repeat the requested operation
+and an identities request to receive only the inventory response shape. It has
+no socket path, connection constructor, fallback command, or installed CLI.
 
 The same adapter now derives the caller's account generation itself rather than
 accepting an opaque digest from its future client. The deliberately conservative

@@ -521,6 +521,17 @@ def receive_request(connection: socket.socket) -> BrokerRequest:
     return decode_request(data)
 
 
+def send_request(connection: socket.socket, request: BrokerRequest) -> None:
+    _require_seqpacket(connection)
+    encoded = encode_request(request)
+    try:
+        sent = connection.send(encoded)
+    except OSError as error:
+        raise UserBrokerProtocolError("broker request send failed") from error
+    if sent != len(encoded):
+        raise UserBrokerProtocolError("broker request send was incomplete")
+
+
 def send_response(
     connection: socket.socket,
     response: PreflightResponse | InventoryResponse,
@@ -533,3 +544,22 @@ def send_response(
         raise UserBrokerProtocolError("broker response send failed") from error
     if sent != len(encoded):
         raise UserBrokerProtocolError("broker response send was incomplete")
+
+
+def receive_response(
+    connection: socket.socket,
+) -> PreflightResponse | InventoryResponse:
+    _require_seqpacket(connection)
+    try:
+        data, ancillary, flags, _address = connection.recvmsg(
+            MAX_RESPONSE_BYTES,
+            0,
+        )
+    except OSError as error:
+        raise UserBrokerProtocolError("broker response receive failed") from error
+    forbidden_flags = socket.MSG_TRUNC | socket.MSG_CTRUNC
+    if ancillary or flags & forbidden_flags:
+        raise UserBrokerProtocolError(
+            "broker response is truncated or contains ancillary data"
+        )
+    return decode_response(data)

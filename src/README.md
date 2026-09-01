@@ -154,6 +154,15 @@ encoding failures produce no fallback operation. The dispatcher returns one
 canonical packet, then its caller owns connection closure. No listener or
 public service installs these modules yet.
 
+`t2_user_broker_client.py` completes the other half of the one-packet boundary
+without choosing or opening a socket path. `send_request` and
+`receive_response` require Unix seqpacket descriptors, exact whole-message
+sends, bounded receives, no truncation, no ancillary descriptors, canonical
+JSON, and typed responses. The client additionally binds preflight replies to
+the exact requested operation and permits only the inventory response for an
+`identities/inventory` request. It offers no retry or command fallback and is
+not installed as an executable.
+
 `t2_user_broker_socket_activation.py` is a non-installed one-connection process
 adapter for a future systemd `Accept=yes` unit. It calls
 `sd_listen_fds_with_names(1)`, inheriting systemd's PID/PIDFD activation checks,

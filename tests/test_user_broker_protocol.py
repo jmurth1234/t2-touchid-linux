@@ -344,6 +344,55 @@ class UserBrokerProtocolTests(unittest.TestCase):
             os.close(descriptor)
             os.close(write_descriptor)
 
+    def test_response_socket_boundary_rejects_truncation_and_descriptors(self):
+        stream_left, stream_right = socket.socketpair(
+            socket.AF_UNIX, socket.SOCK_STREAM
+        )
+        self.addCleanup(stream_left.close)
+        self.addCleanup(stream_right.close)
+        with self.assertRaises(protocol.UserBrokerProtocolError):
+            protocol.receive_response(stream_left)
+
+        left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        right.send(b"x" * (protocol.MAX_RESPONSE_BYTES + 1))
+        with self.assertRaisesRegex(
+            protocol.UserBrokerProtocolError, "truncated"
+        ):
+            protocol.receive_response(left)
+
+        response = protocol.PreflightResponse(
+            "verify",
+            "operation-policy-denied",
+            policy.OPERATION_POLICIES["verify"].action,
+            False,
+            False,
+            False,
+            "alias-absent",
+            False,
+            False,
+        )
+        descriptor, write_descriptor = os.pipe()
+        try:
+            right.sendmsg(
+                [protocol.encode_response(response)],
+                [
+                    (
+                        socket.SOL_SOCKET,
+                        socket.SCM_RIGHTS,
+                        array.array("i", [descriptor]),
+                    )
+                ],
+            )
+            with self.assertRaisesRegex(
+                protocol.UserBrokerProtocolError, "ancillary"
+            ):
+                protocol.receive_response(left)
+        finally:
+            os.close(descriptor)
+            os.close(write_descriptor)
+
 
 if __name__ == "__main__":
     unittest.main()
