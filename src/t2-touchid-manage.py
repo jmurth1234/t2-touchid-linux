@@ -508,6 +508,68 @@ def run_rename(
     }
 
 
+def require_fprint_name(name: object) -> str:
+    if name not in t2_fprint_projection.FINGER_NAME_SET:
+        raise IdentityManagementError(
+            "fprint migration requires one canonical anatomical finger name"
+        )
+    return name
+
+
+def run_fprint_rename_preflight(
+    configuration: dict[str, object], *, slot: int, new_name: str
+) -> dict[str, object]:
+    """Forecast one canonical label migration without persisting or dispatching."""
+
+    require_fprint_name(new_name)
+    if t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
+        raise IdentityManagementError(
+            "an earlier biometric mutation is unfinished or awaits verification"
+        )
+    if os.path.lexists(STORE_ROOT / "prepare") or os.path.lexists(
+        STORE_ROOT / "commit"
+    ):
+        raise IdentityManagementError("a local Catacomb transaction needs recovery")
+    keybag_runtime(configuration["special_bag"])
+    _store, _host, local, _backup = current_host_and_local(configuration)
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"], configuration["interface"], _port(), timeout=60
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        current = t2_fprint_projection.project(
+            t2_identity_inventory.summarize(local, live)
+        )
+        plan = t2_identity_rename.plan(
+            local, live, slot=slot, new_name=new_name
+        )
+        renamed_local = t2_catacomb_codec.decode_user_catacomb(
+            plan.archive, configuration["apple_uid"]
+        )
+        projected = t2_fprint_projection.project(
+            t2_identity_inventory.summarize(renamed_local, live)
+        )
+    return {
+        "schema_version": 1,
+        "fprint_rename_preflight_succeeded": True,
+        "slot": slot,
+        "previous_name": plan.previous_name,
+        "name": new_name,
+        "identity_count": projected.reconciled_identity_count,
+        "current_fprint_projection_complete": current.complete,
+        "projected_fprint_projection_complete": projected.complete,
+        "projected_unassigned_identity_count": (
+            projected.unassigned_identity_count
+        ),
+        "projected_duplicate_name_count": (
+            projected.duplicate_finger_name_count
+        ),
+        "mutation_performed": False,
+        "identifiers_redacted": True,
+    }
+
+
 def _persist_delete(
     configuration: dict[str, object],
     *,
@@ -1113,6 +1175,23 @@ def main() -> int:
     rename.add_argument(
         "--acknowledge-local-catacomb-persistence", action="store_true"
     )
+    plan_fprint_rename = subparsers.add_parser(
+        "plan-fprint-rename",
+        help="validate one canonical fprint label migration without mutation",
+    )
+    plan_fprint_rename.add_argument("--slot", type=int, required=True)
+    plan_fprint_rename.add_argument("--name", required=True)
+    rename_fprint = subparsers.add_parser(
+        "rename-fprint", help="assign one canonical fprint finger name"
+    )
+    rename_fprint.add_argument("--slot", type=int, required=True)
+    rename_fprint.add_argument("--name", required=True)
+    rename_fprint.add_argument(
+        "--acknowledge-identity-label-mutation", action="store_true"
+    )
+    rename_fprint.add_argument(
+        "--acknowledge-local-catacomb-persistence", action="store_true"
+    )
     delete = subparsers.add_parser(
         "delete", help="delete one reconciled fingerprint identity"
     )
@@ -1149,7 +1228,7 @@ def main() -> int:
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("run through sudo from the mapped desktop user")
-    if args.command == "rename" and not (
+    if args.command in {"rename", "rename-fprint"} and not (
         args.acknowledge_identity_label_mutation
         and args.acknowledge_local_catacomb_persistence
     ):
@@ -1188,11 +1267,17 @@ def main() -> int:
                     result = run_delete_recovery(configuration)
             elif args.command == "plan-delete":
                 result = run_delete_preflight(configuration, slot=args.slot)
+            elif args.command == "plan-fprint-rename":
+                result = run_fprint_rename_preflight(
+                    configuration, slot=args.slot, new_name=args.name
+                )
             elif args.command == "delete":
                 with sleep_inhibitor():
                     result = run_delete(configuration, slot=args.slot)
             else:
                 with sleep_inhibitor():
+                    if args.command == "rename-fprint":
+                        require_fprint_name(args.name)
                     result = run_rename(
                         configuration, slot=args.slot, new_name=args.name
                     )

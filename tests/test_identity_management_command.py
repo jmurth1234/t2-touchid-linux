@@ -282,6 +282,94 @@ class IdentityManagementCommandTests(unittest.TestCase):
         self.assertEqual(result["name"], "Linux enrolled finger")
         self.assertEqual(result["identity_count_after"], 1)
 
+    def test_fprint_rename_preflight_forecasts_without_mutation(self):
+        configuration = {
+            "apple_uid": 501,
+            "special_bag": -501,
+            "host": "host",
+            "interface": "interface",
+        }
+        local = object()
+        renamed = object()
+        plan = SimpleNamespace(
+            archive=b"renamed", previous_name="Finger 2"
+        )
+        current = SimpleNamespace(complete=False)
+        projected = SimpleNamespace(
+            complete=True,
+            reconciled_identity_count=2,
+            unassigned_identity_count=0,
+            duplicate_finger_name_count=0,
+        )
+        lease_context = mock.MagicMock()
+        lease_context.__enter__.return_value = object()
+        lease_context.__exit__.return_value = False
+        with (
+            mock.patch.object(
+                MODULE.t2_mutation_registry,
+                "blocks_new_mutation",
+                return_value=False,
+            ),
+            mock.patch.object(MODULE.os.path, "lexists", return_value=False),
+            mock.patch.object(MODULE, "keybag_runtime"),
+            mock.patch.object(
+                MODULE,
+                "current_host_and_local",
+                return_value=(object(), {}, local, Path("backup")),
+            ),
+            mock.patch.object(MODULE, "_port", return_value=55555),
+            mock.patch.object(
+                MODULE.t2_bridge_connection.BridgeConnectionLease,
+                "connect",
+                return_value=lease_context,
+            ),
+            mock.patch.object(
+                MODULE.t2_bridge_inventory,
+                "collect_stable_private_inventory",
+                return_value={"live": True},
+            ),
+            mock.patch.object(
+                MODULE.t2_identity_inventory,
+                "summarize",
+                side_effect=({"current": True}, {"projected": True}),
+            ),
+            mock.patch.object(
+                MODULE.t2_identity_rename, "plan", return_value=plan
+            ) as planner,
+            mock.patch.object(
+                MODULE.t2_catacomb_codec,
+                "decode_user_catacomb",
+                return_value=renamed,
+            ),
+            mock.patch.object(
+                MODULE.t2_fprint_projection,
+                "project",
+                side_effect=(current, projected),
+            ),
+            mock.patch.object(MODULE.t2_mutation_journal, "create") as create,
+        ):
+            result = MODULE.run_fprint_rename_preflight(
+                configuration, slot=2, new_name="left-thumb"
+            )
+        planner.assert_called_once_with(
+            local, {"live": True}, slot=2, new_name="left-thumb"
+        )
+        create.assert_not_called()
+        self.assertTrue(result["fprint_rename_preflight_succeeded"])
+        self.assertTrue(result["projected_fprint_projection_complete"])
+        self.assertFalse(result["mutation_performed"])
+        self.assertTrue(result["identifiers_redacted"])
+
+    def test_fprint_rename_requires_canonical_name(self):
+        with self.assertRaisesRegex(
+            MODULE.IdentityManagementError, "canonical anatomical"
+        ):
+            MODULE.require_fprint_name("Linux enrolled finger")
+        self.assertEqual(
+            MODULE.require_fprint_name("right-index-finger"),
+            "right-index-finger",
+        )
+
     def test_management_mutations_never_manufacture_password_attestation(self):
         source = (SOURCE / "t2-touchid-manage.py").read_text(encoding="utf-8")
         self.assertNotIn("password_fallback_verified=True", source)

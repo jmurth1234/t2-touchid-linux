@@ -638,14 +638,18 @@ now forms a unique canonical fprint projection; until that becomes true,
 fprintd deliberately keeps exposing the single compatibility alias.
 
 Rename one current identity label (this does not alter its fingerprint
-template):
+template). For fprint migration, preview and commit only a canonical anatomical
+name:
 
 ```sh
 sudo t2-touchid-manage status
 sudo t2-touchid-identities
-sudo t2-touchid-manage rename \
+sudo t2-touchid-manage plan-fprint-rename \
   --slot 2 \
-  --name "New label" \
+  --name right-index-finger
+sudo t2-touchid-manage rename-fprint \
+  --slot 2 \
+  --name right-index-finger \
   --acknowledge-identity-label-mutation \
   --acknowledge-local-catacomb-persistence
 ```
