@@ -656,7 +656,20 @@ sudo t2-touchid-manage sync-user-catacomb \
 ```
 
 An already-clean result is a read-only no-op. Any ambiguous dispatch or host
-commit remains blocking and must not be retried blindly.
+commit remains blocking and must not be retried blindly. Inspect status, then
+recover one exact ambiguous adaptive save through a fresh Bridge generation:
+
+```sh
+sudo t2-touchid-manage status
+sudo t2-touchid-manage recover-catacomb-sync \
+  --acknowledge-interrupted-adaptive-sync-recovery \
+  --acknowledge-adaptive-template-persistence \
+  --acknowledge-local-catacomb-persistence
+```
+
+Recovery proves the committed host snapshot, identity set, mapping, Catacomb,
+and fresh connection before either closing an already-clean operation or
+performing one forward save. Another ambiguous result remains blocking.
 
 Automatic post-match persistence is installed but defaults off. To opt in,
 set the following exact root-owned configuration value, then restart fprintd:
@@ -677,6 +690,8 @@ authentication verdict first, then asks the static
 operation. Scheduling or persistence failure cannot replace a successful
 authentication verdict; the unit and mutation journal retain diagnostic or
 blocking state instead. Negative and unknown matches never schedule a write.
+The oneshot waits two seconds before collection so late match/cancel callbacks
+can settle; multiple requests during that interval coalesce into the same save.
 Set the value back to `0` and restart fprintd to disable automatic persistence.
 
 ```sh

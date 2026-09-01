@@ -7,6 +7,7 @@ After=t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.ser
 
 [Service]
 Type=oneshot
+ExecStartPre=/usr/bin/sleep 2
 ExecStart=/usr/local/sbin/t2-touchid-manage sync-user-catacomb --acknowledge-adaptive-template-persistence --acknowledge-local-catacomb-persistence
 StateDirectory=t2-touchid
 StateDirectoryMode=0700

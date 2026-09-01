@@ -643,13 +643,39 @@ def _catacomb_clean_state(
     return selected[0]["needs_save"], masters[0]["needs_save"]
 
 
+def pending_catacomb_sync_recovery() -> tuple[
+    Path, t2_catacomb_sync_journal.CatacombSyncHistory
+]:
+    found = []
+    for entry in MUTATION_ROOT.iterdir():
+        if not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl",
+            entry.name,
+        ) or not t2_mutation_journal.secure_regular_file(entry):
+            raise IdentityManagementError("mutation journal directory is unsafe")
+        records = t2_mutation_journal.read(entry)
+        evidence = records[0].get("evidence") if records else None
+        if isinstance(evidence, dict) and evidence.get("operation_kind") == (
+            "sync-user-catacomb"
+        ):
+            history = t2_catacomb_sync_journal.validate_history(records)
+            if history.phase is t2_catacomb_sync_journal.CatacombSyncPhase.OUTCOME_UNKNOWN:
+                found.append((entry, history))
+    if len(found) != 1:
+        raise IdentityManagementError(
+            "exactly one ambiguous adaptive sync is required for recovery"
+        )
+    return found[0]
+
+
 def run_user_catacomb_sync(
-    configuration: dict[str, object]
+    configuration: dict[str, object], *, recovery: bool = False
 ) -> dict[str, object]:
     """Persist one existing adaptive user update without changing identities."""
 
     require_declared_mapping_capability(configuration, "verify")
-    if t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
+    recovery_entry = pending_catacomb_sync_recovery() if recovery else None
+    if not recovery and t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
         raise IdentityManagementError(
             "an earlier biometric mutation is unfinished or awaits verification"
         )
@@ -677,28 +703,6 @@ def run_user_catacomb_sync(
         user_dirty, master_dirty = _catacomb_clean_state(
             live, configuration["apple_uid"]
         )
-        if not user_dirty and not master_dirty:
-            return {
-                "schema_version": 1,
-                "catacomb_already_clean": True,
-                "catacomb_sync_performed": False,
-                "identity_count": len(local.identities),
-                "identifiers_redacted": True,
-            }
-        if user_dirty is not True or master_dirty is not False:
-            raise IdentityManagementError(
-                "Catacomb sync refuses an unexpected dirty component set"
-            )
-        baseline = t2_baseline.build_baseline(
-            host=host,
-            live=live,
-            caller_linux_uid=configuration["linux_uid"],
-            target_linux_uid=configuration["linux_uid"],
-            linux_boot_uuid=BOOT_ID.read_text(encoding="ascii").strip(),
-            mapping_generation=configuration["mapping_generation"],
-            backup_reference=backup.name,
-            password_fallback_verified=False,
-        )
         initial_components = store.read_committed_components()
         master = t2_catacomb_codec.decode_master_catacomb(
             initial_components["master.cat"]
@@ -707,39 +711,145 @@ def run_user_catacomb_sync(
             initial_components, component_names
         )
         initial_identity_snapshot = _identity_snapshot(local)
-        operation_id = str(uuid.uuid4())
-        journal_path = MUTATION_ROOT / f"{operation_id}.jsonl"
-        t2_mutation_journal.create(
-            journal_path,
-            "sync-user-catacomb",
-            baseline,
-            operation_id=operation_id,
-        )
-        t2_catacomb_sync_journal.append_checked(
-            journal_path,
-            operation_id,
-            "CATACOMB_SYNC_INTENT",
-            {
-                "connection_generation": lease.connection_generation,
-                "mapping_generation": configuration["mapping_generation"],
-                "descriptor_snapshot_sha256": hashlib.sha256(
-                    t2_mutation_journal.canonical(
-                        [hashlib.sha256(value).hexdigest() for value in descriptors]
-                    )
-                ).hexdigest(),
-                "initial_component_snapshot_sha256": initial_component_snapshot,
-                "initial_sep_catacomb_hash": live["catacomb"]["hash"],
-                "identity_snapshot_sha256": initial_identity_snapshot,
-            },
-        )
+        descriptor_snapshot = hashlib.sha256(
+            t2_mutation_journal.canonical(
+                [hashlib.sha256(value).hexdigest() for value in descriptors]
+            )
+        ).hexdigest()
+        if recovery_entry is not None:
+            journal_path, recovery_history = recovery_entry
+            if (
+                recovery_history.recovery_attempted
+                or recovery_history.intent is None
+                or recovery_history.host_commit is None
+                or recovery_history.baseline["mapping_generation"]
+                != configuration["mapping_generation"]
+                or recovery_history.baseline["sep_catacomb"]["uuid"]
+                != live["catacomb"]["uuid"]
+                or initial_component_snapshot
+                != recovery_history.host_commit[
+                    "final_component_snapshot_sha256"
+                ]
+                or initial_identity_snapshot
+                != recovery_history.intent["identity_snapshot_sha256"]
+                or lease.connection_generation
+                in {
+                    recovery_history.baseline["connection_generation"],
+                    recovery_history.intent["connection_generation"],
+                }
+            ):
+                raise IdentityManagementError(
+                    "adaptive sync recovery binding is not exact"
+                )
+            operation_id = recovery_history.operation_id
+            baseline = recovery_history.baseline
+            if not user_dirty and not master_dirty:
+                t2_catacomb_sync_journal.append_checked(
+                    journal_path,
+                    operation_id,
+                    "CATACOMB_SYNC_RECOVERED_CLEAN",
+                    {
+                        "connection_generation": lease.connection_generation,
+                        "final_component_snapshot_sha256": initial_component_snapshot,
+                        "identity_snapshot_sha256": initial_identity_snapshot,
+                        "final_sep_catacomb_hash": live["catacomb"]["hash"],
+                        "sep_clean": True,
+                        "local_live_equal": True,
+                    },
+                )
+                return {
+                    "schema_version": 1,
+                    "catacomb_sync_recovery_performed": True,
+                    "catacomb_sync_performed": False,
+                    "identity_count": len(local.identities),
+                    "identifiers_redacted": True,
+                }
+            if user_dirty is not True or master_dirty is not False:
+                raise IdentityManagementError(
+                    "adaptive sync recovery refuses the current dirty set"
+                )
+            t2_catacomb_sync_journal.append_checked(
+                journal_path,
+                operation_id,
+                "CATACOMB_SYNC_RECOVERY_INTENT",
+                {
+                    "connection_generation": lease.connection_generation,
+                    "mapping_generation": configuration["mapping_generation"],
+                    "descriptor_snapshot_sha256": descriptor_snapshot,
+                    "initial_component_snapshot_sha256": initial_component_snapshot,
+                    "initial_sep_catacomb_hash": live["catacomb"]["hash"],
+                    "identity_snapshot_sha256": initial_identity_snapshot,
+                    "prior_final_component_snapshot_sha256": initial_component_snapshot,
+                },
+            )
+        else:
+            if not user_dirty and not master_dirty:
+                return {
+                    "schema_version": 1,
+                    "catacomb_already_clean": True,
+                    "catacomb_sync_performed": False,
+                    "identity_count": len(local.identities),
+                    "identifiers_redacted": True,
+                }
+            if user_dirty is not True or master_dirty is not False:
+                raise IdentityManagementError(
+                    "Catacomb sync refuses an unexpected dirty component set"
+                )
+            baseline = t2_baseline.build_baseline(
+                host=host,
+                live=live,
+                caller_linux_uid=configuration["linux_uid"],
+                target_linux_uid=configuration["linux_uid"],
+                linux_boot_uuid=BOOT_ID.read_text(encoding="ascii").strip(),
+                mapping_generation=configuration["mapping_generation"],
+                backup_reference=backup.name,
+                password_fallback_verified=False,
+            )
+            operation_id = str(uuid.uuid4())
+            journal_path = MUTATION_ROOT / f"{operation_id}.jsonl"
+            t2_mutation_journal.create(
+                journal_path,
+                "sync-user-catacomb",
+                baseline,
+                operation_id=operation_id,
+            )
+            t2_catacomb_sync_journal.append_checked(
+                journal_path,
+                operation_id,
+                "CATACOMB_SYNC_INTENT",
+                {
+                    "connection_generation": lease.connection_generation,
+                    "mapping_generation": configuration["mapping_generation"],
+                    "descriptor_snapshot_sha256": descriptor_snapshot,
+                    "initial_component_snapshot_sha256": initial_component_snapshot,
+                    "initial_sep_catacomb_hash": live["catacomb"]["hash"],
+                    "identity_snapshot_sha256": initial_identity_snapshot,
+                },
+            )
         try:
             store.begin_stage(set(component_names))
         except BaseException as error:
             t2_catacomb_sync_journal.append_checked(
                 journal_path,
                 operation_id,
-                "CATACOMB_SYNC_ABORTED_BEFORE_DISPATCH",
-                {"reason": "host-store-unavailable", "mutation_possible": False},
+                (
+                    "CATACOMB_SYNC_OUTCOME_UNKNOWN"
+                    if recovery_entry is not None
+                    else "CATACOMB_SYNC_ABORTED_BEFORE_DISPATCH"
+                ),
+                (
+                    {
+                        "stage": "recovery-host-store",
+                        "reason": "sync-error",
+                        "mutation_possible": True,
+                        "host_commit_possible": False,
+                    }
+                    if recovery_entry is not None
+                    else {
+                        "reason": "host-store-unavailable",
+                        "mutation_possible": False,
+                    }
+                ),
             )
             raise IdentityManagementError(
                 "Catacomb sync could not create a local transaction"
@@ -899,6 +1009,7 @@ def run_user_catacomb_sync(
         "schema_version": 1,
         "catacomb_already_clean": False,
         "catacomb_sync_performed": True,
+        "catacomb_sync_recovery_performed": recovery_entry is not None,
         "identity_count": len(local.identities),
         "identifiers_redacted": True,
     }
@@ -1618,6 +1729,20 @@ def main() -> int:
     sync_user.add_argument(
         "--acknowledge-local-catacomb-persistence", action="store_true"
     )
+    recover_sync = subparsers.add_parser(
+        "recover-catacomb-sync",
+        help="reconcile one ambiguous adaptive Catacomb sync",
+    )
+    recover_sync.add_argument(
+        "--acknowledge-interrupted-adaptive-sync-recovery",
+        action="store_true",
+    )
+    recover_sync.add_argument(
+        "--acknowledge-adaptive-template-persistence", action="store_true"
+    )
+    recover_sync.add_argument(
+        "--acknowledge-local-catacomb-persistence", action="store_true"
+    )
     subparsers.add_parser(
         "verify-post-reboot", help="verify a reconciled rename after reboot"
     )
@@ -1655,6 +1780,12 @@ def main() -> int:
         and args.acknowledge_local_catacomb_persistence
     ):
         parser.error("both adaptive Catacomb sync acknowledgements are required")
+    if args.command == "recover-catacomb-sync" and not (
+        args.acknowledge_interrupted_adaptive_sync_recovery
+        and args.acknowledge_adaptive_template_persistence
+        and args.acknowledge_local_catacomb_persistence
+    ):
+        parser.error("all adaptive Catacomb recovery acknowledgements are required")
     if args.command == "recover" and not (
         args.acknowledge_interrupted_rename_recovery
     ):
@@ -1670,7 +1801,11 @@ def main() -> int:
         # Adaptive sync is dispatched only after an already-successful match
         # and its static service requires the active readiness unit. Restarting
         # readiness here would stop both fprintd and this dependent oneshot.
-        if args.command not in {"status", "sync-user-catacomb"}:
+        if args.command not in {
+            "status",
+            "sync-user-catacomb",
+            "recover-catacomb-sync",
+        }:
             warm_sensor()
         with operation_lock():
             if args.command == "status":
@@ -1694,6 +1829,9 @@ def main() -> int:
             elif args.command == "sync-user-catacomb":
                 with sleep_inhibitor():
                     result = run_user_catacomb_sync(configuration)
+            elif args.command == "recover-catacomb-sync":
+                with sleep_inhibitor():
+                    result = run_user_catacomb_sync(configuration, recovery=True)
             elif args.command == "delete":
                 with sleep_inhibitor():
                     result = run_delete(configuration, slot=args.slot)

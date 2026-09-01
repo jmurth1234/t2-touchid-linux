@@ -1333,6 +1333,7 @@ class BackendRecoveryTests(unittest.IsolatedAsyncioTestCase):
             root / "systemd/system/t2-touchid-adaptive-sync.service"
         ).read_text(encoding="utf-8")
         self.assertIn("Type=oneshot", unit)
+        self.assertIn("ExecStartPre=/usr/bin/sleep 2", unit)
         self.assertIn(
             "ExecStart=/usr/local/sbin/t2-touchid-manage "
             "sync-user-catacomb "

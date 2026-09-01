@@ -31,6 +31,9 @@ class CatacombSyncHistory:
     baseline: dict[str, Any]
     record_count: int
     head_hash: str
+    intent: dict[str, Any] | None
+    host_commit: dict[str, Any] | None
+    recovery_attempted: bool
 
 
 def _sha(value: Any, field: str) -> None:
@@ -67,6 +70,7 @@ def validate_history(records: list[dict[str, Any]]) -> CatacombSyncHistory:
     phase = CatacombSyncPhase.BASELINE
     intent: dict[str, Any] | None = None
     host_commit: dict[str, Any] | None = None
+    recovery_attempted = False
     for index, record in enumerate(records[1:], 1):
         item = record.get("evidence")
         milestone = record.get("milestone")
@@ -165,6 +169,93 @@ def validate_history(records: list[dict[str, Any]]) -> CatacombSyncHistory:
             ):
                 raise CatacombSyncJournalError("Catacomb sync ambiguity is invalid")
             phase = CatacombSyncPhase.OUTCOME_UNKNOWN
+        elif (
+            milestone == "CATACOMB_SYNC_RECOVERY_INTENT"
+            and phase is CatacombSyncPhase.OUTCOME_UNKNOWN
+            and not recovery_attempted
+        ):
+            if set(item) != {
+                "connection_generation",
+                "mapping_generation",
+                "descriptor_snapshot_sha256",
+                "initial_component_snapshot_sha256",
+                "initial_sep_catacomb_hash",
+                "identity_snapshot_sha256",
+                "prior_final_component_snapshot_sha256",
+            }:
+                raise CatacombSyncJournalError(
+                    "Catacomb sync recovery intent is invalid"
+                )
+            _uuid(item["connection_generation"], "connection generation")
+            for field in set(item) - {"connection_generation"}:
+                _sha(item[field], field)
+            if (
+                intent is None
+                or host_commit is None
+                or item["connection_generation"]
+                in {
+                    evidence["baseline"]["connection_generation"],
+                    intent["connection_generation"],
+                }
+                or item["mapping_generation"]
+                != evidence["baseline"]["mapping_generation"]
+                or item["identity_snapshot_sha256"]
+                != intent["identity_snapshot_sha256"]
+                or item["initial_component_snapshot_sha256"]
+                != host_commit["final_component_snapshot_sha256"]
+                or item["prior_final_component_snapshot_sha256"]
+                != host_commit["final_component_snapshot_sha256"]
+            ):
+                raise CatacombSyncJournalError(
+                    "Catacomb sync recovery binding changed"
+                )
+            intent = item
+            host_commit = None
+            recovery_attempted = True
+            phase = CatacombSyncPhase.INTENT
+        elif (
+            milestone == "CATACOMB_SYNC_RECOVERED_CLEAN"
+            and phase is CatacombSyncPhase.OUTCOME_UNKNOWN
+            and not recovery_attempted
+        ):
+            if set(item) != {
+                "connection_generation",
+                "final_component_snapshot_sha256",
+                "identity_snapshot_sha256",
+                "final_sep_catacomb_hash",
+                "sep_clean",
+                "local_live_equal",
+            }:
+                raise CatacombSyncJournalError(
+                    "Catacomb sync clean recovery is invalid"
+                )
+            _uuid(item["connection_generation"], "connection generation")
+            for field in (
+                "final_component_snapshot_sha256",
+                "identity_snapshot_sha256",
+                "final_sep_catacomb_hash",
+            ):
+                _sha(item[field], field)
+            if (
+                intent is None
+                or host_commit is None
+                or item["connection_generation"]
+                in {
+                    evidence["baseline"]["connection_generation"],
+                    intent["connection_generation"],
+                }
+                or item["final_component_snapshot_sha256"]
+                != host_commit["final_component_snapshot_sha256"]
+                or item["identity_snapshot_sha256"]
+                != intent["identity_snapshot_sha256"]
+                or item["sep_clean"] is not True
+                or item["local_live_equal"] is not True
+            ):
+                raise CatacombSyncJournalError(
+                    "Catacomb sync clean recovery binding changed"
+                )
+            recovery_attempted = True
+            phase = CatacombSyncPhase.RECONCILED
         else:
             raise CatacombSyncJournalError(
                 f"Catacomb sync milestone is out of order at record {index}"
@@ -175,6 +266,9 @@ def validate_history(records: list[dict[str, Any]]) -> CatacombSyncHistory:
         evidence["baseline"],
         len(records),
         records[-1]["record_hash"],
+        intent,
+        host_commit,
+        recovery_attempted,
     )
 
 

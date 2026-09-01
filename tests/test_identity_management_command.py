@@ -400,7 +400,7 @@ class IdentityManagementCommandTests(unittest.TestCase):
     def test_adaptive_sync_reuses_active_sensor_readiness(self):
         source = (SOURCE / "t2-touchid-manage.py").read_text(encoding="utf-8")
         self.assertIn(
-            'if args.command not in {"status", "sync-user-catacomb"}:',
+            '"recover-catacomb-sync",',
             source,
         )
 
