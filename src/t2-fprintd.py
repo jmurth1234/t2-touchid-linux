@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Minimal fprintd-compatible D-Bus facade for the T2 matcher.
+"""Minimal fprintd-compatible D-Bus facade for Apple T2 Touch ID.
 
-This compatibility service deliberately supports verification only. Enrollment
-and identity management use separate explicitly gated, journaled commands.
-Authentication remains fail-closed and accepts only the UUID of an identity
-selected from the scoped Apple-user identity list.
+Verification is always available after the ordinary readiness gates. Native
+enrollment has a separately gated worker path and remains disabled unless the
+daemon receives its explicit research activation flag. Identity management
+remains in separate journaled commands. Authentication stays fail-closed and
+accepts only an identity selected from the scoped Apple-user identity list.
 """
 
 import argparse
@@ -26,6 +27,7 @@ from dbus_next.service import ServiceInterface, dbus_property, method, signal
 import t2_fprint_projection
 import t2_fprint_runtime
 import t2_fprint_enrollment_runtime
+import t2_fprint_worker_client
 import t2_dbus_identity
 import t2_fprint_claim
 from t2_dbus_sender import (
@@ -812,6 +814,21 @@ class FprintManager(ServiceInterface):
         return DEVICE_PATH
 
 
+def enrollment_client_for_arguments(args: argparse.Namespace):
+    """Construct no mutation client unless the process flag is exactly set."""
+
+    if not isinstance(args, argparse.Namespace):
+        raise RuntimeError("fprintd arguments are invalid")
+    enabled = getattr(args, "enable_native_enrollment", None)
+    if type(enabled) is not bool:
+        raise RuntimeError("native enrollment activation is invalid")
+    return (
+        t2_fprint_worker_client.EnrollmentWorkerClient()
+        if enabled
+        else None
+    )
+
+
 def legacy_property_reply(message: Message, device: FprintDevice):
     """Serve fprint's historical hyphenated property names."""
     if (
@@ -859,7 +876,11 @@ async def main_async(args: argparse.Namespace) -> None:
     bus = await SenderAwareMessageBus(
         bus_type=BusType.SYSTEM, negotiate_unix_fd=True
     ).connect()
-    device = FprintDevice(backend, bus)
+    device = FprintDevice(
+        backend,
+        bus,
+        enrollment_client=enrollment_client_for_arguments(args),
+    )
 
     # fprintd's historical ABI contains hyphenated property names, although
     # D-Bus member-name validators (including dbus-next's) reject hyphens.
@@ -892,6 +913,14 @@ async def main_async(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--match-seconds", type=float, default=20.0)
+    parser.add_argument(
+        "--enable-native-enrollment",
+        action="store_true",
+        help=(
+            "activate the credential-scoped journaled enrollment worker; "
+            "omit until every installed hardware gate passes"
+        ),
+    )
     args = parser.parse_args()
     asyncio.run(main_async(args))
 

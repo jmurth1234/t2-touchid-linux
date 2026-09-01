@@ -212,8 +212,10 @@ explicit client is supplied, canonical `EnrollStart` passes the exact pinned
 claim to it, updates the historical properties, emits ordered `EnrollStatus`,
 keeps verify/enroll mutually exclusive, and makes `EnrollStop`, `Release`,
 sender departure, and terminal grace expiry wait for worker reconciliation.
-Production startup deliberately supplies no enrollment client yet, so the
-installed method remains disabled and cannot launch the worker.
+The daemon now has an explicit `--enable-native-enrollment` process flag that
+constructs this exact worker client. The installed systemd unit deliberately
+omits the flag, so its method remains disabled and cannot launch the worker.
+This is a staging switch for the installed hardware controls, not a default.
 
 Incomplete legacy labels now have a read-only migration bootstrap rather than
 a guessing rule. `t2_fprint_match_gate.prepare_slots` joins every opaque SEP

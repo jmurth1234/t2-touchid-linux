@@ -56,8 +56,9 @@ one compatibility alias rather than pretending that it knows both names.
   protocol-v2 match-result event.
 - Missing, malformed, rejected, or timeout results fail closed.
 - The service never emits UUIDs, fingerprint images, or biometric payloads.
-- fprintd enrollment and deletion are deliberately unsupported; experimental
-  root-only brokers are separate and fail closed.
+- The installed fprintd service keeps native enrollment default-off and
+  deletion disabled; experimental mutation workers remain separately gated
+  and fail closed.
 - PAM templates are supplied but are not installed automatically.
 
 ## Important limitations
@@ -104,7 +105,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
 - `src/bridge-xpc-probe.py`: BridgeXPC command and match implementation.
 - `src/t2_bridge_connection.py`: exclusive generation-pinned Bridge owner used
   by the no-CLI enrollment research coordinator.
-- `src/t2-fprintd.py`: verification-only fprintd facade.
+- `src/t2-fprintd.py`: verification facade with a default-off native enrollment
+  activation boundary.
 - `src/t2_user_mapping.py`: non-exposed, fail-closed schema for mapping Linux
   accounts to already-provisioned Apple users and explicit capabilities.
 - `src/t2_user_readiness.py`: pure classifier for per-user binding, alias, and

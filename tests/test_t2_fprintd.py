@@ -3,11 +3,13 @@
 """Hardware-free lifecycle tests for the T2 fprintd facade."""
 
 import asyncio
+import argparse
 import importlib.util
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 from unittest.mock import AsyncMock
 
 
@@ -791,6 +793,40 @@ class BackendRecoveryTests(unittest.IsolatedAsyncioTestCase):
         verdict, _result = await backend.verify()
         self.assertEqual(verdict, "verify-no-match")
         backend.discover.assert_awaited_once()
+
+
+class NativeEnrollmentActivationTests(unittest.TestCase):
+    def test_default_arguments_construct_no_worker_client(self):
+        self.assertIsNone(
+            MODULE.enrollment_client_for_arguments(
+                argparse.Namespace(enable_native_enrollment=False)
+            )
+        )
+
+    def test_explicit_process_flag_constructs_exact_worker_client(self):
+        sentinel = object()
+        with mock.patch.object(
+            MODULE.t2_fprint_worker_client,
+            "EnrollmentWorkerClient",
+            return_value=sentinel,
+        ) as factory:
+            result = MODULE.enrollment_client_for_arguments(
+                argparse.Namespace(enable_native_enrollment=True)
+            )
+        self.assertIs(result, sentinel)
+        factory.assert_called_once_with()
+
+    def test_malformed_activation_and_installed_service_fail_closed(self):
+        for args in (object(), argparse.Namespace(), argparse.Namespace(
+            enable_native_enrollment=1
+        )):
+            with self.subTest(args=args), self.assertRaises(RuntimeError):
+                MODULE.enrollment_client_for_arguments(args)
+        unit = (
+            MODULE_PATH.parents[1]
+            / "systemd/system/fprintd.service"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("--enable-native-enrollment", unit)
 
 
 if __name__ == "__main__":

@@ -173,7 +173,9 @@ evidence, not intent.
 - [x] Implement the final claim-scoped fprint facade adapter for canonical
       `EnrollStart`, `EnrollStop`, status/property updates, mutual exclusion,
       sender departure, release, and terminal grace expiry while leaving the
-      production daemon's enrollment client explicitly unset.
+      installed daemon's enrollment client explicitly unset by default.
+- [x] Add a staging-only daemon activation flag for the exact worker client
+      while ensuring the installed systemd service omits it.
 - [x] Implement the internal authorized enrollment consumer on the exact
       broker-held Bridge generation, with a fresh pre-dispatch authority guard
       and immutable local Catacomb recovery anchor; keep it unreachable until

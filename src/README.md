@@ -271,12 +271,13 @@ process.
 D-Bus `EnrollStart` remains disabled pending installed negative controls and a
 live proof of this automatic path.
 
-The `FprintDevice` adapter is nevertheless complete and hardware-inert: an
-explicitly injected enrollment client receives the exact pinned caller and
+The `FprintDevice` adapter is nevertheless complete and default-inert: an
+explicitly activated enrollment client receives the exact pinned caller and
 claim, while status, finger-present/needed properties, cancellation, release,
 sender departure, operation exclusion, and terminal grace expiry follow the
-standard fprint lifecycle. Production startup injects no client, so this code
-path cannot launch a worker until the remaining installed gates pass.
+standard fprint lifecycle. The daemon process accepts a staging-only
+`--enable-native-enrollment` flag, but the installed systemd unit omits it, so
+this code path cannot launch a worker until the remaining installed gates pass.
 
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;
