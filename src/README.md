@@ -164,6 +164,17 @@ names and exact UUID-set agreement, then returns exactly one opaque record for
 the requested name. Record order is not authority, `any` is not a target name,
 and no UUID, Apple user, or raw record appears in its public proof.
 
+`t2_fprint_match_gate.py` wraps that selector in the read-only match boundary.
+Before a named match it requires exact repeated per-user and global SEP
+identity records on the owned Bridge connection, exact equality with the
+validated committed local Catacomb, and one canonical target. After the match,
+the probe repeats both live inventories and rereads the local components; any
+change fails closed. Its public attestations contain only booleans and the
+fprint presentation name—never Apple user IDs, identity UUIDs, or Catacomb
+contents. `bridge-xpc-probe.py --match-finger-name` implements this dormant
+targeted path. The fprintd facade does not advertise it until the complete
+per-finger listing and named-verdict path are wired together.
+
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;
 the identities runner is intrinsically non-modifying and cannot collect

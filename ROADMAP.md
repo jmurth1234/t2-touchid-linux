@@ -146,6 +146,11 @@ evidence, not intent.
 - [x] Add a private targeted-match selector that requires complete unique
       canonical names plus exact local/live UUID-set agreement, while emitting
       only the selected presentation name publicly.
+- [x] Add a same-connection named-match gate that repeats the per-user and
+      global SEP views, selects one opaque record, and proves local/live
+      identity state is unchanged after the scan.
+- [ ] Route canonical fprint verification through that named-match gate while
+      retaining the compatibility alias only for unmigrated labels.
 - [ ] Implement fprintd-native enrollment and deletion through the journaled,
       explicit-target Linux mutation brokers; never treat a D-Bus finger label
       as biometric authority.

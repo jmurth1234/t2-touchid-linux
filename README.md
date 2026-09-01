@@ -282,6 +282,14 @@ sudo t2-touchid-fprint-status
 labels need an explicit anatomical assignment before truthful per-finger fprint
 listing can replace that alias; the command never guesses or mutates a label.
 
+The repository also contains the fail-closed named-match boundary needed for
+that migration. It double-checks both SEP identity views on the same Bridge
+connection, reconciles them with the validated local Catacomb, sends only the
+selected opaque identity to the matcher, and proves all identity state is
+unchanged afterward. This path remains dormant while labels are not canonical
+anatomical fprint names; the compatibility alias continues to select all
+enrolled identities in that state.
+
 ### Experimental Linux enrollment
 
 The stable command frontend exposes the proven journaled enrollment broker

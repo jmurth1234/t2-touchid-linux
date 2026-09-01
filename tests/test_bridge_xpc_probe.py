@@ -88,6 +88,50 @@ class ReplyTests(unittest.TestCase):
         self.assertNotIn("552", str(summary))
         self.assertNotIn("opaque", str(summary))
 
+    def test_match_summary_distinguishes_selected_from_other_enrolled_identity(self):
+        selected = struct.pack("<I", 501) + uuid.UUID(int=11).bytes
+        other = struct.pack("<I", 501) + uuid.UUID(int=12).bytes
+        raw = struct.pack("<QIIQ", 0, 0xE3FF8002, 2, 1)
+        raw += other[4:20] + b"\0" * (0xC70 - 16)
+        summary = MODULE.summarize_event(
+            [9, 0xE3FF8000, raw, None, None],
+            (selected, other),
+            expected_user_id=501,
+            selected_identity_record=selected,
+        )
+        self.assertTrue(summary["matched"])
+        self.assertTrue(summary["matches_enrolled_identity"])
+        self.assertFalse(summary["matches_selected_identity"])
+        self.assertNotIn(selected.hex(), str(summary))
+        self.assertNotIn(other.hex(), str(summary))
+
+    def test_match_summary_accepts_only_selected_identity_boolean(self):
+        selected = struct.pack("<I", 501) + uuid.UUID(int=11).bytes
+        other = struct.pack("<I", 501) + uuid.UUID(int=12).bytes
+        raw = struct.pack("<QIIQ", 0, 0xE3FF8002, 2, 1)
+        raw += selected[4:20] + b"\0" * (0xC70 - 16)
+        summary = MODULE.summarize_event(
+            [9, 0xE3FF8000, raw, None, None],
+            (selected, other),
+            selected_identity_record=selected,
+        )
+        self.assertTrue(summary["matches_selected_identity"])
+
+    def test_strict_identity_records_rejects_status_shape_and_events(self):
+        record = struct.pack("<I", 501) + uuid.UUID(int=11).bytes
+        self.assertEqual(
+            MODULE.strict_identity_records([0, record], [], 20, "test"),
+            (record,),
+        )
+        for reply, events, size in (
+            ([-1, record], [], 20),
+            ([0, record + b"x"], [], 20),
+            ([0, record], [object()], 20),
+            ([0, record], [], 21),
+        ):
+            with self.subTest(), self.assertRaises(ValueError):
+                MODULE.strict_identity_records(reply, events, size, "test")
+
     def full_inventory(self):
         identity = struct.pack("<I", 501) + uuid.UUID(int=1).bytes
         group = struct.pack("<I", 1) + uuid.UUID(int=2).bytes

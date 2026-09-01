@@ -19,6 +19,7 @@ import sys
 import tarfile
 import time
 import uuid
+from pathlib import Path
 
 LOCAL_SOURCE = os.path.dirname(os.path.abspath(__file__))
 if LOCAL_SOURCE not in sys.path:
@@ -44,6 +45,13 @@ from t2_bridge_wire import (
     send_message,
 )
 from t2_enrollment_protocol import parse_service_event
+import t2_catacomb_codec
+import t2_catacomb_store
+import t2_fprint_match_gate
+import t2_fprint_projection
+
+
+CATACOMB_ROOT = Path("/var/lib/t2-touchid/catacomb")
 
 
 def summarize_event(
@@ -51,6 +59,7 @@ def summarize_event(
     enrolled_identity_records: tuple[bytes, ...] = (),
     *,
     expected_user_id: int | None = None,
+    selected_identity_record: bytes | None = None,
 ) -> dict:
     if isinstance(payload, list) and len(payload) == 5 and payload[0] == 9:
         data = payload[2]
@@ -121,6 +130,13 @@ def summarize_event(
                     summary["matches_enrolled_identity"] = summary[
                         "contains_enrolled_identity_uuid"
                     ]
+                    if (
+                        type(selected_identity_record) is bytes
+                        and len(selected_identity_record) == 20
+                    ):
+                        summary["matches_selected_identity"] = (
+                            selected_identity_record[4:20] in event_data
+                        )
             elif embedded_type == 0xE3FF8004:
                 summary["event_kind"] = "statistics"
             elif embedded_type == 0xE3FF800A:
@@ -152,6 +168,28 @@ def summarize_command_reply(reply: object) -> dict:
         if is_biometric_nil_output(output):
             summary["output_kind"] = "nil-placeholder"
     return summary
+
+
+def strict_identity_records(
+    reply: object, events: object, record_size: int, label: str
+) -> tuple[bytes, ...]:
+    """Parse one event-free identity reply without exposing its records."""
+    if (
+        type(reply) is not list
+        or len(reply) != 2
+        or reply[0] != 0
+        or type(reply[1]) is not bytes
+        or type(events) is not list
+        or events
+        or type(record_size) is not int
+        or record_size not in (20, 40)
+        or len(reply[1]) % record_size
+    ):
+        raise ValueError(f"{label} identity inventory is invalid")
+    return tuple(
+        reply[1][offset : offset + record_size]
+        for offset in range(0, len(reply[1]), record_size)
+    )
 
 
 def write_private_json(path: str, value: object) -> None:
@@ -517,6 +555,14 @@ def main() -> None:
         help="start a match operation, report status events, then cancel",
     )
     parser.add_argument(
+        "--match-finger-name",
+        choices=t2_fprint_projection.FINGER_NAMES,
+        help=(
+            "restrict matching to one canonical fprint identity after fresh "
+            "local/per-user/global reconciliation"
+        ),
+    )
+    parser.add_argument(
         "--match-processed-flags",
         type=lambda value: int(value, 0),
         default=0,
@@ -640,6 +686,8 @@ def main() -> None:
         help="strip the validated 32-byte LTFC file wrapper before command 0x40",
     )
     args = parser.parse_args()
+    if args.match_finger_name is not None and args.match_seconds is None:
+        parser.error("--match-finger-name requires --match-seconds")
     if not 0 <= args.macos_user_id <= 0xFFFFFFFF:
         parser.error("--macos-user-id must fit an unsigned 32-bit integer")
     if not args.host or not args.interface:
@@ -1176,16 +1224,81 @@ def main() -> None:
                 raise ValueError(
                     "--match-seconds requires a non-empty --identity-list result"
                 )
+            targeted_gate = None
+            selected_identity_record = None
+            if args.match_finger_name is not None:
+                if not args.identity_list:
+                    raise ValueError(
+                        "--match-finger-name requires --identity-list"
+                    )
+                first_user_records = strict_identity_records(
+                    identities_reply,
+                    identities_events,
+                    20,
+                    "initial per-user",
+                )
+                store = t2_catacomb_store.CatacombStore(
+                    CATACOMB_ROOT, args.macos_user_id
+                )
+                targeted_components = store.read_committed_components()
+                local = t2_catacomb_codec.decode_user_catacomb(
+                    targeted_components[f"user_{args.macos_user_id:08x}.cat"],
+                    args.macos_user_id,
+                )
+                first_global_reply, first_global_events = biometric_command(
+                    sock, 0x51, output_capacity=40 * 10
+                )
+                repeated_user_reply, repeated_user_events = biometric_command(
+                    sock,
+                    0x42,
+                    data=struct.pack("<I", args.macos_user_id),
+                    output_capacity=20 * 10,
+                )
+                repeated_global_reply, repeated_global_events = biometric_command(
+                    sock, 0x51, output_capacity=40 * 10
+                )
+                first_global_records = strict_identity_records(
+                    first_global_reply,
+                    first_global_events,
+                    40,
+                    "initial global",
+                )
+                repeated_user_records = strict_identity_records(
+                    repeated_user_reply,
+                    repeated_user_events,
+                    20,
+                    "repeated per-user",
+                )
+                repeated_global_records = strict_identity_records(
+                    repeated_global_reply,
+                    repeated_global_events,
+                    40,
+                    "repeated global",
+                )
+                targeted_gate = t2_fprint_match_gate.prepare(
+                    local,
+                    targeted_components,
+                    first_user_records,
+                    first_global_records,
+                    repeated_user_records,
+                    repeated_global_records,
+                    args.match_finger_name,
+                )
+                selected_identity_record = targeted_gate.identity_record
+                selected_records = (selected_identity_record,)
+                result["targeted_match_gate"] = targeted_gate.public()
+            else:
+                selected_records = enrolled_identity_records
             # match_init_data_v1: processed flags, macOS user ID, and 60 bytes
             # reserved for authenticated/special matching modes.
             # Apple's performMatchCommand: appends selectedIdentitiesBlob to
             # the fixed 68-byte match-options structure. The blob starts with
             # a uint32 record count, followed by the opaque 20-byte
             # identity_record_v1_t records returned by command 0x42.
-            selected_identities = b"".join(enrolled_identity_records)
+            selected_identities = b"".join(selected_records)
             if args.identity_blob_format == "counted":
                 selected_identities = struct.pack(
-                    "<I", len(enrolled_identity_records)
+                    "<I", len(selected_records)
                 ) + selected_identities
             match_data = struct.pack(
                 "<II60x", args.match_processed_flags, args.macos_user_id
@@ -1223,6 +1336,7 @@ def main() -> None:
                                 envelope[3],
                                 enrolled_identity_records,
                                 expected_user_id=args.macos_user_id,
+                                selected_identity_record=selected_identity_record,
                             ).get("event_kind")
                             == "match_result"
                         ):
@@ -1237,11 +1351,40 @@ def main() -> None:
                 result["cancel_reply"] = summarize_command_reply(cancel_reply)
             else:
                 result["match_rejected"] = True
+            if targeted_gate is not None:
+                post_user_reply, post_user_events = biometric_command(
+                    sock,
+                    0x42,
+                    data=struct.pack("<I", args.macos_user_id),
+                    output_capacity=20 * 10,
+                )
+                post_global_reply, post_global_events = biometric_command(
+                    sock, 0x51, output_capacity=40 * 10
+                )
+                result["targeted_match_post_attestation"] = (
+                    t2_fprint_match_gate.attest_unchanged(
+                        targeted_gate,
+                        store.read_committed_components(),
+                        strict_identity_records(
+                            post_user_reply,
+                            post_user_events,
+                            20,
+                            "post-match per-user",
+                        ),
+                        strict_identity_records(
+                            post_global_reply,
+                            post_global_events,
+                            40,
+                            "post-match global",
+                        ),
+                    )
+                )
             result["match_events"] = [
                 summarize_event(
                     event,
                     enrolled_identity_records,
                     expected_user_id=args.macos_user_id,
+                    selected_identity_record=selected_identity_record,
                 )
                 for event in events
             ]
