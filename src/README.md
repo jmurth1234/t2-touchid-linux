@@ -166,12 +166,13 @@ check is never accepted as authority across the worker handoff.
 
 `t2_fprint_activation_gate.py` and the installed
 `t2-touchid-fprint-enrollment-gate` compose only redacted, read-only readiness
-evidence for the uninstalled native-enrollment drop-in. The gate requires exact
+evidence for the uninstalled native-enrollment and combined identity-management
+drop-ins. The gate requires exact
 core health, current module/DKMS, AKS alias observation, an enabled protected
 mapping, a complete canonical projection, no blocking enrollment or identity-
 management journal, an effective default-off daemon, and explicit prior-live-
 control attestations. It reports readiness only; it cannot stage a unit or
-invoke enrollment.
+invoke enrollment or deletion.
 
 `t2_fprint_match_selection.py` is the private authority half of that future
 listing. It accepts a strictly decoded user Catacomb and one exact tuple of live
@@ -284,8 +285,10 @@ protocol, exact `delete-one` broker consumer, and reconciliation-only response.
 The worker repeats canonical-name resolution inside its lock-held private
 local/SEP snapshot, freezes an immutable recovery anchor, and shares the CLI's
 persistence/read-back tail. Peer loss cannot cancel or replay a handed-off
-deletion. The installed daemon still injects no deletion client and exposes no
-deletion activation flag, while both bulk-delete methods stay fail-closed.
+deletion. The installed daemon still injects no deletion client. A staging-only
+`--enable-native-deletion` process flag and an uninstalled combined research
+drop-in make the exact worker reachable only after explicit administrative
+activation; both bulk-delete methods stay fail-closed.
 
 `t2_post_reboot_reconciler.py` supplies automatic enrollment E4 plus completed
 rename and single-delete proof without loading the encrypted password
@@ -305,8 +308,11 @@ explicitly activated enrollment client receives the exact pinned caller and
 claim, while status, finger-present/needed properties, cancellation, release,
 sender departure, operation exclusion, and terminal grace expiry follow the
 standard fprint lifecycle. The daemon process accepts a staging-only
-`--enable-native-enrollment` flag, but the installed systemd unit omits it, so
-this code path cannot launch a worker until the remaining installed gates pass.
+`--enable-native-enrollment` and `--enable-native-deletion` flags, but the
+installed systemd unit omits both, so neither code path can launch a worker
+until the remaining installed gates pass. The enrollment-only research drop-in
+enables only enrollment; the later combined drop-in enables both exact worker
+clients and replaces `ExecStart` atomically.
 
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;

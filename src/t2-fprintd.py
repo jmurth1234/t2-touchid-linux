@@ -3,10 +3,10 @@
 """Minimal fprintd-compatible D-Bus facade for Apple T2 Touch ID.
 
 Verification is always available after the ordinary readiness gates. Native
-enrollment has a separately gated worker path and remains disabled unless the
-daemon receives its explicit research activation flag. Single-name deletion
-has an injected-client boundary but no installed client; bulk deletion remains
-disabled. Authentication stays fail-closed and accepts only an identity
+enrollment and single-name deletion have separately gated worker paths and
+remain disabled unless the daemon receives their explicit research activation
+flags. Bulk deletion remains disabled. Authentication stays fail-closed and
+accepts only an identity
 selected from the scoped Apple-user identity list.
 """
 
@@ -30,6 +30,7 @@ import t2_fprint_runtime
 import t2_fprint_enrollment_runtime
 import t2_fprint_deletion_runtime
 import t2_fprint_worker_client
+import t2_fprint_delete_worker_client
 import t2_dbus_identity
 import t2_fprint_claim
 from t2_dbus_sender import (
@@ -1012,6 +1013,21 @@ def enrollment_client_for_arguments(args: argparse.Namespace):
     )
 
 
+def deletion_client_for_arguments(args: argparse.Namespace):
+    """Construct no deletion worker client unless its flag is exactly set."""
+
+    if not isinstance(args, argparse.Namespace):
+        raise RuntimeError("fprintd arguments are invalid")
+    enabled = getattr(args, "enable_native_deletion", None)
+    if type(enabled) is not bool:
+        raise RuntimeError("native deletion activation is invalid")
+    return (
+        t2_fprint_delete_worker_client.DeletionWorkerClient()
+        if enabled
+        else None
+    )
+
+
 def legacy_property_reply(message: Message, device: FprintDevice):
     """Serve fprint's historical hyphenated property names."""
     if (
@@ -1063,6 +1079,7 @@ async def main_async(args: argparse.Namespace) -> None:
         backend,
         bus,
         enrollment_client=enrollment_client_for_arguments(args),
+        deletion_client=deletion_client_for_arguments(args),
     )
 
     # fprintd's historical ABI contains hyphenated property names, although
@@ -1101,6 +1118,14 @@ def main() -> None:
         action="store_true",
         help=(
             "activate the credential-scoped journaled enrollment worker; "
+            "omit until every installed hardware gate passes"
+        ),
+    )
+    parser.add_argument(
+        "--enable-native-deletion",
+        action="store_true",
+        help=(
+            "activate the credential-free journaled single-delete worker; "
             "omit until every installed hardware gate passes"
         ),
     )

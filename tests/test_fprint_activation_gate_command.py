@@ -172,6 +172,15 @@ class FprintActivationGateCommandTests(unittest.TestCase):
                 ),
                 False,
             ),
+            (
+                subprocess.CompletedProcess(
+                    (),
+                    0,
+                    "python t2-fprintd.py --enable-native-deletion\n",
+                    "",
+                ),
+                False,
+            ),
             (subprocess.CompletedProcess((), 1, "", "failure"), False),
         ):
             with (
@@ -190,7 +199,9 @@ class FprintActivationGateCommandTests(unittest.TestCase):
         self.assertIn("src/t2-touchid-fprint-enrollment-gate.py", install)
         self.assertIn("t2-touchid-fprint-enrollment-gate", uninstall)
         self.assertIn("10-native-enrollment.conf", uninstall)
+        self.assertIn("20-native-identity-management.conf", uninstall)
         self.assertNotIn("10-native-enrollment.conf", install)
+        self.assertNotIn("20-native-identity-management.conf", install)
 
 
 if __name__ == "__main__":

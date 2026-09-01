@@ -171,6 +171,9 @@ evidence, not intent.
       pidfd-bearing protocol, lock-held exact-name resolver, immutable recovery
       anchor, shared persistence tail, and reconciliation-only completion;
       keep it unattached to the installed daemon pending live controls.
+- [x] Add a separate default-off deletion process flag and an uninstalled
+      combined enrollment/deletion systemd candidate; keep the normal service
+      free of both mutation flags.
 - [x] Implement a pure, documented fprint enrollment-status/property boundary
       with monotonic progress, quality guidance, and reconciliation-gated
       completion; retain an undefined stage count until hardware proves one.

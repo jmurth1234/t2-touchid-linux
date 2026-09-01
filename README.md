@@ -306,7 +306,8 @@ same rule against its fresh reconciled inventory while holding the machine-wide
 operation lock, before recovery anchoring, ACM, journaling, or SEP dispatch.
 
 The installed read-only staging gate collects the complete set of prerequisites
-for the separate native-enrollment research drop-in. Its acknowledgements are
+for the separate native-enrollment and combined identity-management research
+drop-ins. Its acknowledgements are
 statements about controls already performed; they do not run those controls or
 authorize a mutation:
 
@@ -317,9 +318,13 @@ sudo t2-touchid-fprint-enrollment-gate \
   --acknowledge-worker-negative-controls-passed
 ```
 
-Exit status zero means only that the uninstalled drop-in may be staged for the
-documented standard-client test. The report does not enable enrollment, install
-a unit, expose identifiers, or send an enrollment command.
+Exit status zero means only that an uninstalled drop-in may be staged for the
+documented standard-client test. The report does not enable a worker, install a
+unit, expose identifiers, or send a mutation command. The normal service has
+neither activation flag. The combined research candidate resets `ExecStart`
+once and supplies both `--enable-native-enrollment` and
+`--enable-native-deletion`; installing either candidate remains a manual,
+rollbackable research step.
 
 The fail-closed named-match boundary double-checks both SEP identity views on
 the same Bridge connection, reconciles them with the validated local Catacomb,

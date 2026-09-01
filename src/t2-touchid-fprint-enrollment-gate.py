@@ -74,6 +74,7 @@ def _effective_daemon_is_default_off() -> bool:
         result.returncode == 0
         and bool(result.stdout.strip())
         and "--enable-native-enrollment" not in result.stdout
+        and "--enable-native-deletion" not in result.stdout
     )
 
 

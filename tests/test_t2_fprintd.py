@@ -1204,8 +1204,66 @@ class NativeEnrollmentActivationTests(unittest.TestCase):
                 "--enable-native-enrollment",
             ],
         )
+
+
+class NativeDeletionActivationTests(unittest.TestCase):
+    def test_default_arguments_construct_no_deletion_client(self):
+        self.assertIsNone(
+            MODULE.deletion_client_for_arguments(
+                argparse.Namespace(enable_native_deletion=False)
+            )
+        )
+
+    def test_explicit_process_flag_constructs_exact_deletion_client(self):
+        sentinel = object()
+        with mock.patch.object(
+            MODULE.t2_fprint_delete_worker_client,
+            "DeletionWorkerClient",
+            return_value=sentinel,
+        ) as factory:
+            result = MODULE.deletion_client_for_arguments(
+                argparse.Namespace(enable_native_deletion=True)
+            )
+        self.assertIs(result, sentinel)
+        factory.assert_called_once_with()
+
+    def test_malformed_activation_and_installed_service_fail_closed(self):
+        for args in (
+            object(),
+            argparse.Namespace(),
+            argparse.Namespace(enable_native_deletion=1),
+        ):
+            with self.subTest(args=args), self.assertRaises(RuntimeError):
+                MODULE.deletion_client_for_arguments(args)
+        unit = (
+            MODULE_PATH.parents[1] / "systemd/system/fprintd.service"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("--enable-native-deletion", unit)
+
+    def test_combined_research_dropin_requires_both_explicit_flags(self):
+        root = MODULE_PATH.parents[1]
+        candidate = (
+            root
+            / "systemd/research/fprintd.service.d/20-native-identity-management.conf"
+        ).read_text(encoding="utf-8")
+        directives = [
+            line
+            for line in candidate.splitlines()
+            if line and not line.startswith("#")
+        ]
+        self.assertEqual(
+            directives,
+            [
+                "[Service]",
+                "ExecStart=",
+                "ExecStart=/opt/t2-touchid/.venv/bin/python "
+                "/opt/t2-touchid/src/t2-fprintd.py "
+                "--enable-native-enrollment --enable-native-deletion",
+            ],
+        )
         installer = (root / "install.sh").read_text(encoding="utf-8")
         self.assertNotIn("10-native-enrollment.conf", installer)
+        self.assertNotIn("20-native-identity-management.conf", installer)
 
 
 if __name__ == "__main__":
