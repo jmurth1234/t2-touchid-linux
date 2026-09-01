@@ -212,6 +212,9 @@ The facade also emits the historical
 `finger-present` or `finger-needed` changes. These Boolean notifications are
 best-effort UI feedback only: D-Bus delivery failure cannot cancel, retry, or
 reinterpret a journaled biometric operation.
+Verification marks `finger-needed` while its match task is active and clears
+it on every terminal, cancellation, and stop path. Enrollment derives both
+properties from its typed worker stream.
 
 The pure `t2_fprint_enrollment_runtime` translator now enforces the proven
 subset of this table.

@@ -290,6 +290,27 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         backend.runtime_projection.assert_awaited_once_with()
         backend.verify_fprint.assert_awaited_once_with("left-thumb")
 
+    async def test_verification_publishes_waiting_and_terminal_properties(self):
+        bus = FakeBus()
+        backend = FakeBackend("verify-no-match")
+        device = make_device(backend, identity_bus=bus)
+        device.VerifyStatus = lambda _status, _done: None
+        await claim(device)
+
+        await verify_start(device, "any")
+        self.assertTrue(device.finger_needed)
+        await device.verify_task
+
+        self.assertFalse(device.finger_present)
+        self.assertFalse(device.finger_needed)
+        self.assertEqual(
+            [set(message.body[1]) for message in bus.sent],
+            [{"finger-needed"}, {"finger-needed"}],
+        )
+        self.assertTrue(bus.sent[0].body[1]["finger-needed"].value)
+        self.assertFalse(bus.sent[1].body[1]["finger-needed"].value)
+        await MODULE.FprintDevice.VerifyStop.__wrapped__(device)
+
     async def test_verify_start_rejects_absent_or_invalid_name_before_match(self):
         backend = FakeBackend()
         backend.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
@@ -547,11 +568,14 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         device.VerifyStatus = lambda _result, _done: None
         await claim(device)
         await verify_start(device, "any")
+        self.assertTrue(device.finger_needed)
         await started.wait()
         await MODULE.FprintDevice.VerifyStop.__wrapped__(device)
         self.assertEqual(backend.cancel_count, 1)
         self.assertIsNone(device.verify_task)
         self.assertEqual(backend.cancel_count, 1)
+        self.assertFalse(device.finger_present)
+        self.assertFalse(device.finger_needed)
 
     async def test_release_cleans_up_completed_verification(self):
         backend = FakeBackend("verify-no-match")

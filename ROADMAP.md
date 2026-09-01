@@ -186,6 +186,8 @@ evidence, not intent.
 - [x] Publish exact `finger-present` and `finger-needed` property-change
       signals for standard desktop enrollment feedback without coupling signal
       delivery to mutation outcome.
+- [x] Publish verification waiting/terminal `finger-needed` transitions across
+      success, failure, cancellation, and standard `VerifyStop` cleanup.
 - [x] Implement the async fprint enrollment lifecycle around a synchronous
       worker with ordered event-loop feedback and cooperative, journal-aware
       stop/release/task cancellation; attach no live consumer yet.

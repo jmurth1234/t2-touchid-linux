@@ -698,6 +698,7 @@ class FprintDevice(ServiceInterface):
                 self._run_verification(finger_name)
             )
             self.verify_task = operation
+            self._set_finger_state(False, True)
             started = True
         except DBusError:
             raise
@@ -737,6 +738,8 @@ class FprintDevice(ServiceInterface):
         except Exception:
             await self.backend.notify_feedback("verify-unknown-error")
             self.VerifyStatus("verify-unknown-error", True)
+        finally:
+            self._set_finger_state(False, False)
         # Keep the completed task as the active transaction until the client
         # calls VerifyStop (or Release).  pam_fprintd follows that lifecycle;
         # clearing it here would make its mandatory VerifyStop fail with
@@ -781,6 +784,7 @@ class FprintDevice(ServiceInterface):
             self.claim_expiry_task = None
         task = self.verify_task
         if task is None:
+            self._set_finger_state(False, False)
             if require_running:
                 raise DBusError(
                     f"{FPRINT_ERROR}.NoActionInProgress",
@@ -791,6 +795,7 @@ class FprintDevice(ServiceInterface):
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         self.verify_task = None
+        self._set_finger_state(False, False)
 
     def _arm_unstarted_claim_expiry(self) -> None:
         """Restore bounded claim lifetime after a mutation call returns."""
