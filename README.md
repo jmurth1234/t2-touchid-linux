@@ -363,6 +363,15 @@ peer UID and never accepts an Apple identifier from the request. Public request
 exposure, operation-specific mutating consumers, and per-user relocking remain
 incomplete.
 
+The first operation-specific consumer is also internal and read-only. The live
+session retains a canonical identifier-free identity list only after the exact
+local Catacomb, per-user SEP list, global SEP list, clean Catacomb state, alias
+binding, and Bridge generation have survived the broker's stable recollection.
+The `inventory` policy handoff can return only sequential slots, labels, count,
+and reconciliation flags. It cannot collect activation authority, select a
+different user, expose UUIDs, or perform a T2 mutation. No public socket invokes
+it yet.
+
 The same adapter now derives the caller's account generation itself rather than
 accepting an opaque digest from its future client. The deliberately conservative
 `local-files-v1` profile resolves the kernel UID to one exact root-owned

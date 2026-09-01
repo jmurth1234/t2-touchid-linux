@@ -3115,6 +3115,18 @@ denied responses cannot carry operation authority or a handoff claim. This
 closes request framing and non-mutating policy/readiness inspection, but it is
 not a public service and conveys no mutation capability.
 
+The first operation-specific consumer now reuses that same transaction for a
+redacted identity list. Each successful live recollection produces a canonical
+public cache only after local Catacomb decoding, per-user/global SEP equality,
+clean Catacomb state, exact alias observation, unchanged host components, and
+the pinned Bridge generation all pass. The cache is cleared before every new
+collection, after failure, and at lease exit. The trusted `inventory` callback
+can therefore return only sequential ephemeral slots, Catacomb labels, count,
+and reconciliation flags for the exact selected mapping. It cannot trigger
+activation, change users, expose biometric or keybag identifiers, or mutate T2
+state. This consumer is still non-exposed; a public listener remains gated on
+the rebuilt module's live endpoint-7 `0x06` observation test.
+
 The protected mapping administrator now has one concrete disabled-state writer.
 `t2-touchid-user-map bind-disabled` requires an explicit already-provisioned
 Apple UID/account UUID/bag UUID, explicit capabilities, the canonical private

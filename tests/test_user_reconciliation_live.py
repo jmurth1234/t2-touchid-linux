@@ -5,6 +5,7 @@ import os
 import sys
 import unittest
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -153,6 +154,7 @@ class LiveUserReconciliationTests(unittest.TestCase):
             persistent, alias = session.collect(
                 selected(), "a" * 64, "b" * 64
             )
+            public = session.public_identity_inventory(selected())
             self.assertTrue(self.lease.entered)
             self.assertFalse(self.lease.exited)
         self.assertTrue(self.lease.exited)
@@ -163,8 +165,43 @@ class LiveUserReconciliationTests(unittest.TestCase):
         self.assertEqual(persistent.bag_uuid, identifier(2))
         self.assertTrue(persistent.catacomb_reconciled)
         self.assertEqual(alias, self.alias)
+        self.assertEqual(
+            public,
+            {
+                "local_live_reconciled": True,
+                "identifiers_redacted": True,
+            },
+        )
         self.observer.observe_alias.assert_called_once_with(-501)
         live_reconciliation.t2_identity_inventory.summarize.assert_called_once()
+
+    def test_public_inventory_requires_current_exact_selected_mapping(self):
+        session = live_reconciliation.LiveUserReconciliationSession()
+        with session:
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "no current",
+            ):
+                session.public_identity_inventory(selected())
+            session.collect(selected(), "a" * 64, "b" * 64)
+            changed = replace(selected(), apple_uid=502)
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "no current",
+            ):
+                session.public_identity_inventory(changed)
+            first = session.public_identity_inventory(selected())
+            first["identifiers_redacted"] = False
+            self.assertTrue(
+                session.public_identity_inventory(selected())[
+                    "identifiers_redacted"
+                ]
+            )
+        with self.assertRaisesRegex(
+            live_reconciliation.LiveUserReconciliationError,
+            "no current",
+        ):
+            session.public_identity_inventory(selected())
 
     def test_inactive_reentered_or_generation_changed_session_fails(self):
         session = live_reconciliation.LiveUserReconciliationSession()
@@ -198,6 +235,11 @@ class LiveUserReconciliationTests(unittest.TestCase):
                 "local Catacomb changed",
             ):
                 session.collect(selected(), "a" * 64, "b" * 64)
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "no current",
+            ):
+                session.public_identity_inventory(selected())
 
         for account, keybag in (("x", "b" * 64), ("a" * 64, "x")):
             with self.subTest(account=account == "x"):

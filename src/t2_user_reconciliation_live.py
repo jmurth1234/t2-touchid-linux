@@ -259,6 +259,8 @@ class LiveUserReconciliationSession:
         self._observer: t2_aks_observer.AKSAliasObserver | None = None
         self._generation: str | None = None
         self._first_snapshot_digest: str | None = None
+        self._inventory_selected: t2_user_mapping.UserMapping | None = None
+        self._public_inventory_packet: bytes | None = None
 
     @property
     def runtime_generation(self) -> str:
@@ -300,6 +302,8 @@ class LiveUserReconciliationSession:
             self._lease = lease
             self._generation = generation
             self._first_snapshot_digest = None
+            self._inventory_selected = None
+            self._public_inventory_packet = None
             self._stack = stack
             return self
         except BaseException:
@@ -308,6 +312,8 @@ class LiveUserReconciliationSession:
             self._lease = None
             self._generation = None
             self._first_snapshot_digest = None
+            self._inventory_selected = None
+            self._public_inventory_packet = None
             raise
 
     def __exit__(
@@ -322,9 +328,47 @@ class LiveUserReconciliationSession:
         self._lease = None
         self._generation = None
         self._first_snapshot_digest = None
+        self._inventory_selected = None
+        self._public_inventory_packet = None
         if stack is not None:
             stack.close()
         return False
+
+    def public_identity_inventory(
+        self, selected: t2_user_mapping.UserMapping
+    ) -> dict[str, object]:
+        """Return the last fully reconciled identifier-free inventory."""
+
+        if (
+            self._stack is None
+            or self._lease is None
+            or self._generation is None
+            or self._first_snapshot_digest is None
+            or self._inventory_selected != selected
+            or self._public_inventory_packet is None
+            or self._lease.connection_generation != self._generation
+        ):
+            raise LiveUserReconciliationError(
+                "no current reconciled identity inventory is available"
+            )
+        try:
+            value = json.loads(self._public_inventory_packet.decode("ascii"))
+            encoded = json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        except (UnicodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+            raise LiveUserReconciliationError(
+                "cached identity inventory is invalid"
+            ) from error
+        if encoded != self._public_inventory_packet or not isinstance(value, dict):
+            raise LiveUserReconciliationError(
+                "cached identity inventory is not canonical"
+            )
+        return value
 
     def collect(
         self,
@@ -344,6 +388,8 @@ class LiveUserReconciliationSession:
             raise LiveUserReconciliationError(
                 "live reconciliation session is not active"
             )
+        self._inventory_selected = None
+        self._public_inventory_packet = None
         if not isinstance(selected, t2_user_mapping.UserMapping):
             raise LiveUserReconciliationError("selected mapping has the wrong type")
         try:
@@ -370,7 +416,7 @@ class LiveUserReconciliationSession:
             live = t2_bridge_inventory.collect_stable_private_inventory(
                 self._lease, selected.apple_uid
             )
-            t2_identity_inventory.summarize(local, live)
+            public_inventory = t2_identity_inventory.summarize(local, live)
             _require_clean_catacomb(live, selected.apple_uid)
             alias = self._observer.observe_alias(selected.special_bag_alias)
             after = store.read_committed_components()
@@ -405,6 +451,20 @@ class LiveUserReconciliationSession:
             raise LiveUserReconciliationError(
                 "complete live snapshot changed during reconciliation"
             )
+        try:
+            public_packet = json.dumps(
+                public_inventory,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        except (UnicodeError, TypeError, ValueError) as error:
+            raise LiveUserReconciliationError(
+                "public identity inventory is not canonical"
+            ) from error
+        self._inventory_selected = selected
+        self._public_inventory_packet = public_packet
         return (
             t2_user_readiness.PersistentEvidence(
                 linux_account_generation,

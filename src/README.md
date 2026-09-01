@@ -136,6 +136,15 @@ when the broker invoked its typed synchronous consumer while holding the same
 live runtime generation; every denied response carries no authority or handoff
 claim. No listener or public service installs these modules yet.
 
+`t2_user_broker_inventory.py` is the first typed operation consumer. The live
+reconciliation session caches its identifier-free list only after a successful
+complete collection and clears it before every recollection, on every failure,
+and when the lease exits. The consumer accepts only the exact selected mapping,
+same Bridge generation, authorized `inventory` decision, sequential slots, and
+bounded Catacomb-valid labels. It requests neither modification nor activation
+authority and returns no Apple UID, UUID, alias, entity number, or keybag data.
+It remains an internal composition with no installed listener or client.
+
 `t2_linux_account.py` supplies the previously abstract caller account
 generation. It supports a strict local-files profile only: one numeric UID must
 have one root-owned local passwd row, NSS must resolve the same complete record,

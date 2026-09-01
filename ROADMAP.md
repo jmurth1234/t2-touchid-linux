@@ -104,6 +104,8 @@ evidence, not intent.
       consumer handoff in one non-exposed self-service broker transaction.
 - [x] Add strict identifier-free `SOCK_SEQPACKET` framing and a non-mutating
       preflight consumer that cannot collect activation authority.
+- [x] Join the first operation-specific read-only identity inventory consumer
+      to the exact stable broker snapshot without exposing a listener.
 - [x] Add a live local-files account-generation assertion over the exact
       UID/passwd/shadow/database/home binding and revalidate it after PolicyKit.
 - [x] Add atomic administrator creation/rebinding for protected account

@@ -49,6 +49,10 @@ class BrokerLiveSession(Protocol):
         t2_user_readiness.AliasEvidence,
     ]: ...
 
+    def public_identity_inventory(
+        self, selected: t2_user_mapping.UserMapping
+    ) -> dict[str, object]: ...
+
 
 class BrokerAuthorizationSession(Protocol):
     caller: t2_user_policy.CallerEvidence
