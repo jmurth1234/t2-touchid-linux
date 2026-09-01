@@ -13,4 +13,5 @@ for name in sudo omarchy-lock-password; do
   fi
 done
 [[ $restored == 1 ]] || { echo "No PAM backups found." >&2; exit 1; }
+rm -f -- /etc/security/t2-touchid-sudo-prompt
 echo "Original PAM files restored."

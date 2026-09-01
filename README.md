@@ -179,6 +179,13 @@ or an alternative sleep mode has been validated on the specific Mac model.
    `/etc/pam.d/` with `sudo tools/install-pam.sh`. Keep password authentication
    as fallback; `sudo tools/rollback-pam.sh` restores the originals.
 
+   The sudo template displays a generic pre-capture sensor message through
+   `pam_echo`. This is intentional: fprintd 1.94.5's PAM client suppresses the
+   ABI-valid `VerifyFingerSelected("any")` prompt when multiple identities are
+   available. The message never names one finger because either enrolled
+   identity is valid, and the clamshell guard skips both the message and
+   fingerprint module when the laptop is closed.
+
 The installer is safe to rerun and replaces only project-managed files. When
 DKMS is available it registers the transport for kernel upgrades; otherwise it
 warns that the installer must be rerun after an upgrade. `sudo ./uninstall.sh`

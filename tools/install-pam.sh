@@ -6,6 +6,8 @@ set -euo pipefail
 source_dir=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 backup_dir=/var/lib/t2-touchid/pam-backups
 install -d -o root -g root -m 0700 "$backup_dir"
+install -o root -g root -m 0644 \
+  "$source_dir/pam/sudo-prompt" /etc/security/t2-touchid-sudo-prompt
 
 install_one() {
   local source=$2 target=/etc/pam.d/$1 backup=$backup_dir/$1.original

@@ -1,6 +1,7 @@
 #%PAM-1.0
 # SPDX-License-Identifier: GPL-2.0-only
-auth      [success=1 default=ignore] pam_exec.so quiet /usr/bin/omarchy-hw-laptop-closed
+auth      [success=2 default=ignore] pam_exec.so quiet /usr/bin/omarchy-hw-laptop-closed
+auth      optional   pam_echo.so file=/etc/security/t2-touchid-sudo-prompt
 auth      sufficient pam_fprintd.so
 auth      include      system-auth
 account   include      system-auth
