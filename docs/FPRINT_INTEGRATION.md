@@ -100,8 +100,8 @@ A root PAM claim may continue through verification, but cannot be converted
 into mutation authority. The derived session retains the existing
 revalidation and bounded PolicyKit collector. `t2_fprint_broker` can hand that
 session to the existing joined broker through a mutually exclusive,
-pre-created authorization path. It permits only `enroll` and
-`identity-management`, forces modification policy on, and closes the derived
+pre-created authorization path. It permits only the exact `enroll`, `rename`,
+and `delete-one` operations, forces modification policy on, and closes the derived
 session even if the broker fails before entering it. The resulting authority
 now carries a fail-closed pre-dispatch guard which repeats caller, mapping,
 keybag, runtime-generation, and grant-expiry checks immediately before a SEP
@@ -267,7 +267,7 @@ installed automatic path is proven.
 ## Deletion policy
 
 The source facade now stages `DeleteEnrolledFinger` behind an injected client
-that the installed daemon never supplies. It binds the synchronous method to
+that the installed daemon never supplies by default. It binds the method to
 the exact claim owner, rejects `any`, requires a fresh complete projection and
 an enrolled canonical name, refuses the final remaining identity, and keeps
 verification/enrollment/deletion mutually exclusive. Release or D-Bus peer
@@ -275,11 +275,22 @@ loss waits for deletion reconciliation; it never cancels and replays an
 ambiguous command. Success requires an exact typed result proving the named
 mutation reconciled locally and still awaits its different-boot proof.
 
-The missing deletion worker must independently resolve that presentation name
-to one private UUID under its own fresh operation lock, invoke the existing
-journaled single-target broker, and return the typed completion only after
-same-generation reconciliation. A label is never biometric authority; the
-journal records the resolved private target before command `0x0d`.
+The deletion worker is now implemented as a separate credential-free transient
+service. Its distinct seqpacket protocol transfers exactly one live caller
+pidfd plus claim evidence and rejects enrollment packets. Inside the broker's
+operation lock and Bridge generation, `prepare_deletion_material` re-reads the
+committed Catacomb, reproduces the cached private SEP snapshot digest, freezes
+an immutable recovery anchor, and resolves the requested canonical name to one
+private UUID. The consumer records that target before command `0x0d`, shares
+the management CLI's persistence/reconciliation tail, and returns only an
+exact reconciled completion. Peer loss after handoff cannot cancel or replay
+the deletion.
+
+`t2_fprint_delete_worker_client` is wired only by the explicit
+`--enable-native-deletion` process flag. The ordinary installed unit contains
+neither mutation flag. The uninstalled combined research drop-in atomically
+replaces `ExecStart` with both enrollment and deletion flags after the read-only
+activation gate passes.
 
 Do not implement bulk deletion as a loop over the single-delete API. A crash
 would create a partially deleted set with unclear client semantics. Keep
@@ -316,5 +327,7 @@ Native mutation remains disabled until all of these are demonstrated:
 3. Stage the uninstalled research drop-in, then validate canonical enrollment,
    fresh listing, targeted verification, cancellation, and reboot survival
    through standard fprint clients.
-4. Adapt single named deletion and prove its survivor controls.
+4. Exercise standard `fprintd-delete -f <canonical-name>` through the staged
+   single-name worker and prove its deleted-target and survivor controls before
+   and after reboot.
 5. Add batch deletion only after a separate atomic/recoverable design.

@@ -161,7 +161,8 @@ evidence, not intent.
       only the compatibility alias and match all; complete projections list
       canonical names and require a same-name private target; `any` is never a
       private identity selector.
-- [ ] Implement fprintd-native enrollment and deletion through the journaled,
+- [x] Implement default-off fprintd-native enrollment and single deletion
+      through the journaled,
       explicit-target Linux mutation brokers; never treat a D-Bus finger label
       as biometric authority.
 - [x] Stage the claim-bound standard single-delete facade behind an unattached
@@ -216,9 +217,9 @@ evidence, not intent.
       append only a completed label rename's typed post-reboot proof.
 - [x] Route a completed single deletion through the same read-only boot
       boundary while keeping live deletion itself unproven and fail-closed.
-- [ ] Prove the worker's mapping-disabled, wrong-caller, expired-grant,
+- [ ] Prove the workers' mapping-disabled, wrong-caller, expired-grant,
       disconnect, wrong-generation, and automatic-E4 controls on the installed
-      machine, then connect `EnrollStart`/`EnrollStop`.
+      machine, then stage the already-connected default-off clients.
 - [ ] Support mapped Linux users through the same caller/session/PolicyKit and
       protected Apple-user authority model, including negative cross-user tests.
 - [ ] Validate the complete fprint client experience—list, enroll, verify,
