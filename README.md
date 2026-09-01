@@ -648,7 +648,9 @@ sudo t2-touchid-manage rename \
 The broker resolves the slot only against a fresh reconciled list, holds the
 global operation lock and a verified sleep inhibitor, writes durable intent
 before dispatch, persists exactly the selected user's Catacomb, and performs
-same-connection independent read-back. A successful rename remains the only
+same-connection independent read-back. Rename is credential-free, so its
+generic mutation baseline truthfully records that password fallback was not
+verified; that field is not used as rename authority. A successful rename remains the only
 blocking mutation until it survives a different Linux boot and Bridge
 connection. The credential-free boot service now performs this read-only proof
 automatically before fprintd starts; the manual command remains available for
@@ -699,7 +701,9 @@ The broker journals the exact internal UID+UUID target before command `0x0d`,
 then trusts only a stable SEP inventory—not the command status—to decide
 whether deletion occurred. If SEP removed the identity, the broker persists
 only the selected user's survivor archive and independently reads it back. A
-reconciled deletion remains blocking until a different Linux boot and Bridge
+deletion baseline likewise records password fallback as unverified because
+the credential-free path does not use it as authority. A reconciled deletion
+remains blocking until a different Linux boot and Bridge
 connection prove the exact survivor set and clean Catacomb state. The same
 credential-free boot service performs that read-only proof automatically; the
 manual command remains available for diagnosis:

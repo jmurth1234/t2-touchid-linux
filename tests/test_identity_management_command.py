@@ -204,7 +204,7 @@ class IdentityManagementCommandTests(unittest.TestCase):
             ),
             mock.patch.object(
                 MODULE.t2_baseline, "build_baseline", return_value=baseline
-            ),
+            ) as baseline_builder,
             mock.patch.object(MODULE.t2_mutation_journal, "create"),
             mock.patch.object(MODULE.t2_identity_delete_journal, "append_checked"),
             mock.patch.object(
@@ -222,6 +222,9 @@ class IdentityManagementCommandTests(unittest.TestCase):
             result = MODULE.run_delete(configuration, slot=2)
         bridge_factory.assert_called_once_with(
             lease, connection_generation=generation
+        )
+        self.assertFalse(
+            baseline_builder.call_args.kwargs["password_fallback_verified"]
         )
         self.assertIs(dispatch.call_args.kwargs["bridge"], bridge)
         persist.assert_called_once()
@@ -278,6 +281,11 @@ class IdentityManagementCommandTests(unittest.TestCase):
         self.assertFalse(result["mutation_performed"])
         self.assertEqual(result["name"], "Linux enrolled finger")
         self.assertEqual(result["identity_count_after"], 1)
+
+    def test_management_mutations_never_manufacture_password_attestation(self):
+        source = (SOURCE / "t2-touchid-manage.py").read_text(encoding="utf-8")
+        self.assertNotIn("password_fallback_verified=True", source)
+        self.assertEqual(source.count("password_fallback_verified=False"), 2)
 
     def test_post_reboot_requires_exactly_one_candidate(self):
         with mock.patch.object(MODULE, "rename_journals", return_value=[]):

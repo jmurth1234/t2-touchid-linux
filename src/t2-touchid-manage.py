@@ -409,7 +409,10 @@ def run_rename(
             linux_boot_uuid=BOOT_ID.read_text(encoding="ascii").strip(),
             mapping_generation=configuration["mapping_generation"],
             backup_reference=backup.name,
-            password_fallback_verified=True,
+            # Label-only rename is credential-free.  Preserve that fact in
+            # the generic mutation baseline instead of manufacturing the
+            # enrollment-only password attestation.
+            password_fallback_verified=False,
         )
         operation_id = str(uuid.uuid4())
         journal_path = MUTATION_ROOT / f"{operation_id}.jsonl"
@@ -539,7 +542,10 @@ def run_delete(
             linux_boot_uuid=BOOT_ID.read_text(encoding="ascii").strip(),
             mapping_generation=configuration["mapping_generation"],
             backup_reference=backup.name,
-            password_fallback_verified=True,
+            # Single deletion is credential-free.  The operation is bound by
+            # its mapping, target, live inventory, and journal—not by a
+            # password check this process never performs.
+            password_fallback_verified=False,
         )
         operation_id = str(uuid.uuid4())
         journal_path = MUTATION_ROOT / f"{operation_id}.jsonl"

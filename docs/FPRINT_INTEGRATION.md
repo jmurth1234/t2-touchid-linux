@@ -304,11 +304,12 @@ the management CLI's persistence/reconciliation tail, and returns only an
 exact reconciled completion. Peer loss after handoff cannot cancel or replay
 the deletion.
 
-Because this worker neither reads nor verifies the macOS password, its durable
-baseline records `password_fallback_verified: false`. The generic journal
-schema preserves that truthful Boolean while enrollment creation and the typed
-enrollment reader still require it to be true. Thus the credential-free delete
-path cannot manufacture an enrollment-only password attestation or weaken the
+Because neither the native worker nor the older management rename/delete CLI
+reads or verifies the macOS password, their durable baselines record
+`password_fallback_verified: false`. The generic journal schema preserves that
+truthful Boolean while enrollment creation and the typed enrollment reader
+still require it to be true. Thus no credential-free identity-management path
+can manufacture an enrollment-only password attestation or weaken the
 enrollment boundary.
 
 `t2_fprint_delete_worker_client` is wired only by the explicit
