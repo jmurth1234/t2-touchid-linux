@@ -7,6 +7,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
+
+
+INSTALLED_SOURCE = Path("/opt/t2-touchid/src")
+LOCAL_SOURCE = Path(__file__).resolve().parent
+if (LOCAL_SOURCE / "t2_user_mapping.py").is_file():
+    sys.path.insert(0, str(LOCAL_SOURCE))
+elif INSTALLED_SOURCE.is_dir():
+    sys.path.insert(0, str(INSTALLED_SOURCE))
 
 import t2_user_mapping
 import t2_user_mapping_admin

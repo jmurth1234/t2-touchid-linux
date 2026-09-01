@@ -191,8 +191,11 @@ class MappingAdminCommandTests(unittest.TestCase):
         )
 
     def test_install_and_uninstall_own_command_without_purging_by_default(self):
+        command = (SOURCE / "t2-touchid-user-map.py").read_text(encoding="utf-8")
         install = (SOURCE.parent / "install.sh").read_text(encoding="utf-8")
         uninstall = (SOURCE.parent / "uninstall.sh").read_text(encoding="utf-8")
+        self.assertIn('INSTALLED_SOURCE = Path("/opt/t2-touchid/src")', command)
+        self.assertIn("sys.path.insert(0, str(INSTALLED_SOURCE))", command)
         self.assertIn("src/t2-touchid-user-map.py", install)
         self.assertIn("t2-touchid-user-map}", uninstall)
         self.assertIn("--purge-private-data", uninstall)
