@@ -338,6 +338,13 @@ proved after a different Linux boot and Bridge connection:
 sudo t2-touchid-enroll verify-post-reboot
 ```
 
+Current development builds also install
+`t2-touchid-post-reboot.service`, a credential-free read-only oneshot ordered
+before fprintd. It performs the same strict E4 proof automatically and leaves
+the E3 journal untouched on any mismatch. The manual command remains the
+diagnostic fallback until the automatic service has passed the installed
+hardware controls documented in the roadmap.
+
 Do not simply repeat `start` after an interruption or ambiguous result. Inspect
 `status`, then use only the recovery path it identifies:
 

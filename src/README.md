@@ -256,8 +256,17 @@ reconstructs the pinned authorization session, requires an enabled host-
 encrypted-credential mapping, and runs the real broker/consumer while a
 dedicated listener converts cancellation or peer loss into cooperative
 reconciliation. `t2_fprint_worker_client.py` supplies the unattached async
-facade lifecycle and waits for a terminal update. D-Bus `EnrollStart` remains
-disabled pending installed negative controls and automatic E4.
+facade lifecycle and waits for a terminal update.
+
+`t2_post_reboot_reconciler.py` supplies automatic E4 without loading the
+encrypted password credential. The oneshot is ordered after keybag unlock and
+BiometricKit readiness but before fprintd. It accepts exactly one eligible E3
+journal, holds the protected mapping and operation locks, rechecks the Linux
+account and keybag, binds both AKS handles to the mapped account/bag, reproduces
+stable local and SEP state on a fresh boot/generation, and appends only E4.
+There is no enrollment or Catacomb-persistence dispatch in this process.
+D-Bus `EnrollStart` remains disabled pending installed negative controls and a
+live proof of this automatic path.
 
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;

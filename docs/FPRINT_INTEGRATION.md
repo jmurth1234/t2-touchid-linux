@@ -163,9 +163,14 @@ facade task cancellation sets one cooperative predicate and waits for the
 journaled terminal response. `t2_fprint_worker_client` revalidates the original
 claim before and after worker launch and retains completion until stop.
 
-`EnrollStart` remains disabled until installed negative controls and automatic
-E4 post-reboot reconciliation are proven; these modules cannot currently be
-reached through D-Bus.
+The credential-free `t2-touchid-post-reboot` oneshot now supplies automatic
+E4 in source. It runs before fprintd, selects exactly one eligible reconciled
+enrollment journal, reproduces the protected mapping/account/keybag binding,
+checks both the positive runtime handle and special alias, collects stable
+host/SEP state on a fresh Bridge generation, and appends only
+`E4_POST_REBOOT_VERIFIED`. It has no password credential and no enrollment or
+persistence command path. `EnrollStart` remains disabled until this path and
+the worker negatives are proven on the installed machine.
 
 ## Enrollment status translation
 
@@ -207,11 +212,12 @@ cooperative cancel predicate and wait for its reconciled terminal result; they
 never kill the worker thread or replay a command. Worker, feedback, or result
 failures terminate as `enroll-unknown-error`.
 
-After an immediate E3 success, the existing E4 post-reboot proof still must be
-completed. A boot-time read-only reconciler should finish that proof
-automatically and audibly/visibly report failure; ordinary users should not
-need a repository command. Until that reconciler exists, native enrollment
-must remain disabled rather than strand an invisible blocking journal.
+After an immediate E3 success, E4 still requires a reboot. The boot-time
+read-only reconciler now completes that proof automatically when every binding
+and digest reproduces exactly. Failure remains visible in its private systemd
+journal and leaves the blocking E3 journal untouched; desktop-visible failure
+feedback is still pending. Native enrollment remains disabled until the
+installed automatic path is proven.
 
 ## Deletion policy
 
@@ -247,11 +253,10 @@ Native mutation remains disabled until all of these are demonstrated:
 
 ## Next implementation order
 
-1. Add automatic E4 recovery for successful worker journals.
-2. Prove mapping-disabled, wrong-caller, expired-grant, disconnect, and
-   wrong-generation worker negatives on the installed machine.
-3. Attach the tested worker client/status stream to `EnrollStart`/`EnrollStop`.
-4. Validate canonical enrollment, fresh listing, targeted verification, and
+1. Prove automatic E4 plus mapping-disabled, wrong-caller, expired-grant,
+   disconnect, and wrong-generation worker negatives on the installed machine.
+2. Attach the tested worker client/status stream to `EnrollStart`/`EnrollStop`.
+3. Validate canonical enrollment, fresh listing, targeted verification, and
    reboot survival through standard fprint clients.
-5. Adapt single named deletion and its survivor controls.
-6. Add batch deletion only after a separate atomic/recoverable design.
+4. Adapt single named deletion and its survivor controls.
+5. Add batch deletion only after a separate atomic/recoverable design.

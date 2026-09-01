@@ -3,7 +3,8 @@
 Description=Apple T2 Touch ID authentication daemon
 Documentation=file:/opt/t2-touchid/README.md
 Requires=t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service
-After=dbus.service network.target t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service
+Wants=t2-touchid-post-reboot.service
+After=dbus.service network.target t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service t2-touchid-post-reboot.service
 
 [Service]
 Type=dbus

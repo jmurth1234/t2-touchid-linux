@@ -20,7 +20,9 @@ import t2_bridge_connection
 import t2_bridge_inventory
 import t2_catacomb_codec
 import t2_catacomb_store
+import t2_enrollment_finalizer
 import t2_identity_inventory
+import t2_mutation_journal
 import t2_recovery_anchor
 import t2_user_mapping
 import t2_user_readiness
@@ -53,6 +55,23 @@ class EnrollmentMaterial:
         return (
             "EnrollmentMaterial(apple_uid=<redacted>, connection_generation="
             f"{self.connection_generation!r}, recovery_anchor=True, private=True)"
+        )
+
+
+@dataclass(frozen=True, repr=False)
+class PostRebootMaterial:
+    """Stable, read-only host/SEP inputs for one E4 verification."""
+
+    host: dict[str, object] = field(repr=False)
+    live: dict[str, object] = field(repr=False)
+    apple_uid: int
+    connection_generation: str
+
+    def __repr__(self) -> str:
+        return (
+            "PostRebootMaterial(apple_uid=<redacted>, "
+            f"connection_generation={self.connection_generation!r}, "
+            "stable=True, private=True)"
         )
 
 
@@ -281,6 +300,7 @@ class LiveUserReconciliationSession:
         self._first_snapshot_digest: str | None = None
         self._inventory_selected: t2_user_mapping.UserMapping | None = None
         self._public_inventory_packet: bytes | None = None
+        self._private_inventory_packet: bytes | None = None
         self._enrollment_prepared = False
 
     @property
@@ -330,6 +350,7 @@ class LiveUserReconciliationSession:
             self._first_snapshot_digest = None
             self._inventory_selected = None
             self._public_inventory_packet = None
+            self._private_inventory_packet = None
             self._enrollment_prepared = False
             self._stack = stack
             return self
@@ -341,6 +362,7 @@ class LiveUserReconciliationSession:
             self._first_snapshot_digest = None
             self._inventory_selected = None
             self._public_inventory_packet = None
+            self._private_inventory_packet = None
             self._enrollment_prepared = False
             raise
 
@@ -358,6 +380,7 @@ class LiveUserReconciliationSession:
         self._first_snapshot_digest = None
         self._inventory_selected = None
         self._public_inventory_packet = None
+        self._private_inventory_packet = None
         self._enrollment_prepared = False
         if stack is not None:
             stack.close()
@@ -463,6 +486,133 @@ class LiveUserReconciliationSession:
             STORE_ROOT,
         )
 
+    def prepare_post_reboot_material(
+        self,
+        selected: t2_user_mapping.UserMapping,
+        baseline: dict[str, object],
+    ) -> PostRebootMaterial:
+        """Return only stable read-back material; never dispatch a T2 mutation."""
+
+        if (
+            self._stack is None
+            or self._lease is None
+            or self._generation is None
+            or self._first_snapshot_digest is None
+            or self._inventory_selected != selected
+            or self._private_inventory_packet is None
+            or self._lease.connection_generation != self._generation
+        ):
+            raise LiveUserReconciliationError(
+                "post-reboot material requires current reconciled evidence"
+            )
+        if not isinstance(selected, t2_user_mapping.UserMapping):
+            raise LiveUserReconciliationError(
+                "post-reboot mapping has the wrong type"
+            )
+        try:
+            t2_mutation_journal.validate_baseline(baseline)
+        except t2_mutation_journal.JournalError as error:
+            raise LiveUserReconciliationError(
+                "post-reboot baseline is invalid"
+            ) from error
+        if (
+            baseline["apple_uid"] != selected.apple_uid
+            or baseline["target_linux_uid"] != selected.linux_uid
+            or baseline["account_uuid"] != selected.account_uuid
+            or baseline["bag_uuid"] != selected.bag_uuid
+        ):
+            raise LiveUserReconciliationError(
+                "post-reboot baseline belongs to another mapping"
+            )
+        try:
+            live = json.loads(
+                self._private_inventory_packet.decode("ascii")
+            )
+            encoded = json.dumps(
+                live,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+            store = t2_catacomb_store.CatacombStore(
+                STORE_ROOT, selected.apple_uid
+            )
+            before = store.read_committed_components()
+            host = t2_enrollment_finalizer.read_local_host_snapshot(
+                store, baseline
+            )
+            after = store.read_committed_components()
+        except (
+            KeyError,
+            UnicodeError,
+            json.JSONDecodeError,
+            TypeError,
+            ValueError,
+            t2_catacomb_codec.CatacombCodecError,
+            t2_catacomb_store.CatacombStoreError,
+            t2_enrollment_finalizer.EnrollmentFinalizerError,
+        ) as error:
+            raise LiveUserReconciliationError(
+                "post-reboot read-back collection failed"
+            ) from error
+        if (
+            not isinstance(live, dict)
+            or encoded != self._private_inventory_packet
+            or before != after
+            or _snapshot_digest(
+                after, live, selected.apple_uid, self._generation
+            )
+            != self._first_snapshot_digest
+            or self._lease.connection_generation != self._generation
+        ):
+            raise LiveUserReconciliationError(
+                "post-reboot read-back changed during collection"
+            )
+        return PostRebootMaterial(
+            host, live, selected.apple_uid, self._generation
+        )
+
+    def revalidate_runtime_keybag(
+        self,
+        selected: t2_user_mapping.UserMapping,
+        positive_handle: int,
+    ) -> bool:
+        """Bind the boot's positive handle and special alias to one mapping."""
+
+        if (
+            self._stack is None
+            or self._lease is None
+            or self._observer is None
+            or self._generation is None
+            or self._first_snapshot_digest is None
+            or self._inventory_selected != selected
+            or self._lease.connection_generation != self._generation
+            or type(positive_handle) is not int
+            or not 0 < positive_handle <= (1 << 31) - 1
+        ):
+            raise LiveUserReconciliationError(
+                "runtime keybag revalidation requires current evidence"
+            )
+        try:
+            positive_uuid = self._observer.observe_handle_uuid(positive_handle)
+            alias = self._observer.observe_alias(selected.special_bag_alias)
+        except t2_aks_observer.AKSAliasObservationError as error:
+            raise LiveUserReconciliationError(
+                "runtime keybag revalidation failed"
+            ) from error
+        if (
+            positive_uuid != selected.bag_uuid
+            or alias.present is not True
+            or alias.special_alias != selected.special_bag_alias
+            or alias.bag_uuid != selected.bag_uuid
+            or alias.account_uuid != selected.account_uuid
+        ):
+            raise LiveUserReconciliationError(
+                "runtime keybag belongs to another mapping"
+            )
+        return True
+
     def collect(
         self,
         selected: t2_user_mapping.UserMapping,
@@ -483,6 +633,7 @@ class LiveUserReconciliationSession:
             )
         self._inventory_selected = None
         self._public_inventory_packet = None
+        self._private_inventory_packet = None
         if not isinstance(selected, t2_user_mapping.UserMapping):
             raise LiveUserReconciliationError("selected mapping has the wrong type")
         try:
@@ -552,12 +703,20 @@ class LiveUserReconciliationSession:
                 ensure_ascii=True,
                 allow_nan=False,
             ).encode("ascii")
+            private_packet = json.dumps(
+                live,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
         except (UnicodeError, TypeError, ValueError) as error:
             raise LiveUserReconciliationError(
                 "public identity inventory is not canonical"
             ) from error
         self._inventory_selected = selected
         self._public_inventory_packet = public_packet
+        self._private_inventory_packet = private_packet
         return (
             t2_user_readiness.PersistentEvidence(
                 linux_account_generation,

@@ -184,9 +184,13 @@ evidence, not intent.
 - [x] Implement the short-lived hardened systemd encrypted-credential worker,
       exact-one-pidfd seqpacket protocol, stdin-only AKS credential binder,
       and cooperative facade client without exposing a D-Bus mutation method.
+- [x] Implement an automatic boot-time, credential-free E4 reconciler which
+      revalidates the protected mapping/account/keybag, both AKS handles,
+      stable host/SEP state, fresh boot, and fresh Bridge generation before
+      appending only `E4_POST_REBOOT_VERIFIED`; keep live deployment pending.
 - [ ] Prove the worker's mapping-disabled, wrong-caller, expired-grant,
-      disconnect, and wrong-generation controls on the installed machine,
-      then connect `EnrollStart`/`EnrollStop` only after automatic E4 exists.
+      disconnect, wrong-generation, and automatic-E4 controls on the installed
+      machine, then connect `EnrollStart`/`EnrollStop`.
 - [ ] Support mapped Linux users through the same caller/session/PolicyKit and
       protected Apple-user authority model, including negative cross-user tests.
 - [ ] Validate the complete fprint client experience—list, enroll, verify,

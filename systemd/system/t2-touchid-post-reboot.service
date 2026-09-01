@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Reconcile completed Apple T2 Touch ID enrollment after reboot
+Documentation=file:/opt/t2-touchid/README.md
+Requires=t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service
+After=local-fs.target network-online.target t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service
+Before=fprintd.service
+ConditionPathIsDirectory=/var/lib/t2-touchid/mutations
+
+[Service]
+Type=oneshot
+ExecStart=/opt/t2-touchid/.venv/bin/python /opt/t2-touchid/src/t2-touchid-post-reboot.py
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=no
+PrivateNetwork=no
+PrivateMounts=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectKernelModules=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+RestrictAddressFamilies=AF_UNIX AF_INET6
+DevicePolicy=closed
+DeviceAllow=/dev/t2-aks rw
+ReadWritePaths=/run/t2-touchid /var/lib/t2-touchid
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+TimeoutStartSec=90s

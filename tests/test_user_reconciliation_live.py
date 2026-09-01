@@ -17,6 +17,7 @@ import t2_user_mapping as mapping
 import t2_user_readiness as readiness
 import t2_user_reconciliation_live as live_reconciliation
 import t2_recovery_anchor as recovery_anchor
+from tests.test_mutation_journal import baseline
 
 
 def identifier(number: int) -> str:
@@ -264,6 +265,45 @@ class LiveUserReconciliationTests(unittest.TestCase):
                 "does not permit",
             ):
                 session.prepare_enrollment_material(disabled, identifier(30))
+
+    def test_post_reboot_material_is_stable_private_and_read_only(self):
+        enrollment = replace(
+            selected(), capabilities=frozenset({"verify", "enroll"}), enabled=True
+        )
+        live_reconciliation.t2_catacomb_store.CatacombStore.return_value = Store(
+            (self.components,) * 4
+        )
+        host = {"stable": True}
+        session = live_reconciliation.LiveUserReconciliationSession()
+        with mock.patch.object(
+            live_reconciliation.t2_enrollment_finalizer,
+            "read_local_host_snapshot",
+            return_value=host,
+        ) as read_host, session:
+            session.collect(enrollment, "a" * 64, "b" * 64)
+            material = session.prepare_post_reboot_material(
+                enrollment, baseline()
+            )
+        self.assertIs(material.host, host)
+        self.assertEqual(material.live, self.live)
+        self.assertEqual(material.apple_uid, 501)
+        self.assertEqual(material.connection_generation, identifier(10))
+        self.assertNotIn(identifier(1), repr(material))
+        read_host.assert_called_once()
+
+    def test_runtime_keybag_revalidation_binds_both_handles(self):
+        enrollment = replace(
+            selected(), capabilities=frozenset({"verify", "enroll"}), enabled=True
+        )
+        self.observer.observe_handle_uuid.return_value = enrollment.bag_uuid
+        session = live_reconciliation.LiveUserReconciliationSession()
+        with session:
+            session.collect(enrollment, "a" * 64, "b" * 64)
+            self.assertTrue(
+                session.revalidate_runtime_keybag(enrollment, 42)
+            )
+        self.observer.observe_handle_uuid.assert_called_once_with(42)
+        self.assertEqual(self.observer.observe_alias.call_count, 2)
 
     def test_inactive_reentered_or_generation_changed_session_fails(self):
         session = live_reconciliation.LiveUserReconciliationSession()
