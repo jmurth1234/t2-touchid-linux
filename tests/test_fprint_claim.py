@@ -72,6 +72,12 @@ class FprintClaimTests(unittest.TestCase):
                 account_collector=collect_account,
             )
             evidence.revalidate(caller)
+            authorization = evidence.authorization_session(caller)
+            try:
+                self.assertEqual(authorization.caller.linux_uid, os.getuid())
+                authorization.revalidate()
+            finally:
+                authorization.close()
             rendered = str(evidence.redacted())
             self.assertNotIn("jess", rendered)
             self.assertNotIn(str(os.getuid()), rendered)
@@ -170,6 +176,10 @@ class FprintClaimTests(unittest.TestCase):
                         )
                         self.assertEqual(evidence.linux_uid, target_uid)
                         self.assertEqual(backend.active_queries, 0)
+                        with self.assertRaisesRegex(
+                            claim.FprintClaimError, "cannot authorize mutation"
+                        ):
+                            evidence.authorization_session(caller)
                     else:
                         with self.assertRaisesRegex(
                             claim.FprintClaimError, "login assertion"

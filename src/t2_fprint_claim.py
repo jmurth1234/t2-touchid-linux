@@ -106,6 +106,39 @@ class ClaimEvidence:
         except t2_dbus_identity.DBusIdentityError as error:
             raise FprintClaimError("D-Bus caller changed") from error
 
+    def authorization_session(
+        self,
+        caller: t2_dbus_identity.PinnedDBusCaller,
+    ) -> t2_ipc_session.AuthorizationSession:
+        """Create self-service authority only for a same-UID non-root caller."""
+        self.revalidate(caller)
+        if caller.subject.uid != self.linux_uid:
+            raise FprintClaimError(
+                "root or cross-user fprint claims cannot authorize mutation"
+            )
+        authorization = None
+        try:
+            peer = caller.duplicate_peer()
+            authorization = t2_ipc_session.AuthorizationSession.from_peer(
+                peer,
+                expected_uid=self.linux_uid,
+                expected_session=self.session,
+                expected_account=self.account,
+                backend=self.backend,
+                account_collector=self.account_collector,
+            )
+            caller.verify()
+            return authorization
+        except (
+            t2_dbus_identity.DBusIdentityError,
+            t2_ipc_session.IPCSessionError,
+        ) as error:
+            if authorization is not None:
+                authorization.close()
+            raise FprintClaimError(
+                "fprint mutation authority could not be derived"
+            ) from error
+
     def redacted(self) -> dict[str, object]:
         return {
             "schema_version": 1,

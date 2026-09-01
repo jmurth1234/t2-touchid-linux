@@ -200,6 +200,12 @@ session—root cannot use the same-UID fallback. `NameOwnerChanged` cancels
 active work, closes the pidfd, and releases the claim. The username remains
 presentation input, never authority by itself.
 
+A claim may derive a fresh `AuthorizationSession` using an independently owned
+duplicate pidfd only when the D-Bus caller UID is the claimed UID. Its account
+and session must equal the original claim snapshot. Root PAM clients are thus
+verification-only; they cannot become self-service mutation callers. This
+bridge is internal and no fprint mutation method consumes it yet.
+
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;
 the identities runner is intrinsically non-modifying and cannot collect

@@ -93,6 +93,14 @@ by repeating its username and prevents PID reuse from rebinding an existing
 claim. Protected mapping and bounded PolicyKit binding remain required before
 mutation is enabled.
 
+The claim can now derive an independently owned `AuthorizationSession` from
+the same pidfd/session/account snapshot for a future mutation request. This is
+strictly self-service: the D-Bus process UID must equal the claimed Linux UID.
+A root PAM claim may continue through verification, but cannot be converted
+into mutation authority. The derived session retains the existing
+revalidation and bounded PolicyKit collector; it has not yet been connected to
+an fprint mutation method.
+
 ## Mutation worker boundary
 
 The long-lived fprint facade must not receive or retain the macOS password.

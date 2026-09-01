@@ -606,24 +606,48 @@ class AuthorizationSession:
         self.caller = session.caller(account.generation, peer.subject.uid)
 
     @classmethod
-    def from_socket(
+    def from_peer(
         cls,
-        connection: socket.socket,
+        peer: PinnedPeer,
         *,
+        expected_uid: int | None = None,
+        expected_session: SessionEvidence | None = None,
+        expected_account: t2_linux_account.AccountEvidence | None = None,
         backend: SessionBackend | None = None,
-        proc_root: Path = t2_polkit_grant.PROC_ROOT,
         account_collector: AccountCollector = t2_linux_account.collect,
     ) -> "AuthorizationSession":
-        peer = PinnedPeer.from_socket(connection, proc_root=proc_root)
+        if not isinstance(peer, PinnedPeer):
+            raise IPCSessionError("authorization peer has the wrong type")
         try:
+            selected_uid = (
+                peer.subject.uid if expected_uid is None else expected_uid
+            )
+            if (
+                type(selected_uid) is not int
+                or selected_uid != peer.subject.uid
+                or not 1 <= selected_uid < (1 << 32) - 1
+            ):
+                raise IPCSessionError(
+                    "authorization target must be the pinned non-root peer"
+                )
             selected_backend = backend or LibsystemdSessionBackend()
-            session = collect_session(peer, selected_backend)
+            session = collect_session(
+                peer, selected_backend, expected_uid=selected_uid
+            )
+            if expected_session is not None and session != expected_session:
+                raise IPCSessionError(
+                    "authorization login session differs from the claim"
+                )
             try:
                 account = validate_account(
-                    account_collector(peer.subject.uid), peer.subject.uid
+                    account_collector(selected_uid), selected_uid
                 )
             except t2_linux_account.LinuxAccountError as error:
                 raise IPCSessionError("Linux account assertion failed") from error
+            if expected_account is not None and account != expected_account:
+                raise IPCSessionError(
+                    "authorization account differs from the claim"
+                )
             return cls(
                 peer,
                 selected_backend,
@@ -634,6 +658,22 @@ class AuthorizationSession:
         except BaseException:
             peer.close()
             raise
+
+    @classmethod
+    def from_socket(
+        cls,
+        connection: socket.socket,
+        *,
+        backend: SessionBackend | None = None,
+        proc_root: Path = t2_polkit_grant.PROC_ROOT,
+        account_collector: AccountCollector = t2_linux_account.collect,
+    ) -> "AuthorizationSession":
+        peer = PinnedPeer.from_socket(connection, proc_root=proc_root)
+        return cls.from_peer(
+            peer,
+            backend=backend,
+            account_collector=account_collector,
+        )
 
     @property
     def account(self) -> t2_linux_account.AccountEvidence:

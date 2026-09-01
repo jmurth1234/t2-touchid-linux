@@ -287,6 +287,46 @@ class IPCSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(ipc.IPCSessionError, "closed"):
             session.revalidate()
 
+    def test_authorization_session_accepts_exact_precollected_claim(self):
+        backend = FakeBackend()
+
+        def account_collector(uid):
+            return linux_account.AccountEvidence(uid, "a" * 64)
+
+        peer = ipc.PinnedPeer.from_socket(self.left)
+        expected_session = ipc.collect_session(peer, backend)
+        expected_account = account_collector(os.getuid())
+        descriptor = peer.pidfd
+        session = ipc.AuthorizationSession.from_peer(
+            peer,
+            expected_uid=os.getuid(),
+            expected_session=expected_session,
+            expected_account=expected_account,
+            backend=backend,
+            account_collector=account_collector,
+        )
+        with session:
+            self.assertEqual(session.session, expected_session)
+            self.assertEqual(session.account, expected_account)
+            session.revalidate()
+        with self.assertRaises(OSError):
+            fcntl.fcntl(descriptor, fcntl.F_GETFD)
+
+    def test_authorization_session_rejects_cross_uid_claim(self):
+        peer = ipc.PinnedPeer.from_socket(self.left)
+        descriptor = peer.pidfd
+        with self.assertRaisesRegex(ipc.IPCSessionError, "non-root peer"):
+            ipc.AuthorizationSession.from_peer(
+                peer,
+                expected_uid=os.getuid() + 1,
+                backend=FakeBackend(),
+                account_collector=lambda uid: linux_account.AccountEvidence(
+                    uid, "a" * 64
+                ),
+            )
+        with self.assertRaises(OSError):
+            fcntl.fcntl(descriptor, fcntl.F_GETFD)
+
     def test_join_rejects_session_change_during_policy_interaction(self):
         backend = FakeBackend()
 
