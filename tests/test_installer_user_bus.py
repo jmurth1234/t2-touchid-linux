@@ -23,6 +23,18 @@ class InstallerUserBusTests(unittest.TestCase):
             installer,
         )
 
+    def test_uninstaller_uses_the_same_bounded_user_bus(self):
+        uninstaller = (ROOT / "uninstall.sh").read_text(encoding="utf-8")
+        self.assertIn('target_uid=$(id -u -- "$target_user"', uninstaller)
+        self.assertIn('target_runtime_dir=/run/user/$target_uid', uninstaller)
+        self.assertIn('[[ $target_uid =~ ^[0-9]+$', uninstaller)
+        self.assertIn('runuser -u "$target_user" -- env', uninstaller)
+        self.assertIn('XDG_RUNTIME_DIR="$target_runtime_dir"', uninstaller)
+        self.assertIn(
+            'DBUS_SESSION_BUS_ADDRESS="unix:path=$target_runtime_dir/bus"',
+            uninstaller,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,10 +11,12 @@ fi
 
 target_user=
 target_home=
+target_uid=
 if [[ -r /etc/t2-touchid.conf ]]; then
   target_user=$(sed -n 's/^T2_TOUCHID_USER=//p' /etc/t2-touchid.conf | tail -n 1)
   if [[ $target_user =~ ^[a-z_][a-z0-9_-]*$ ]]; then
     target_home=$(getent passwd "$target_user" | cut -d: -f6)
+    target_uid=$(id -u -- "$target_user" 2>/dev/null || true)
   fi
 fi
 
@@ -37,7 +39,13 @@ if [[ -n $target_home && -d $target_home/.config/systemd/user ]]; then
     file=$target_home/.config/systemd/user/$unit
     [[ ! -e $file ]] || rm -- "$file"
   done
-  runuser -u "$target_user" -- systemctl --user daemon-reload 2>/dev/null || true
+  target_runtime_dir=/run/user/$target_uid
+  if [[ $target_uid =~ ^[0-9]+$ && -S $target_runtime_dir/bus ]]; then
+    runuser -u "$target_user" -- env \
+      XDG_RUNTIME_DIR="$target_runtime_dir" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=$target_runtime_dir/bus" \
+      systemctl --user daemon-reload 2>/dev/null || true
+  fi
 fi
 systemctl daemon-reload
 systemctl reload dbus.service 2>/dev/null || true

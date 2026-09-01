@@ -185,7 +185,8 @@ permanently removed; PAM restoration remains an explicit operation.
 If the desktop user's systemd user manager is already running, installation
 reloads it through that user's `/run/user/<uid>/bus`. If no user bus exists,
 the reload is skipped quietly and the units are discovered at the next login;
-the root environment is never mistaken for a desktop user session.
+the root environment is never mistaken for a desktop user session. Uninstall
+uses the same bounded user-bus rule after removing the feedback units.
 
 ### Unlocking keybags from password authentication
 
