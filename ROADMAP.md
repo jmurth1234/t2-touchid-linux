@@ -143,6 +143,9 @@ evidence, not intent.
       and never produce a misleading partial per-finger list.
 - [x] Add a read-only installed fprint migration-status command backed by the
       fresh reconciled identity collector, with no label guessing or mutation.
+- [x] Add a private targeted-match selector that requires complete unique
+      canonical names plus exact local/live UUID-set agreement, while emitting
+      only the selected presentation name publicly.
 - [ ] Implement fprintd-native enrollment and deletion through the journaled,
       explicit-target Linux mutation brokers; never treat a D-Bus finger label
       as biometric authority.

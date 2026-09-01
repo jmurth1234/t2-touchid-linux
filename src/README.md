@@ -157,6 +157,13 @@ The installed, no-argument `t2-touchid-fprint-status` command feeds it only the
 existing root-only fresh reconciled identity collector and prints the redacted
 projection. It is diagnostic-only and cannot rename, enroll, or delete.
 
+`t2_fprint_match_selection.py` is the private authority half of that future
+listing. It accepts a strictly decoded user Catacomb and one exact tuple of live
+20-byte per-user identity records, requires complete unique canonical fprint
+names and exact UUID-set agreement, then returns exactly one opaque record for
+the requested name. Record order is not authority, `any` is not a target name,
+and no UUID, Apple user, or raw record appears in its public proof.
+
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;
 the identities runner is intrinsically non-modifying and cannot collect

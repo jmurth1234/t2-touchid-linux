@@ -5871,6 +5871,14 @@ The installed no-argument fprint status diagnostic now runs that projection on
 the same fresh reconciled collector. It reports only standard finger names and
 counts; it cannot assign a label or perform a biometric operation.
 
+The targeted-match selector keeps the complementary authority private. Given a
+strict user Catacomb and the exact live 20-byte per-user records, it requires
+all labels to be unique canonical fprint names and the complete local/live UUID
+sets to agree. Only then can one presentation name select one opaque match
+record; record order, `any`, partial metadata, and public UUIDs are never used as
+authority. This is the prerequisite for making a named fprint verification
+truthful rather than allowing any enrolled finger to satisfy every name.
+
 The installed `t2-touchid-identities` read-only management inventory now joins
 the strict committed user Catacomb to a fresh stable SEP double-read under the
 exclusive operation lock. It requires exact equality among local, per-user,
