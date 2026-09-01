@@ -218,6 +218,20 @@ class ReplyTests(unittest.TestCase):
             with self.subTest(), self.assertRaises(ValueError):
                 MODULE.strict_identity_records(reply, events, size, "test")
 
+    def test_post_match_inventory_retains_separate_late_callbacks(self):
+        record = struct.pack("<I", 501) + uuid.UUID(int=11).bytes
+        callback = [9, 0xE3FF8000, b"opaque", None, None]
+        self.assertEqual(
+            MODULE.post_match_identity_records(
+                [0, record], [callback], 20, "post-match"
+            ),
+            (record,),
+        )
+        with self.assertRaisesRegex(ValueError, "callback stream"):
+            MODULE.post_match_identity_records(
+                [0, record], None, 20, "post-match"
+            )
+
     def full_inventory(self):
         identity = struct.pack("<I", 501) + uuid.UUID(int=1).bytes
         group = struct.pack("<I", 1) + uuid.UUID(int=2).bytes

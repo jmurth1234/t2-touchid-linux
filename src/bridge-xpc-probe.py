@@ -216,6 +216,23 @@ def strict_identity_records(
     )
 
 
+def post_match_identity_records(
+    reply: object, events: object, record_size: int, label: str
+) -> tuple[bytes, ...]:
+    """Validate a post-match inventory reply while retaining late callbacks.
+
+    BridgeXPC may deliver a final acknowledged match callback after the cancel
+    command has replied.  ``request_with_events`` correctly separates that
+    callback from the next command reply.  It is part of the match stream, not
+    evidence that the independently typed identity reply is malformed.
+    Initial/repeated pre-match inventories remain strictly event-free.
+    """
+
+    if type(events) is not list:
+        raise ValueError(f"{label} callback stream is invalid")
+    return strict_identity_records(reply, [], record_size, label)
+
+
 def write_private_json(path: str, value: object) -> None:
     """Exclusively write root-only private inventory; never overwrite state."""
     if os.geteuid() != 0:
@@ -1449,21 +1466,25 @@ def main() -> None:
                 post_global_reply, post_global_events = biometric_command(
                     sock, 0x51, output_capacity=40 * 10
                 )
+                post_user_records = post_match_identity_records(
+                    post_user_reply,
+                    post_user_events,
+                    20,
+                    "post-match per-user",
+                )
+                post_global_records = post_match_identity_records(
+                    post_global_reply,
+                    post_global_events,
+                    40,
+                    "post-match global",
+                )
+                events.extend(post_user_events)
+                events.extend(post_global_events)
                 post_attestation = t2_fprint_match_gate.attest_unchanged(
                     reconciled_gate,
                     store.read_committed_components(),
-                    strict_identity_records(
-                        post_user_reply,
-                        post_user_events,
-                        20,
-                        "post-match per-user",
-                    ),
-                    strict_identity_records(
-                        post_global_reply,
-                        post_global_events,
-                        40,
-                        "post-match global",
-                    ),
+                    post_user_records,
+                    post_global_records,
                 )
                 result[
                     "targeted_match_post_attestation"
