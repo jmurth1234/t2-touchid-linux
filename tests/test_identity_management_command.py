@@ -397,6 +397,13 @@ class IdentityManagementCommandTests(unittest.TestCase):
         self.assertNotIn("password_fallback_verified=True", source)
         self.assertEqual(source.count("password_fallback_verified=False"), 3)
 
+    def test_adaptive_sync_reuses_active_sensor_readiness(self):
+        source = (SOURCE / "t2-touchid-manage.py").read_text(encoding="utf-8")
+        self.assertIn(
+            'if args.command not in {"status", "sync-user-catacomb"}:',
+            source,
+        )
+
     def test_adaptive_catacomb_sync_persists_user_then_master(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1667,7 +1667,10 @@ def main() -> int:
         configuration = runtime_configuration()
         _private_root_owned(STATE_ROOT, directory=True)
         _private_root_owned(MUTATION_ROOT, directory=True)
-        if args.command != "status":
+        # Adaptive sync is dispatched only after an already-successful match
+        # and its static service requires the active readiness unit. Restarting
+        # readiness here would stop both fprintd and this dependent oneshot.
+        if args.command not in {"status", "sync-user-catacomb"}:
             warm_sensor()
         with operation_lock():
             if args.command == "status":
