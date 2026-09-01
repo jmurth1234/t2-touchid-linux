@@ -155,6 +155,43 @@ class BaselineTests(unittest.TestCase):
                     password_fallback_verified=True,
                 )
 
+    def test_accepts_exact_absent_sep_first_enrollment_baseline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.tar.gz"
+            write_archive(path)
+            host = t2_baseline.read_host_archive(path, 501)
+            live = live_inventory()
+            live["per_user_identity_records"] = []
+            live["catacomb"] = {
+                "uuid": "00000000-0000-0000-0000-000000000000",
+                "present": False,
+                "hash": "0" * 64,
+                "global_state": "ffffffff03000000",
+                "user_states": [
+                    {
+                        "kind": "master",
+                        "user_id": 0xFFFFFFFF,
+                        "state": 3,
+                        "needs_save": False,
+                    }
+                ],
+            }
+            result = t2_baseline.build_baseline(
+                host=host,
+                live=live,
+                caller_linux_uid=1000,
+                target_linux_uid=1000,
+                linux_boot_uuid="00000000-0000-0000-0000-000000000021",
+                mapping_generation="b" * 64,
+                backup_reference="backup-1",
+                password_fallback_verified=True,
+            )
+            t2_mutation_journal.validate_baseline(result)
+            self.assertEqual(
+                result["sep_catacomb"],
+                {"present": False, "uuid": None, "hash": None},
+            )
+
     def test_rejects_wrong_archive_user(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "capture.tar.gz"

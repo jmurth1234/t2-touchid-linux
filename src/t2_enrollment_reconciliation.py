@@ -272,12 +272,25 @@ def _classify_observed_identity(
         live.get("global_identity_records"), apple_uid
     )
     added = live_after - before
+    absent_initialization = baseline["sep_catacomb"]["present"] is False
+    identity_delta_valid = (
+        host_after == before
+        and configured_global == live_after
+        and len(added) == 1
+        and (
+            (not absent_initialization and not (before - live_after))
+            or (
+                absent_initialization
+                and len(before) == 1
+                and len(live_after) == 1
+                and before.isdisjoint(live_after)
+            )
+        )
+    )
     if (
-        host_after != before
-        or configured_global != live_after
-        or before - live_after
-        or len(added) != 1
-        or len(live_after) != baseline["capacity"]["used"] + 1
+        not identity_delta_valid
+        or len(live_after)
+        != (1 if absent_initialization else baseline["capacity"]["used"] + 1)
     ):
         raise EnrollmentReconciliationError(
             "identity recovery does not contain exactly one built-in SEP addition"
@@ -300,7 +313,10 @@ def _classify_observed_identity(
     if (
         not isinstance(catacomb, dict)
         or catacomb.get("present") is not True
-        or catacomb.get("uuid") != baseline["sep_catacomb"]["uuid"]
+        or (
+            not absent_initialization
+            and catacomb.get("uuid") != baseline["sep_catacomb"]["uuid"]
+        )
     ):
         raise EnrollmentReconciliationError(
             "identity recovery observed a rebound SEP Catacomb"
@@ -311,7 +327,10 @@ def _classify_observed_identity(
         )
     except mutation_journal.JournalError as error:
         raise EnrollmentReconciliationError(str(error)) from error
-    if catacomb["hash"] == baseline["sep_catacomb"]["hash"]:
+    if (
+        not absent_initialization
+        and catacomb["hash"] == baseline["sep_catacomb"]["hash"]
+    ):
         raise EnrollmentReconciliationError(
             "identity recovery did not observe the terminal SEP Catacomb advance"
         )
@@ -420,9 +439,17 @@ def classify(
     }
     if any(after_entities.get(pair) != entity for pair, entity in before_entities.items()):
         raise EnrollmentReconciliationError("existing host identity entity changed")
+    absent_initialization = baseline["sep_catacomb"]["present"] is False
     removed = before - live_after
     added = live_after - before
-    if removed or len(added) > 1:
+    replacement_delta = (
+        absent_initialization
+        and len(before) == 1
+        and len(live_after) == 1
+        and len(removed) == 1
+        and len(added) == 1
+    )
+    if (removed and not replacement_delta) or len(added) > 1:
         raise EnrollmentReconciliationError("post-enrollment identity delta is unsafe")
 
     maximum = live.get("maximum_capacity")
@@ -459,7 +486,10 @@ def classify(
         for field in ("mode", "uid", "gid")
     ):
         raise EnrollmentReconciliationError("host component metadata changed")
-    if catacomb["uuid"] != baseline["sep_catacomb"]["uuid"]:
+    if (
+        not absent_initialization
+        and catacomb["uuid"] != baseline["sep_catacomb"]["uuid"]
+    ):
         raise EnrollmentReconciliationError("SEP Catacomb UUID changed")
 
     master_enrollment_count = host.get("master_enrollment_count")

@@ -217,10 +217,29 @@ def build_baseline(
     host_identities = {
         (item["user_id"], item["uuid"]) for item in host["identity_records"]
     }
-    if live_identities != host_identities:
-        raise BaselineError("live SEP and host Catacomb identities disagree")
     catacomb = live.get("catacomb")
-    if not isinstance(catacomb, dict) or catacomb.get("present") is not True:
+    absent_initialization = (
+        isinstance(catacomb, dict)
+        and catacomb.get("present") is False
+        and catacomb.get("uuid") == "00000000-0000-0000-0000-000000000000"
+        and catacomb.get("hash") == "0" * 64
+        and live_identities == set()
+        and len(host_identities) == 1
+        and catacomb.get("user_states")
+        == [
+            {
+                "kind": "master",
+                "user_id": 0xFFFFFFFF,
+                "state": 3,
+                "needs_save": False,
+            }
+        ]
+    )
+    if live_identities != host_identities and not absent_initialization:
+        raise BaselineError("live SEP and host Catacomb identities disagree")
+    if not isinstance(catacomb, dict) or (
+        catacomb.get("present") is not True and not absent_initialization
+    ):
         raise BaselineError("live SEP Catacomb component is absent")
     maximum = live.get("maximum_capacity")
     if not isinstance(maximum, int) or maximum < len(host_identities):
@@ -244,9 +263,9 @@ def build_baseline(
         "identity_records": host["identity_records"],
         "capacity": {"used": len(host_identities), "maximum": maximum},
         "sep_catacomb": {
-            "present": True,
-            "uuid": catacomb["uuid"],
-            "hash": catacomb["hash"],
+            "present": not absent_initialization,
+            "uuid": None if absent_initialization else catacomb["uuid"],
+            "hash": None if absent_initialization else catacomb["hash"],
         },
         "host_components": host["host_components"],
         "master_enrollment_count": host["master_enrollment_count"],

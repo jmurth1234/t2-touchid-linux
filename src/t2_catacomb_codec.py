@@ -395,6 +395,43 @@ class UserCatacomb:
         ]
         return self._encode_and_verify(self._build_root(identities), identities)
 
+    def replace_only_for_absent_sep(
+        self,
+        *,
+        identity_uuid: str,
+        entity: int,
+        name: str,
+        created: dt.datetime,
+        absent_sep_attested: bool,
+    ) -> bytes:
+        """Replace the sole template identity for an attested absent SEP user."""
+        if absent_sep_attested is not True or len(self.identities) != 1:
+            raise CatacombCodecError(
+                "absent-SEP replacement requires one explicitly attested template"
+            )
+        prototype = self.identities[0]
+        new_uuid = str(uuid.UUID(identity_uuid))
+        entity = _bounded_int(entity, "identity entity")
+        if not isinstance(name, str) or not name or len(name.encode("utf-8")) > MAX_STRING_BYTES:
+            raise CatacombCodecError("new identity name is invalid")
+        if not isinstance(created, dt.datetime) or created.tzinfo is None:
+            raise CatacombCodecError("creation time must be timezone-aware")
+        seconds = (created.astimezone(dt.timezone.utc) - APPLE_EPOCH).total_seconds()
+        if not math.isfinite(seconds):
+            raise CatacombCodecError("creation time is invalid")
+        replacement = dataclasses.replace(
+            prototype,
+            uuid=new_uuid,
+            user_id=self.expected_user_id,
+            entity=entity,
+            name=name,
+            match_count=0,
+            continuous_match_count=0,
+            update_count=1,
+            creation_time=seconds,
+        )
+        return self._encode_and_verify(self._build_root([replacement]), [replacement])
+
     def add(
         self,
         *,

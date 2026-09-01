@@ -380,14 +380,23 @@ class BuiltinEnrollmentFinalizer:
         if apple_time <= old_master.current_time:
             raise EnrollmentFinalizerError("finalizer clock did not advance master time")
         entity = _next_entity({identity.entity for identity in old_user.identities})
-        user_with_identity = t2_catacomb_codec.decode_user_catacomb(
-            old_user.add(
+        if baseline["sep_catacomb"]["present"] is False:
+            encoded_user = old_user.replace_only_for_absent_sep(
                 identity_uuid=identity_uuid,
                 entity=entity,
                 name=self.identity_name,
                 created=timestamp,
-            ),
-            self.apple_user_id,
+                absent_sep_attested=True,
+            )
+        else:
+            encoded_user = old_user.add(
+                identity_uuid=identity_uuid,
+                entity=entity,
+                name=self.identity_name,
+                created=timestamp,
+            )
+        user_with_identity = t2_catacomb_codec.decode_user_catacomb(
+            encoded_user, self.apple_user_id
         )
 
         def encode(name: str, secure_blob: bytearray) -> bytearray:
