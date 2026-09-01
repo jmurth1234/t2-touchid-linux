@@ -71,6 +71,35 @@ class IPCSessionTests(unittest.TestCase):
         with self.assertRaises(OSError):
             fcntl.fcntl(descriptor, fcntl.F_GETFD)
 
+    def test_transferred_process_fd_is_validated_and_owned(self):
+        descriptor = os.pidfd_open(os.getpid())
+        with ipc.PinnedPeer.from_process_fd(
+            descriptor, os.getpid(), os.getuid()
+        ) as peer:
+            self.assertEqual(peer.subject.pid, os.getpid())
+            self.assertEqual(peer.subject.uid, os.getuid())
+            self.assertEqual(peer.verify(), peer.subject)
+        with self.assertRaises(OSError):
+            fcntl.fcntl(descriptor, fcntl.F_GETFD)
+
+    def test_process_fd_rejects_wrong_pid_and_non_pidfd(self):
+        descriptor = os.pidfd_open(os.getpid())
+        with self.assertRaises(ipc.IPCSessionError):
+            ipc.PinnedPeer.from_process_fd(
+                descriptor, os.getpid() + 1, os.getuid()
+            )
+        with self.assertRaises(OSError):
+            fcntl.fcntl(descriptor, fcntl.F_GETFD)
+
+        read_descriptor, write_descriptor = os.pipe()
+        os.close(write_descriptor)
+        with self.assertRaises(ipc.IPCSessionError):
+            ipc.PinnedPeer.from_process_fd(
+                read_descriptor, os.getpid(), os.getuid()
+            )
+        with self.assertRaises(OSError):
+            fcntl.fcntl(read_descriptor, fcntl.F_GETFD)
+
     def test_direct_pidfd_session_must_be_active_local_user_on_a_seat(self):
         with ipc.PinnedPeer.from_socket(self.left) as peer:
             result = ipc.collect_session(peer, FakeBackend())

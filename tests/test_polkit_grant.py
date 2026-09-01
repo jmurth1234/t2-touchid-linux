@@ -177,6 +177,21 @@ class PolkitGrantTests(unittest.TestCase):
                 with self.assertRaises(collector.PolkitGrantError):
                     self.collect()
 
+    def test_root_process_subject_requires_explicit_read_only_opt_in(self):
+        (self.process / "status").write_text(
+            "Uid:\t0\t0\t0\t0\n", encoding="ascii"
+        )
+        with self.assertRaises(collector.PolkitGrantError):
+            collector.read_process_subject(
+                self.pid, 0, proc_root=self.proc
+            )
+        self.assertEqual(
+            collector.read_process_subject(
+                self.pid, 0, proc_root=self.proc, allow_root=True
+            ),
+            collector.ProcessSubject(self.pid, 0, 777),
+        )
+
     def test_rejects_cross_user_unknown_action_and_unbounded_inputs(self):
         cases = (
             {"target_linux_uid": 1001},

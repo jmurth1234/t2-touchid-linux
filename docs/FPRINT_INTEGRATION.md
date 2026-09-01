@@ -73,14 +73,19 @@ slot number, or D-Bus well-known name is never sufficient authority. The
 existing `t2_user_policy`, `t2_polkit_grant`, account-generation, session,
 mapping, and readiness types should remain the source of these checks.
 
-The first layer is implemented: a sender-aware dbus-next dispatcher preserves
-the immutable system-bus unique sender in task-local context, `Claim` records
-that sender, every claim-scoped method requires an exact match, and
-`NameOwnerChanged` cleanup cancels an active verification and releases the
-claim when that connection disappears. This prevents a second allowed D-Bus
-connection from using a claim by repeating its username. Stable process,
-session, account-generation, mapping, and PolicyKit binding remain required
-before mutation is enabled.
+The first two layers are implemented. A sender-aware dbus-next dispatcher
+preserves the immutable system-bus unique sender in task-local context. During
+`Claim`, the service asks the bus daemon for `GetConnectionCredentials`,
+requires `UnixUserID`, `ProcessID`, and `ProcessFD`, validates that the received
+descriptor is a pidfd for that exact PID, and pins the process UID/start time.
+Every claim-scoped call must retain both the exact sender and the live pinned
+process identity. Claims are serialized so a concurrent claim cannot pass
+while credential collection is suspended. `NameOwnerChanged` cleanup cancels
+active verification, closes the pidfd, and releases the claim when that
+connection disappears. This prevents a second allowed D-Bus connection from
+using a claim by repeating its username and prevents PID reuse from rebinding
+an existing claim. Stable session, account-generation, mapping, and PolicyKit
+binding remain required before mutation is enabled.
 
 ## Mutation worker boundary
 
@@ -165,8 +170,8 @@ Native mutation remains disabled until all of these are demonstrated:
 
 ## Next implementation order
 
-1. Bind every D-Bus claim and subsequent call to its unique sender and stable
-   local-session evidence.
+1. Extend the pidfd-bound claim with stable active-session and account-
+   generation evidence.
 2. Finish the protected per-user mapping and read-only broker exposure gates.
 3. Define a typed streaming mutation protocol and short-lived credentialed
    worker; prove authorization negatives before wiring T2 mutation.

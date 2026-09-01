@@ -333,6 +333,66 @@ class PinnedPeer:
         self._closed = False
 
     @classmethod
+    def from_process_fd(
+        cls,
+        pidfd: int,
+        pid: int,
+        uid: int,
+        *,
+        proc_root: Path = t2_polkit_grant.PROC_ROOT,
+    ) -> "PinnedPeer":
+        """Take ownership of a D-Bus/SO_PEERPIDFD process descriptor."""
+        if (
+            type(pidfd) is not int
+            or pidfd < 0
+            or type(pid) is not int
+            or not 1 <= pid <= t2_polkit_grant.MAX_PID
+            or type(uid) is not int
+            or not 1 <= uid < (1 << 32) - 1
+            or not isinstance(proc_root, Path)
+            or not proc_root.is_absolute()
+        ):
+            if type(pidfd) is int and pidfd >= 0:
+                try:
+                    os.close(pidfd)
+                except OSError:
+                    pass
+            raise IPCSessionError("pinned process credentials are invalid")
+        try:
+            fcntl.fcntl(pidfd, fcntl.F_SETFD, fcntl.FD_CLOEXEC)
+            if (
+                os.readlink(Path("/proc/self/fd") / str(pidfd))
+                != "anon_inode:[pidfd]"
+            ):
+                raise IPCSessionError("process descriptor is not a pidfd")
+            fdinfo = t2_polkit_grant._read_bounded(
+                Path("/proc/self/fdinfo") / str(pidfd)
+            ).decode("ascii")
+            pid_rows = [
+                line[4:].strip()
+                for line in fdinfo.splitlines()
+                if line.startswith("Pid:")
+            ]
+            if (
+                len(pid_rows) != 1
+                or not pid_rows[0].isdecimal()
+                or int(pid_rows[0], 10) != pid
+            ):
+                raise IPCSessionError("pidfd does not match the credential PID")
+            subject = t2_polkit_grant.read_process_subject(
+                pid, uid, proc_root=proc_root
+            )
+            peer = cls(pidfd, subject, proc_root=proc_root)
+            peer.verify()
+            return peer
+        except BaseException:
+            try:
+                os.close(pidfd)
+            except OSError:
+                pass
+            raise
+
+    @classmethod
     def from_socket(
         cls,
         connection: socket.socket,
@@ -369,16 +429,9 @@ class PinnedPeer:
             fcntl.fcntl(pidfd, fcntl.F_SETFD, fcntl.FD_CLOEXEC)
         except OSError as error:
             raise IPCSessionError("kernel peer pidfd is unavailable") from error
-        try:
-            subject = t2_polkit_grant.read_process_subject(
-                pid, uid, proc_root=proc_root
-            )
-            peer = cls(pidfd, subject, proc_root=proc_root)
-            peer.verify()
-            return peer
-        except BaseException:
-            os.close(pidfd)
-            raise
+        return cls.from_process_fd(
+            pidfd, pid, uid, proc_root=proc_root
+        )
 
     def verify(self) -> t2_polkit_grant.ProcessSubject:
         if self._closed:

@@ -38,13 +38,44 @@ class FakeBackend:
         self.cancel_count += 1
 
 
+class FakePinnedCaller:
+    def __init__(self, sender):
+        self.sender = sender
+        self.closed = False
+        self.verify_count = 0
+
+    def verify(self):
+        if self.closed:
+            raise MODULE.t2_dbus_identity.DBusIdentityError("closed")
+        self.verify_count += 1
+
+    def close(self):
+        self.closed = True
+
+
+async def fake_caller_collector(_bus, sender):
+    return FakePinnedCaller(sender)
+
+
+def make_device(backend=None):
+    return MODULE.FprintDevice(
+        backend or FakeBackend(), object(), fake_caller_collector
+    )
+
+
+async def claim(device, username=None):
+    await MODULE.FprintDevice.Claim.__wrapped__(
+        device, username or MODULE.LINUX_USER
+    )
+
+
 class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_listing_refreshes_backend_projection(self):
         backend = FakeBackend()
         backend.list_fingers = AsyncMock(
             return_value=("left-thumb", "right-index-finger")
         )
-        device = MODULE.FprintDevice(backend)
+        device = make_device(backend)
         listed = await MODULE.FprintDevice.ListEnrolledFingers.__wrapped__(
             device, MODULE.LINUX_USER
         )
@@ -87,14 +118,14 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
         )
-        device = MODULE.FprintDevice(backend)
+        device = make_device(backend)
         emitted = []
         device.VerifyFingerSelected = lambda name: emitted.append(("finger", name))
         device.VerifyFingerMatched = lambda name: emitted.append(("matched", name))
         device.VerifyStatus = lambda result, done: emitted.append(
             ("status", result, done)
         )
-        device.Claim(MODULE.LINUX_USER)
+        await claim(device)
         device.VerifyStart("any")
         await device.verify_task
         self.assertEqual(
@@ -109,7 +140,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_listing_uses_upstream_no_prints_error(self):
         backend = FakeBackend()
         backend.list_fingers = AsyncMock(return_value=())
-        device = MODULE.FprintDevice(backend)
+        device = make_device(backend)
         with self.assertRaises(MODULE.DBusError) as raised:
             await MODULE.FprintDevice.ListEnrolledFingers.__wrapped__(
                 device, MODULE.LINUX_USER
@@ -118,11 +149,11 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_terminal_verdict_remains_stoppable(self):
         backend = FakeBackend()
-        device = MODULE.FprintDevice(backend)
+        device = make_device(backend)
         statuses = []
         device.VerifyStatus = lambda result, done: statuses.append((result, done))
 
-        device.Claim(MODULE.LINUX_USER)
+        await claim(device)
         device.VerifyStart("any")
         task = device.verify_task
         self.assertIsNotNone(task)
@@ -134,16 +165,17 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(device.verify_task)
 
     async def test_second_claim_is_rejected(self):
-        device = MODULE.FprintDevice(FakeBackend())
-        device.Claim(MODULE.LINUX_USER)
+        device = make_device()
+        await claim(device)
         with self.assertRaises(MODULE.DBusError) as raised:
-            device.Claim(MODULE.LINUX_USER)
+            await claim(device)
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
         await MODULE.FprintDevice.Release.__wrapped__(device)
 
     async def test_claim_is_bound_to_exact_dbus_sender(self):
-        device = MODULE.FprintDevice(FakeBackend())
-        device.Claim(MODULE.LINUX_USER)
+        device = make_device()
+        await claim(device)
+        pinned = device.claimed_caller
         old = MODULE.current_dbus_sender
         MODULE.current_dbus_sender = lambda: ":1.101"
         try:
@@ -153,15 +185,71 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await device.sender_departed(":1.100")
             self.assertIsNone(device.claimed_user)
             self.assertIsNone(device.claimed_sender)
+            self.assertIsNone(device.claimed_caller)
+            self.assertTrue(pinned.closed)
         finally:
             MODULE.current_dbus_sender = old
+
+    async def test_claim_revalidates_pinned_process_on_every_scoped_call(self):
+        device = make_device()
+        await claim(device)
+        pinned = device.claimed_caller
+        self.assertIsNotNone(pinned)
+        pinned.closed = True
+        with self.assertRaises(MODULE.DBusError) as raised:
+            device.VerifyStart("any")
+        self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
+
+    async def test_departure_waiting_during_claim_clears_the_new_claim(self):
+        collecting = asyncio.Event()
+        proceed = asyncio.Event()
+        pinned = FakePinnedCaller(":1.100")
+
+        async def delayed_collector(_bus, _sender):
+            collecting.set()
+            await proceed.wait()
+            return pinned
+
+        device = MODULE.FprintDevice(
+            FakeBackend(), object(), delayed_collector
+        )
+        claim_task = asyncio.create_task(claim(device))
+        await collecting.wait()
+        departure_task = asyncio.create_task(device.sender_departed(":1.100"))
+        proceed.set()
+        await claim_task
+        await departure_task
+        self.assertIsNone(device.claimed_user)
+        self.assertTrue(pinned.closed)
+
+    async def test_concurrent_claims_are_serialized(self):
+        collecting = asyncio.Event()
+        proceed = asyncio.Event()
+
+        async def delayed_collector(_bus, sender):
+            collecting.set()
+            await proceed.wait()
+            return FakePinnedCaller(sender)
+
+        device = MODULE.FprintDevice(
+            FakeBackend(), object(), delayed_collector
+        )
+        first = asyncio.create_task(claim(device))
+        await collecting.wait()
+        second = asyncio.create_task(claim(device))
+        proceed.set()
+        await first
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await second
+        self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
+        await MODULE.FprintDevice.Release.__wrapped__(device)
 
     async def test_unstarted_claim_expires(self):
         old_timeout = MODULE.UNSTARTED_CLAIM_SECONDS
         MODULE.UNSTARTED_CLAIM_SECONDS = 0.001
         try:
-            device = MODULE.FprintDevice(FakeBackend())
-            device.Claim(MODULE.LINUX_USER)
+            device = make_device()
+            await claim(device)
             await asyncio.sleep(0.01)
             self.assertIsNone(device.claimed_user)
         finally:
@@ -176,9 +264,9 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.Event().wait()
 
         backend = SlowBackend()
-        device = MODULE.FprintDevice(backend)
+        device = make_device(backend)
         device.VerifyStatus = lambda _result, _done: None
-        device.Claim(MODULE.LINUX_USER)
+        await claim(device)
         device.VerifyStart("any")
         await started.wait()
         await MODULE.FprintDevice.VerifyStop.__wrapped__(device)
@@ -188,10 +276,10 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_release_cleans_up_completed_verification(self):
         backend = FakeBackend("verify-no-match")
-        device = MODULE.FprintDevice(backend)
+        device = make_device(backend)
         device.VerifyStatus = lambda _result, _done: None
 
-        device.Claim(MODULE.LINUX_USER)
+        await claim(device)
         device.VerifyStart("any")
         await device.verify_task
         await MODULE.FprintDevice.Release.__wrapped__(device)

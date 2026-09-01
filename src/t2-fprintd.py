@@ -25,6 +25,7 @@ from dbus_next.service import ServiceInterface, dbus_property, method, signal
 
 import t2_fprint_projection
 import t2_fprint_runtime
+import t2_dbus_identity
 from t2_dbus_sender import (
     DBusSenderError,
     SenderAwareMessageBus,
@@ -409,11 +410,20 @@ class T2Backend:
 
 
 class FprintDevice(ServiceInterface):
-    def __init__(self, backend: T2Backend) -> None:
+    def __init__(
+        self,
+        backend: T2Backend,
+        identity_bus,
+        caller_collector=t2_dbus_identity.collect,
+    ) -> None:
         super().__init__("net.reactivated.Fprint.Device")
         self.backend = backend
+        self.identity_bus = identity_bus
+        self.caller_collector = caller_collector
+        self.claim_lock = asyncio.Lock()
         self.claimed_user: str | None = None
         self.claimed_sender: str | None = None
+        self.claimed_caller: t2_dbus_identity.PinnedDBusCaller | None = None
         self.verify_task: asyncio.Task | None = None
         self.claim_expiry_task: asyncio.Task | None = None
         self.enrolled_fingers: tuple[str, ...] = (ENROLLED_FINGER,)
@@ -423,24 +433,59 @@ class FprintDevice(ServiceInterface):
         return "Apple T2 Touch ID"
 
     @method()
-    def Claim(self, username: "s"):
+    async def Claim(self, username: "s"):
         requested = username or LINUX_USER
         if requested not in ALLOWED_PAM_USERS:
             raise DBusError(f"{FPRINT_ERROR}.PermissionDenied", "unknown user")
-        if self.claimed_user is not None:
-            raise DBusError(f"{FPRINT_ERROR}.AlreadyInUse", "device is claimed")
         try:
             sender = current_dbus_sender()
         except DBusSenderError as error:
             raise DBusError(
                 f"{FPRINT_ERROR}.PermissionDenied", "caller identity unavailable"
             ) from error
-        self.claimed_user = requested
-        self.claimed_sender = sender
-        self.claim_expiry_task = asyncio.create_task(self._expire_unstarted_claim())
+        async with self.claim_lock:
+            if self.claimed_user is not None:
+                raise DBusError(
+                    f"{FPRINT_ERROR}.AlreadyInUse", "device is claimed"
+                )
+            caller = None
+            try:
+                caller = await self.caller_collector(
+                    self.identity_bus, sender
+                )
+                if current_dbus_sender() != sender or caller.sender != sender:
+                    raise t2_dbus_identity.DBusIdentityError(
+                        "D-Bus caller changed during claim"
+                    )
+                caller.verify()
+            except (DBusSenderError, t2_dbus_identity.DBusIdentityError) as error:
+                if caller is not None:
+                    caller.close()
+                raise DBusError(
+                    f"{FPRINT_ERROR}.PermissionDenied",
+                    "caller process identity unavailable",
+                ) from error
+            self.claimed_user = requested
+            self.claimed_sender = sender
+            self.claimed_caller = caller
+            self.claim_expiry_task = asyncio.create_task(
+                self._expire_unstarted_claim()
+            )
+
+    def _clear_claim(self) -> None:
+        caller = self.claimed_caller
+        self.claimed_user = None
+        self.claimed_sender = None
+        self.claimed_caller = None
+        if caller is not None:
+            caller.close()
 
     def _require_claim_owner(self) -> None:
-        if self.claimed_user is None or self.claimed_sender is None:
+        if (
+            self.claimed_user is None
+            or self.claimed_sender is None
+            or self.claimed_caller is None
+        ):
             raise DBusError(
                 f"{FPRINT_ERROR}.ClaimDevice", "device is not claimed"
             )
@@ -455,13 +500,23 @@ class FprintDevice(ServiceInterface):
                 f"{FPRINT_ERROR}.PermissionDenied",
                 "device is claimed by another D-Bus connection",
             )
+        try:
+            if self.claimed_caller.sender != sender:
+                raise t2_dbus_identity.DBusIdentityError(
+                    "pinned sender does not match the claim"
+                )
+            self.claimed_caller.verify()
+        except t2_dbus_identity.DBusIdentityError as error:
+            raise DBusError(
+                f"{FPRINT_ERROR}.PermissionDenied",
+                "caller process identity is no longer valid",
+            ) from error
 
     @method()
     async def Release(self):
         self._require_claim_owner()
         await self._stop_verification(require_running=False)
-        self.claimed_user = None
-        self.claimed_sender = None
+        self._clear_claim()
 
     @method()
     async def ListEnrolledFingers(self, username: "s") -> "as":
@@ -537,23 +592,21 @@ class FprintDevice(ServiceInterface):
         await asyncio.sleep(COMPLETED_CLAIM_SECONDS)
         if self.verify_task is completed_task:
             self.verify_task = None
-            self.claimed_user = None
-            self.claimed_sender = None
+            self._clear_claim()
         self.claim_expiry_task = None
 
     async def _expire_unstarted_claim(self) -> None:
         await asyncio.sleep(UNSTARTED_CLAIM_SECONDS)
         if self.verify_task is None:
-            self.claimed_user = None
-            self.claimed_sender = None
+            self._clear_claim()
         self.claim_expiry_task = None
 
     async def sender_departed(self, sender: str) -> None:
-        if sender != self.claimed_sender:
-            return
-        await self._stop_verification(require_running=False)
-        self.claimed_user = None
-        self.claimed_sender = None
+        async with self.claim_lock:
+            if sender != self.claimed_sender:
+                return
+            await self._stop_verification(require_running=False)
+            self._clear_claim()
 
     async def _stop_verification(self, require_running: bool) -> None:
         expiry_task = self.claim_expiry_task
@@ -634,7 +687,9 @@ async def main_async(args: argparse.Namespace) -> None:
         )
     )
     backend = T2Backend(project_dir, args.match_seconds)
-    bus = await SenderAwareMessageBus(bus_type=BusType.SYSTEM).connect()
+    bus = await SenderAwareMessageBus(
+        bus_type=BusType.SYSTEM, negotiate_unix_fd=True
+    ).connect()
 
     # fprintd's historical ABI contains hyphenated property names, although
     # D-Bus member-name validators (including dbus-next's) reject hyphens.
@@ -655,7 +710,7 @@ async def main_async(args: argparse.Namespace) -> None:
             )
         return False
 
-    device = FprintDevice(backend)
+    device = FprintDevice(backend, bus)
 
     def sender_departure_handler(message: Message):
         if (

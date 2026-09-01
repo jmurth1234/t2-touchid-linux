@@ -19,8 +19,7 @@ _CURRENT_SENDER: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _UNIQUE_NAME = re.compile(r":[0-9]+(?:\.[0-9]+)+")
 
 
-def current_sender() -> str:
-    value = _CURRENT_SENDER.get()
+def validate_sender(value: object) -> str:
     if (
         type(value) is not str
         or len(value) > 255
@@ -28,6 +27,10 @@ def current_sender() -> str:
     ):
         raise DBusSenderError("D-Bus caller has no canonical unique name")
     return value
+
+
+def current_sender() -> str:
+    return validate_sender(_CURRENT_SENDER.get())
 
 
 class SenderAwareMessageBus(MessageBus):

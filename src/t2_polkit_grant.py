@@ -131,12 +131,14 @@ def read_process_subject(
     peer_uid: int,
     *,
     proc_root: Path = PROC_ROOT,
+    allow_root: bool = False,
 ) -> ProcessSubject:
     if (
         type(pid) is not int
         or not 1 <= pid <= MAX_PID
         or type(peer_uid) is not int
-        or not 1 <= peer_uid < (1 << 32) - 1
+        or type(allow_root) is not bool
+        or not (0 if allow_root else 1) <= peer_uid < (1 << 32) - 1
         or not isinstance(proc_root, Path)
         or not proc_root.is_absolute()
     ):
