@@ -8,6 +8,7 @@ import uuid
 from typing import Protocol
 
 import t2_catacomb_protocol as catacomb_protocol
+import t2_bridge_wire as wire
 
 
 class BridgeInventoryError(RuntimeError):
@@ -48,6 +49,12 @@ def _reply_output(reply: object, name: str, *, allow_nonzero: bool = False) -> b
     if type(reply) is not list or len(reply) != 2:
         raise BridgeInventoryError(f"{name} reply is malformed")
     status, output = reply
+    if name in {"global_identities", "per_user_identities"} and status == 0:
+        # bkremoted represents an Objective-C nil output with one exact fixed
+        # CFString sentinel.  Identity-list commands use nil for a successful
+        # empty list; no other command or string is normalized here.
+        if wire.is_biometric_nil_output(output):
+            output = b""
     if (
         type(status) is not int
         or isinstance(status, bool)
@@ -79,7 +86,11 @@ def _collect_once(
             raise BridgeInventoryError("Bridge generation changed during E0")
         if type(events) is not list or events:
             raise BridgeInventoryError(f"{name} emitted an unexpected service event")
-        output = _reply_output(reply, name, allow_nonzero=name == "protocol")
+        output = _reply_output(
+            reply,
+            name,
+            allow_nonzero=name in {"protocol", "catacomb_uuid", "catacomb_hash"},
+        )
         status = reply[0]
         if name == "protocol" and len(output) != 4:
             for _attempt in range(2):
@@ -161,19 +172,43 @@ def collect_stable_private_inventory(
         sks_state = first["sks_lock_state"][1]
         if len(maximum_output) != 4 or len(free_output) != 4:
             raise BridgeInventoryError("capacity reply length is invalid")
-        if len(catacomb_uuid) != 16 or not any(catacomb_uuid):
+        if len(catacomb_uuid) != 16:
             raise BridgeInventoryError("Catacomb UUID reply is invalid")
         if len(catacomb_hash) != 33:
             raise BridgeInventoryError("Catacomb hash reply is invalid")
+        catacomb_missing = (
+            first["catacomb_uuid"][0] == 22
+            and first["catacomb_hash"][0] == 22
+            and not any(catacomb_uuid)
+            and not any(catacomb_hash)
+            and not global_records
+            and not user_records
+        )
+        if (
+            not catacomb_missing
+            and (
+                first["catacomb_uuid"][0] != 0
+                or first["catacomb_hash"][0] != 0
+            )
+        ):
+            raise BridgeInventoryError("Catacomb metadata status is invalid")
+        if not any(catacomb_uuid) and (
+            global_records or user_records or catacomb_hash[0] != 0
+        ):
+            raise BridgeInventoryError("Catacomb UUID reply is inconsistent")
         try:
             catacomb_states = catacomb_protocol.parse_user_states(catacomb_state)
         except catacomb_protocol.CatacombProtocolError as error:
             raise BridgeInventoryError("Catacomb state reply is invalid") from error
         master = catacomb_protocol.CatacombComponent.master()
         selected = catacomb_protocol.CatacombComponent.user(apple_user_id)
-        if (
-            sum(record.component == master for record in catacomb_states) != 1
-            or sum(record.component == selected for record in catacomb_states) != 1
+        master_count = sum(record.component == master for record in catacomb_states)
+        selected_count = sum(record.component == selected for record in catacomb_states)
+        expected_component_counts = master_count == 1 and selected_count == (
+            0 if catacomb_missing else 1
+        )
+        if not expected_component_counts or (
+            catacomb_missing and len(catacomb_states) != 1
         ):
             raise BridgeInventoryError(
                 "Catacomb state does not contain unique master and selected-user records"
