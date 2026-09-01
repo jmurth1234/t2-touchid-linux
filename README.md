@@ -632,7 +632,10 @@ no enrollment, rename, persistence, or deletion command. A positive result is
 valid only for the current reconciled list. Note which physical finger you
 presented, list again, and then rename that exact slot to one of fprint's
 canonical names (`left-thumb`, `right-index-finger`, and so on). Never infer
-the anatomical name from the old compatibility alias.
+the anatomical name from the old compatibility alias. Rename refuses a label
+already assigned to another identity. Its result reports whether every label
+now forms a unique canonical fprint projection; until that becomes true,
+fprintd deliberately keeps exposing the single compatibility alias.
 
 Rename one current identity label (this does not alter its fingerprint
 template):

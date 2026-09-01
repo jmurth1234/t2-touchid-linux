@@ -56,6 +56,17 @@ class IdentityRenameTests(unittest.TestCase):
         with self.assertRaises(rename.IdentityRenameError):
             rename.plan(self.local, stale, slot=2, new_name="New")
 
+    def test_plan_rejects_name_already_assigned_to_another_identity(self):
+        with self.assertRaisesRegex(
+            rename.IdentityRenameError, "already assigned"
+        ):
+            rename.plan(
+                self.local,
+                self.live,
+                slot=2,
+                new_name=self.local.identities[0].name,
+            )
+
     def test_fresh_secure_blob_preserves_renamed_semantics(self):
         value = rename.plan(self.local, self.live, slot=2, new_name="New")
         output = rename.bind_secure_blob(value, b"LTFC" + b"z" * 28)

@@ -37,6 +37,7 @@ import t2_catacomb_local
 import t2_catacomb_store
 import t2_enrollment_finalizer
 import t2_enrollment_persistence_journal
+import t2_fprint_projection
 import t2_identity_delete
 import t2_identity_delete_bridge
 import t2_identity_delete_journal
@@ -401,6 +402,12 @@ def run_rename(
         plan = t2_identity_rename.plan(
             local, live, slot=slot, new_name=new_name
         )
+        renamed_local = t2_catacomb_codec.decode_user_catacomb(
+            plan.archive, configuration["apple_uid"]
+        )
+        renamed_projection = t2_fprint_projection.project(
+            t2_identity_inventory.summarize(renamed_local, live)
+        )
         baseline = t2_baseline.build_baseline(
             host=host,
             live=live,
@@ -489,6 +496,13 @@ def run_rename(
         "slot": slot,
         "name": new_name,
         "identity_count": len(baseline["identity_records"]),
+        "fprint_projection_complete": renamed_projection.complete,
+        "fprint_unassigned_identity_count": (
+            renamed_projection.unassigned_identity_count
+        ),
+        "fprint_duplicate_name_count": (
+            renamed_projection.duplicate_finger_name_count
+        ),
         "post_reboot_verification_required": True,
         "identifiers_redacted": True,
     }

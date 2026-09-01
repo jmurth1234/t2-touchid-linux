@@ -264,7 +264,9 @@ inventory and local-component attestation after the scan. The installed
 `t2-touchid-identify-finger` wrapper exposes that slot with an explicit
 `mutation_performed: false` result. It cannot assign an anatomical name; the
 operator must know which finger was presented and separately invoke the
-existing acknowledged, journaled rename transaction.
+existing acknowledged, journaled rename transaction. That transaction refuses
+a label already assigned to another identity and reports the resulting
+canonical projection completeness without exposing an identity identifier.
 
 `t2_fprint_enrollment_controller` now supplies that stream boundary without
 starting a real mutation. It runs the synchronous journaled worker in a

@@ -53,6 +53,11 @@ def plan(
         raise IdentityRenameError(str(error)) from error
     if new_name == selected.name:
         raise IdentityRenameError("new identity name is unchanged")
+    if any(
+        identity.uuid != selected.identity_uuid and identity.name == new_name
+        for identity in local.identities
+    ):
+        raise IdentityRenameError("new identity name is already assigned")
     try:
         archive = local.rename(selected.identity_uuid, new_name)
         decoded = t2_catacomb_codec.decode_user_catacomb(
@@ -115,4 +120,3 @@ def bind_secure_blob(
     if len(target) != 1 or target[0].name != value.new_name:
         raise IdentityRenameError("secure-envelope binding changed the rename target")
     return bytearray(output)
-
