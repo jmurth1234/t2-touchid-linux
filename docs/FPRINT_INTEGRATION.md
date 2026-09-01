@@ -207,6 +207,12 @@ The facade must not invent a fixed progress percentage or enrollment-stage
 count from variable T2 progress. `num-enroll-stages` remains undefined (`-1`)
 until a stable protocol-derived stage model is proven.
 
+The facade also emits the historical
+`org.freedesktop.DBus.Properties.PropertiesChanged` signal whenever
+`finger-present` or `finger-needed` changes. These Boolean notifications are
+best-effort UI feedback only: D-Bus delivery failure cannot cancel, retry, or
+reinterpret a journaled biometric operation.
+
 The pure `t2_fprint_enrollment_runtime` translator now enforces the proven
 subset of this table.
 It emits `enroll-stage-passed` only for strictly increasing, bounded T2

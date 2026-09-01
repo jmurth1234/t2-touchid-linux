@@ -125,6 +125,14 @@ class FakeDeletionClient:
         return self.result
 
 
+class FakeBus:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, message):
+        self.sent.append(message)
+
+
 async def fake_caller_collector(_bus, sender):
     return FakePinnedCaller(sender)
 
@@ -133,10 +141,12 @@ def fake_claim_evidence_collector(_caller, _username):
     return FakeClaimEvidence()
 
 
-def make_device(backend=None, enrollment_client=None, deletion_client=None):
+def make_device(
+    backend=None, enrollment_client=None, deletion_client=None, identity_bus=None
+):
     return MODULE.FprintDevice(
         backend or FakeBackend(),
-        object(),
+        identity_bus or object(),
         fake_caller_collector,
         fake_claim_evidence_collector,
         enrollment_client,
@@ -192,6 +202,47 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values["num-enroll-stages"].value, -1)
         self.assertTrue(values["finger-present"].value)
         self.assertFalse(values["finger-needed"].value)
+
+    async def test_dynamic_finger_properties_emit_exact_changes(self):
+        bus = FakeBus()
+        device = make_device(identity_bus=bus)
+
+        device._set_finger_state(False, True)
+        device._set_finger_state(True, False)
+        device._set_finger_state(True, False)
+        device._set_finger_state(False, False)
+
+        self.assertEqual(len(bus.sent), 3)
+        self.assertEqual(
+            [set(message.body[1]) for message in bus.sent],
+            [
+                {"finger-needed"},
+                {"finger-present", "finger-needed"},
+                {"finger-present"},
+            ],
+        )
+        for message in bus.sent:
+            self.assertEqual(message.path, MODULE.DEVICE_PATH)
+            self.assertEqual(
+                message.interface, "org.freedesktop.DBus.Properties"
+            )
+            self.assertEqual(message.member, "PropertiesChanged")
+            self.assertEqual(message.signature, "sa{sv}as")
+            self.assertEqual(
+                message.body[0], "net.reactivated.Fprint.Device"
+            )
+            self.assertEqual(message.body[2], [])
+
+    async def test_invalid_or_undeliverable_property_update_is_bounded(self):
+        class BrokenBus:
+            def send(self, _message):
+                raise RuntimeError("disconnected")
+
+        device = make_device(identity_bus=BrokenBus())
+        device._set_finger_state(False, True)
+        self.assertTrue(device.finger_needed)
+        with self.assertRaises(RuntimeError):
+            device._set_finger_state(True, True)
 
     async def test_listing_refreshes_backend_projection(self):
         backend = FakeBackend()

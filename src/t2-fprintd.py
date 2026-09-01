@@ -445,6 +445,60 @@ class FprintDevice(ServiceInterface):
         self.finger_present = False
         self.finger_needed = False
 
+    @staticmethod
+    def _consume_signal_send(result: object) -> None:
+        if not isinstance(result, asyncio.Future):
+            return
+
+        def consume(future: asyncio.Future) -> None:
+            try:
+                future.exception()
+            except BaseException:
+                pass
+
+        result.add_done_callback(consume)
+
+    def _set_finger_state(self, present: object, needed: object) -> None:
+        """Update and publish fprintd's historical dynamic properties."""
+
+        if (
+            type(present) is not bool
+            or type(needed) is not bool
+            or (present and needed)
+        ):
+            raise RuntimeError("finger property state is invalid")
+        changed: dict[str, Variant] = {}
+        if present != self.finger_present:
+            self.finger_present = present
+            changed["finger-present"] = Variant("b", present)
+        if needed != self.finger_needed:
+            self.finger_needed = needed
+            changed["finger-needed"] = Variant("b", needed)
+        if not changed:
+            return
+        send = getattr(self.identity_bus, "send", None)
+        if not callable(send):
+            return
+        try:
+            result = send(
+                Message.new_signal(
+                    path=DEVICE_PATH,
+                    interface="org.freedesktop.DBus.Properties",
+                    member="PropertiesChanged",
+                    signature="sa{sv}as",
+                    body=[
+                        "net.reactivated.Fprint.Device",
+                        changed,
+                        [],
+                    ],
+                )
+            )
+        except Exception:
+            # The D-Bus connection itself owns delivery failure. Never turn a
+            # best-effort UI property notification into a biometric replay.
+            return
+        self._consume_signal_send(result)
+
     @dbus_property(access=PropertyAccess.READ, name="name")
     def device_name(self) -> "s":
         return "Apple T2 Touch ID"
@@ -818,8 +872,7 @@ class FprintDevice(ServiceInterface):
         except DBusError:
             raise
         except Exception as error:
-            self.finger_present = False
-            self.finger_needed = False
+            self._set_finger_state(False, False)
             raise DBusError(
                 f"{FPRINT_ERROR}.Internal",
                 "native enrollment could not be started",
@@ -839,8 +892,7 @@ class FprintDevice(ServiceInterface):
             update, t2_fprint_enrollment_runtime.EnrollmentUpdate
         ):
             raise RuntimeError("enrollment worker emitted malformed state")
-        self.finger_present = update.finger_present
-        self.finger_needed = update.finger_needed
+        self._set_finger_state(update.finger_present, update.finger_needed)
         if update.status is not None:
             self.EnrollStatus(update.status, update.done)
         if update.done:
@@ -862,8 +914,7 @@ class FprintDevice(ServiceInterface):
                 except Exception:
                     pass
                 finally:
-                    self.finger_present = False
-                    self.finger_needed = False
+                    self._set_finger_state(False, False)
                     self._clear_claim()
         finally:
             self.claim_expiry_task = None
@@ -881,8 +932,7 @@ class FprintDevice(ServiceInterface):
                     f"{FPRINT_ERROR}.NoActionInProgress",
                     "enrollment is not active",
                 )
-            self.finger_present = False
-            self.finger_needed = False
+            self._set_finger_state(False, False)
             return
         try:
             await client.stop()
@@ -893,8 +943,7 @@ class FprintDevice(ServiceInterface):
                     "native enrollment did not stop cleanly",
                 ) from error
         finally:
-            self.finger_present = False
-            self.finger_needed = False
+            self._set_finger_state(False, False)
 
     async def _wait_deletion(self, require_running: bool) -> None:
         task = self.delete_task
