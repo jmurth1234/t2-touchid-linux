@@ -98,8 +98,12 @@ the same pidfd/session/account snapshot for a future mutation request. This is
 strictly self-service: the D-Bus process UID must equal the claimed Linux UID.
 A root PAM claim may continue through verification, but cannot be converted
 into mutation authority. The derived session retains the existing
-revalidation and bounded PolicyKit collector; it has not yet been connected to
-an fprint mutation method.
+revalidation and bounded PolicyKit collector. `t2_fprint_broker` can hand that
+session to the existing joined broker through a mutually exclusive,
+pre-created authorization path. It permits only `enroll` and
+`identity-management`, forces modification policy on, and closes the derived
+session even if the broker fails before entering it. No D-Bus mutation method
+or T2 mutation consumer is connected to this adapter yet.
 
 ## Mutation worker boundary
 

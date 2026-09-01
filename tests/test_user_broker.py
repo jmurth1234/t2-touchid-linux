@@ -250,6 +250,51 @@ class UserBrokerTests(unittest.TestCase):
         self.assertNotIn(identifier(1), rendered)
         self.assertNotIn(str(self.uid), rendered)
 
+    def test_precreated_authorization_session_uses_exclusive_handoff(self):
+        evidence = (persistent(), READY)
+        authorization = FakeAuthorizationSession(self.uid)
+        live = FakeLiveSession((evidence, evidence, evidence))
+        result = broker.run_self_service(
+            None,
+            operation="enroll",
+            modification_allowed=True,
+            consumer=lambda authority, session: authority.stage,
+            mapping_path=self.path,
+            live_factory=lambda: live,
+            keybag_reader=self.keybag,
+            boot_reader=lambda: identifier(21),
+            clock=StepClock(),
+            allow_user_interaction=False,
+            grant_lifetime_ns=500,
+            authorization_manager=authorization,
+        )
+        self.assertTrue(result.consumer_invoked)
+        self.assertEqual(result.value, "operate")
+        self.assertTrue(authorization.exited)
+
+        for connection, factory in (
+            (object(), broker._authorization_factory),
+            (None, lambda _connection: authorization),
+        ):
+            with self.subTest(connection=connection), self.assertRaisesRegex(
+                broker.UserBrokerError, "authorization"
+            ):
+                broker.run_self_service(
+                    connection,
+                    operation="enroll",
+                    modification_allowed=True,
+                    consumer=lambda authority, session: None,
+                    mapping_path=self.path,
+                    authorization_factory=factory,
+                    live_factory=lambda: live,
+                    keybag_reader=self.keybag,
+                    boot_reader=lambda: identifier(21),
+                    clock=StepClock(),
+                    allow_user_interaction=False,
+                    grant_lifetime_ns=500,
+                    authorization_manager=authorization,
+                )
+
     def test_absent_alias_requires_distinct_activation_grant(self):
         evidence = (persistent(), ABSENT)
         authorization = FakeAuthorizationSession(self.uid)

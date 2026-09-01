@@ -204,7 +204,11 @@ A claim may derive a fresh `AuthorizationSession` using an independently owned
 duplicate pidfd only when the D-Bus caller UID is the claimed UID. Its account
 and session must equal the original claim snapshot. Root PAM clients are thus
 verification-only; they cannot become self-service mutation callers. This
-bridge is internal and no fprint mutation method consumes it yet.
+bridge is internal. `t2_fprint_broker.py` passes the derived session into the
+existing joined broker through an exclusive non-socket authorization source,
+allows only enrollment or identity management, forces mutation policy on, and
+closes the session on every exit. No fprint D-Bus mutation method or T2
+mutation consumer consumes it yet.
 
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;

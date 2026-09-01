@@ -205,7 +205,7 @@ def _keybag(
 
 
 def run_self_service(
-    connection: socket.socket,
+    connection: socket.socket | None,
     *,
     operation: str,
     modification_allowed: bool,
@@ -221,6 +221,7 @@ def run_self_service(
     allow_user_interaction: bool = True,
     collect_activation_authority: bool = True,
     grant_lifetime_ns: int = 60 * 1_000_000_000,
+    authorization_manager: object | None = None,
 ) -> BrokerResult:
     """Authorize and invoke one internal consumer while all leases remain held."""
 
@@ -250,12 +251,26 @@ def run_self_service(
     directory = -1
     mapping_lock = -1
     try:
-        authorization_manager = authorization_factory(connection)
-        if not hasattr(authorization_manager, "__enter__") or not hasattr(
-            authorization_manager, "__exit__"
+        if authorization_manager is None:
+            if connection is None:
+                raise UserBrokerError(
+                    "broker authorization source is unavailable"
+                )
+            selected_authorization = authorization_factory(connection)
+        else:
+            if (
+                connection is not None
+                or authorization_factory is not _authorization_factory
+            ):
+                raise UserBrokerError(
+                    "broker authorization sources are ambiguous"
+                )
+            selected_authorization = authorization_manager
+        if not hasattr(selected_authorization, "__enter__") or not hasattr(
+            selected_authorization, "__exit__"
         ):
             raise UserBrokerError("authorization session has the wrong type")
-        with authorization_manager as authorization:
+        with selected_authorization as authorization:
             if not isinstance(
                 authorization.caller, t2_user_policy.CallerEvidence
             ):
