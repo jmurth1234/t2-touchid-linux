@@ -64,12 +64,13 @@ for AppleKeyStore endpoint 7:
 - sends endpoint-0 `SET_REMOTE_DMA_IN` and `SET_REMOTE_DMA_OUT` control calls;
 - validates the matching transaction tag and zero SEP result.
 
-It sends no AppleKeyStore request unless the additional `probe_capabilities=1`
-option is supplied. That option issues exactly one read-only opcode `0x4d`
-capability query after both OOL registrations succeed. The recovered v1 request
-is 92 bytes and uses SHA-256 truncated to 16 bytes for its integrity field. It
-does not request a fingerprint, modify SKS lock state, or read/write enrollment
-records. Loading is not automated.
+The installer supplies `probe_capabilities=1`, which issues exactly one
+read-only opcode `0x4d` capability query after both OOL registrations succeed.
+The recovered v1 request is 92 bytes and uses SHA-256 truncated to 16 bytes for
+its integrity field. It does not request a fingerprint, modify SKS lock state,
+or read/write enrollment records. A failed negotiation leaves `/dev/t2-aks`
+disabled rather than exposing an exchange device whose requests will time out;
+the pinned DMA registration then requires a reboot before another attempt.
 
 ### The `/dev/t2-aks` exchange device
 

@@ -176,6 +176,7 @@ static int t2_aks_stamp_verify_platform_data(struct t2_aks_header_v2 *header)
 static int t2_sep_wait_outbox(struct t2_sep_transport *sep)
 {
 	unsigned int waited;
+	u32 inbox, outbox;
 
 	for (waited = 0; waited < T2_SEP_TIMEOUT_US; waited += 100) {
 		if (!(readl(sep->bar + T2_SEP_OUTBOX_STATUS) &
@@ -183,6 +184,11 @@ static int t2_sep_wait_outbox(struct t2_sep_transport *sep)
 			return 0;
 		usleep_range(100, 200);
 	}
+	inbox = readl(sep->bar + T2_SEP_INBOX_STATUS);
+	outbox = readl(sep->bar + T2_SEP_OUTBOX_STATUS);
+	dev_warn(&sep->pdev->dev,
+		 "mailbox send timeout: inbox=%#x outbox=%#x\n",
+		 inbox, outbox);
 	return -ETIMEDOUT;
 }
 
@@ -207,6 +213,7 @@ static int t2_sep_receive(struct t2_sep_transport *sep,
 			  struct t2_sep_message *message)
 {
 	unsigned int waited;
+	u32 inbox, outbox;
 
 	for (waited = 0; waited < T2_SEP_TIMEOUT_US; waited += 100) {
 		if (!(readl(sep->bar + T2_SEP_INBOX_STATUS) &
@@ -220,6 +227,11 @@ static int t2_sep_receive(struct t2_sep_transport *sep,
 		}
 		usleep_range(100, 200);
 	}
+	inbox = readl(sep->bar + T2_SEP_INBOX_STATUS);
+	outbox = readl(sep->bar + T2_SEP_OUTBOX_STATUS);
+	dev_warn(&sep->pdev->dev,
+		 "mailbox receive timeout: inbox=%#x outbox=%#x\n",
+		 inbox, outbox);
 	return -ETIMEDOUT;
 }
 
@@ -1081,11 +1093,19 @@ static int t2_sep_probe(struct pci_dev *pdev,
 		 "registered 16 KiB endpoint-7 OOL input/output buffers\n");
 	if (probe_capabilities) {
 		ret = t2_aks_probe_capabilities(sep);
-		if (ret)
-			dev_warn(&pdev->dev,
-				 "read-only capability query failed: %d\n", ret);
-		else
-			sep->next_transaction = 1;
+		if (ret) {
+			/*
+			 * The DMA registrations are live and pinned, but endpoint 7 did
+			 * not complete its read-only v1 negotiation.  Do not expose an
+			 * exchange device that can only time out; a reboot is required
+			 * before registration can be attempted again safely.
+			 */
+			dev_err(&pdev->dev,
+				"AppleKeyStore capability negotiation failed: %d; /dev/t2-aks disabled until reboot\n",
+				ret);
+			return 0;
+		}
+		sep->next_transaction = 1;
 	}
 
 	sep->aks_miscdev.minor = MISC_DYNAMIC_MINOR;

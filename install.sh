@@ -169,7 +169,7 @@ printf '[Service]\nBindReadOnlyPaths=%s\nEnvironment=SUDO_UID=%s\n' \
 chmod 0644 \
   /etc/systemd/system/t2-touchid-adaptive-sync.service.d/05-account-home.conf
 install -d -o root -g root -m 0755 /etc/modprobe.d
-module_options='options t2_sep_transport register_ool=1'
+module_options='options t2_sep_transport register_ool=1 probe_capabilities=1'
 if [[ $acm_research == 1 ]]; then
   module_options+=" register_acm=1 aks_platform_asid=$aks_platform_asid aks_platform_proc_uniqueid=1"
   if [[ -n $aks_platform_cdhash ]]; then

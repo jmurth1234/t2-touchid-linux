@@ -190,7 +190,8 @@ different state.
    prompted, including the numeric macOS user ID and its corresponding special
    bag.
 4. Start `t2-sep-transport.service`. The installer builds the module for the
-   running kernel and configures PCI autoload with `register_ool=1`. The loader
+   running kernel and configures PCI autoload with `register_ool=1` and the
+   read-only `probe_capabilities=1` endpoint negotiation. The loader
    accepts an already operational module and can safely replace an early
    observation-only instance; it never unloads an instance that registered SEP
    DMA. After `/dev/t2-aks` exists, do not unload the module: reboot before

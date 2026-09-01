@@ -55,6 +55,13 @@ class SuspendPolicyTests(unittest.TestCase):
             with mock.patch.object(DOCTOR, "MEM_SLEEP", path):
                 self.assertEqual(DOCTOR.sleep_mode_check().status, "warn")
 
+    def test_installer_negotiates_applekeystore_before_keybag_loading(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "register_ool=1 probe_capabilities=1",
+            installer,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
