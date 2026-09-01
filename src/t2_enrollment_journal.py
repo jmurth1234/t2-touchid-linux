@@ -645,7 +645,10 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
             phase = EnrollmentPhase.RECONCILED
             continue
 
-        if milestone == "E3_RECOVERY_NO_CHANGE_RECONCILED":
+        if milestone in {
+            "E3_RECOVERY_NO_CHANGE_RECONCILED",
+            "E3_PERSISTENCE_READBACK_RECOVERED",
+        }:
             if phase is not EnrollmentPhase.OUTCOME_UNKNOWN:
                 raise EnrollmentJournalError(
                     "outcome-unknown recovery reconciliation is out of order"
@@ -699,7 +702,27 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
                 "master enrollment count",
                 0xFFFFFFFF,
             )
-            if (
+            if milestone == "E3_PERSISTENCE_READBACK_RECOVERED":
+                if (
+                    persistence.phase
+                    is not persistence_journal.PersistencePhase.OUTCOME_UNKNOWN
+                    or persistence._outcome_unknown_stage != "readback"
+                    or persistence._outcome_unknown_host_commit_possible is not True
+                    or terminal_identity_uuid is None
+                    or evidence["identity_uuid"] != terminal_identity_uuid
+                    or evidence["identity_present"] is not True
+                    or used
+                    != (
+                        baseline["capacity"]["used"]
+                        if baseline["sep_catacomb"]["present"] is False
+                        else baseline["capacity"]["used"] + 1
+                    )
+                    or maximum != baseline["capacity"]["maximum"]
+                ):
+                    raise EnrollmentJournalError(
+                        "persistence readback recovery evidence is inconsistent"
+                    )
+            elif (
                 evidence["identity_uuid"] is not None
                 or evidence["identity_present"] is not False
                 or used != baseline["capacity"]["used"]

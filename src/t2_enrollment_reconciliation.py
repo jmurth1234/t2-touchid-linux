@@ -369,6 +369,13 @@ def classify(
         history.phase is enrollment_journal.EnrollmentPhase.PERSISTING
         and history.persistence.phase is persistence_journal.PersistencePhase.ATTESTATION_READY
     )
+    persistence_readback_recovery = (
+        history.phase is enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+        and history.persistence.phase
+        is persistence_journal.PersistencePhase.OUTCOME_UNKNOWN
+        and history.persistence.outcome_unknown_stage == "readback"
+        and history.persistence.outcome_unknown_host_commit_possible is True
+    )
     outcome_unknown_recovery = (
         history.phase is enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
     )
@@ -437,9 +444,11 @@ def classify(
         (record["user_id"], record["uuid"]): record["entity"]
         for record in host["identity_records"]
     }
-    if any(after_entities.get(pair) != entity for pair, entity in before_entities.items()):
-        raise EnrollmentReconciliationError("existing host identity entity changed")
     absent_initialization = baseline["sep_catacomb"]["present"] is False
+    if not absent_initialization and any(
+        after_entities.get(pair) != entity for pair, entity in before_entities.items()
+    ):
+        raise EnrollmentReconciliationError("existing host identity entity changed")
     removed = before - live_after
     added = live_after - before
     replacement_delta = (
@@ -503,6 +512,7 @@ def classify(
     persistence_terminal = (
         history.phase is enrollment_journal.EnrollmentPhase.PERSISTENCE_READY
         or persistence_readback
+        or persistence_readback_recovery
     )
     persistence_success = (
         persistence_terminal and history.terminal_identity_uuid is not None
@@ -643,10 +653,22 @@ def append_reconciled(
         )
     if plan.evidence is None:
         raise EnrollmentReconciliationError("E3 evidence is incomplete")
+    persistence_readback_recovery = (
+        history.phase is enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+        and history.persistence.phase
+        is persistence_journal.PersistencePhase.OUTCOME_UNKNOWN
+        and history.persistence.outcome_unknown_stage == "readback"
+        and history.persistence.outcome_unknown_host_commit_possible is True
+        and history.terminal_identity_uuid is not None
+    )
     milestone = (
-        "E3_RECOVERY_NO_CHANGE_RECONCILED"
-        if history.phase is enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
-        else "E3_RECONCILED"
+        "E3_PERSISTENCE_READBACK_RECOVERED"
+        if persistence_readback_recovery
+        else (
+            "E3_RECOVERY_NO_CHANGE_RECONCILED"
+            if history.phase is enrollment_journal.EnrollmentPhase.OUTCOME_UNKNOWN
+            else "E3_RECONCILED"
+        )
     )
     return enrollment_journal.append_checked(
         path, operation_id, milestone, plan.evidence

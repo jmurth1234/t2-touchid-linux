@@ -569,6 +569,13 @@ def run_outcome_unknown_reconciliation(
             "automatic recovery requires exactly one unfinished outcome-unknown journal"
         )
     journal_path, history = unfinished[0]
+    recovered_persistence_delta = (
+        history.persistence.phase
+        is t2_enrollment_persistence_journal.PersistencePhase.OUTCOME_UNKNOWN
+        and history.persistence.outcome_unknown_stage == "readback"
+        and history.persistence.outcome_unknown_host_commit_possible is True
+        and history.terminal_identity_uuid is not None
+    )
     if (
         history.baseline["apple_uid"] != configuration["apple_uid"]
         or history.baseline["mapping_generation"]
@@ -602,7 +609,7 @@ def run_outcome_unknown_reconciliation(
         "schema_version": 1,
         "outcome_unknown_reconciled": True,
         "identity_count": len(live["per_user_identity_records"]),
-        "persistent_identity_delta": False,
+        "persistent_identity_delta": recovered_persistence_delta,
         "identifiers_redacted": True,
         "fingerprint_mutation_performed": False,
     }
