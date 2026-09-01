@@ -73,19 +73,25 @@ slot number, or D-Bus well-known name is never sufficient authority. The
 existing `t2_user_policy`, `t2_polkit_grant`, account-generation, session,
 mapping, and readiness types should remain the source of these checks.
 
-The first two layers are implemented. A sender-aware dbus-next dispatcher
+The first three layers are implemented. A sender-aware dbus-next dispatcher
 preserves the immutable system-bus unique sender in task-local context. During
 `Claim`, the service asks the bus daemon for `GetConnectionCredentials`,
 requires `UnixUserID`, `ProcessID`, and `ProcessFD`, validates that the received
 descriptor is a pidfd for that exact PID, and pins the process UID/start time.
 Every claim-scoped call must retain both the exact sender and the live pinned
-process identity. Claims are serialized so a concurrent claim cannot pass
-while credential collection is suspended. `NameOwnerChanged` cleanup cancels
-active verification, closes the pidfd, and releases the claim when that
-connection disappears. This prevents a second allowed D-Bus connection from
-using a claim by repeating its username and prevents PID reuse from rebinding
-an existing claim. Stable session, account-generation, mapping, and PolicyKit
-binding remain required before mutation is enabled.
+process identity. The pidfd is then duplicated into the existing libsystemd
+session collector and joined to a protected local-account generation. A normal
+user may use the existing unique same-UID active-session fallback; a root PAM
+client must be directly attached to the claimed non-root user's exact active
+local physical login session and can never borrow an arbitrary session. Both
+the session and account generation are revalidated on every claim-scoped call.
+Claims are serialized so a concurrent claim cannot pass while evidence
+collection is suspended. `NameOwnerChanged` cleanup cancels active
+verification, closes the pidfd, and releases the claim when that connection
+disappears. This prevents a second allowed D-Bus connection from using a claim
+by repeating its username and prevents PID reuse from rebinding an existing
+claim. Protected mapping and bounded PolicyKit binding remain required before
+mutation is enabled.
 
 ## Mutation worker boundary
 
@@ -170,9 +176,9 @@ Native mutation remains disabled until all of these are demonstrated:
 
 ## Next implementation order
 
-1. Extend the pidfd-bound claim with stable active-session and account-
-   generation evidence.
-2. Finish the protected per-user mapping and read-only broker exposure gates.
+1. Finish the protected per-user mapping and read-only broker exposure gates.
+2. Bind each mutating call to a bounded PolicyKit grant derived from the
+   pidfd/session/account claim.
 3. Define a typed streaming mutation protocol and short-lived credentialed
    worker; prove authorization negatives before wiring T2 mutation.
 4. Adapt journaled enrollment with cancellation and automatic E4 recovery.

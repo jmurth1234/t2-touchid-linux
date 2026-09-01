@@ -165,8 +165,11 @@ evidence, not intent.
       mutation design and delivery gates before exposing any mutation method.
 - [x] Bind each fprint claim and every claim-scoped method to the exact
       system-bus unique sender, and release/cancel it when that sender exits.
-- [ ] Bind the claimed D-Bus sender to stable process, session, Linux account,
-      protected mapping, and bounded PolicyKit evidence before mutation.
+- [x] Bind the claimed D-Bus sender to a kernel pidfd plus stable active-session
+      and protected local-account-generation evidence, revalidated on every
+      claim-scoped call; root PAM callers require a direct target-user session.
+- [ ] Bind mutating calls to the protected mapping and one bounded PolicyKit
+      grant derived from that exact claim before mutation.
 - [ ] Support mapped Linux users through the same caller/session/PolicyKit and
       protected Apple-user authority model, including negative cross-user tests.
 - [ ] Validate the complete fprint client experience—list, enroll, verify,

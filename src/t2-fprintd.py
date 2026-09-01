@@ -26,6 +26,7 @@ from dbus_next.service import ServiceInterface, dbus_property, method, signal
 import t2_fprint_projection
 import t2_fprint_runtime
 import t2_dbus_identity
+import t2_fprint_claim
 from t2_dbus_sender import (
     DBusSenderError,
     SenderAwareMessageBus,
@@ -42,7 +43,7 @@ MACOS_USER_ID = int(os.environ.get("T2_TOUCHID_MACOS_USER_ID", "501"))
 ENROLLED_FINGER = os.environ.get(
     "T2_TOUCHID_ENROLLED_FINGER", "right-index-finger"
 )
-ALLOWED_PAM_USERS = (LINUX_USER, "root")
+ALLOWED_PAM_USERS = (LINUX_USER,)
 UNSTARTED_CLAIM_SECONDS = 5.0
 COMPLETED_CLAIM_SECONDS = 0.5
 
@@ -415,15 +416,18 @@ class FprintDevice(ServiceInterface):
         backend: T2Backend,
         identity_bus,
         caller_collector=t2_dbus_identity.collect,
+        claim_evidence_collector=t2_fprint_claim.collect,
     ) -> None:
         super().__init__("net.reactivated.Fprint.Device")
         self.backend = backend
         self.identity_bus = identity_bus
         self.caller_collector = caller_collector
+        self.claim_evidence_collector = claim_evidence_collector
         self.claim_lock = asyncio.Lock()
         self.claimed_user: str | None = None
         self.claimed_sender: str | None = None
         self.claimed_caller: t2_dbus_identity.PinnedDBusCaller | None = None
+        self.claimed_evidence: t2_fprint_claim.ClaimEvidence | None = None
         self.verify_task: asyncio.Task | None = None
         self.claim_expiry_task: asyncio.Task | None = None
         self.enrolled_fingers: tuple[str, ...] = (ENROLLED_FINGER,)
@@ -458,7 +462,23 @@ class FprintDevice(ServiceInterface):
                         "D-Bus caller changed during claim"
                     )
                 caller.verify()
-            except (DBusSenderError, t2_dbus_identity.DBusIdentityError) as error:
+                evidence = await asyncio.to_thread(
+                    self.claim_evidence_collector, caller, requested
+                )
+                if not isinstance(evidence, t2_fprint_claim.ClaimEvidence):
+                    raise t2_fprint_claim.FprintClaimError(
+                        "claim evidence collector returned an invalid result"
+                    )
+                if current_dbus_sender() != sender or caller.sender != sender:
+                    raise t2_dbus_identity.DBusIdentityError(
+                        "D-Bus caller changed during claim evidence collection"
+                    )
+                caller.verify()
+            except (
+                DBusSenderError,
+                t2_dbus_identity.DBusIdentityError,
+                t2_fprint_claim.FprintClaimError,
+            ) as error:
                 if caller is not None:
                     caller.close()
                 raise DBusError(
@@ -468,6 +488,7 @@ class FprintDevice(ServiceInterface):
             self.claimed_user = requested
             self.claimed_sender = sender
             self.claimed_caller = caller
+            self.claimed_evidence = evidence
             self.claim_expiry_task = asyncio.create_task(
                 self._expire_unstarted_claim()
             )
@@ -477,6 +498,7 @@ class FprintDevice(ServiceInterface):
         self.claimed_user = None
         self.claimed_sender = None
         self.claimed_caller = None
+        self.claimed_evidence = None
         if caller is not None:
             caller.close()
 
@@ -485,6 +507,7 @@ class FprintDevice(ServiceInterface):
             self.claimed_user is None
             or self.claimed_sender is None
             or self.claimed_caller is None
+            or self.claimed_evidence is None
         ):
             raise DBusError(
                 f"{FPRINT_ERROR}.ClaimDevice", "device is not claimed"
@@ -506,7 +529,11 @@ class FprintDevice(ServiceInterface):
                     "pinned sender does not match the claim"
                 )
             self.claimed_caller.verify()
-        except t2_dbus_identity.DBusIdentityError as error:
+            self.claimed_evidence.revalidate(self.claimed_caller)
+        except (
+            t2_dbus_identity.DBusIdentityError,
+            t2_fprint_claim.FprintClaimError,
+        ) as error:
             raise DBusError(
                 f"{FPRINT_ERROR}.PermissionDenied",
                 "caller process identity is no longer valid",

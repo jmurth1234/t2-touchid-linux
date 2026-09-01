@@ -13,6 +13,7 @@ from typing import Protocol
 from dbus_next import Message, MessageType, Variant
 
 import t2_dbus_sender
+import t2_ipc_session
 import t2_polkit_grant
 
 
@@ -94,6 +95,32 @@ class PinnedDBusCaller:
         if not self._closed:
             os.close(self.pidfd)
             self._closed = True
+
+    def duplicate_peer(self) -> t2_ipc_session.PinnedPeer:
+        """Return an independently owned pidfd for session collection."""
+        self.verify()
+        try:
+            descriptor = fcntl.fcntl(
+                self.pidfd, fcntl.F_DUPFD_CLOEXEC, 3
+            )
+        except OSError as error:
+            raise DBusIdentityError("D-Bus caller pidfd cannot be duplicated") from error
+        try:
+            peer = t2_ipc_session.PinnedPeer.from_process_fd(
+                descriptor,
+                self.subject.pid,
+                self.subject.uid,
+                proc_root=self.proc_root,
+                allow_root=True,
+            )
+            self.verify()
+            return peer
+        except BaseException:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            raise
 
     def redacted(self) -> dict[str, object]:
         return {

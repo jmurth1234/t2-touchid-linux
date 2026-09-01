@@ -53,13 +53,33 @@ class FakePinnedCaller:
         self.closed = True
 
 
+class FakeClaimEvidence(MODULE.t2_fprint_claim.ClaimEvidence):
+    def __init__(self):
+        super().__init__("test", 1000, None, None, None, None, None)
+        self.revalidate_count = 0
+        self.invalid = False
+
+    def revalidate(self, caller):
+        caller.verify()
+        if self.invalid:
+            raise MODULE.t2_fprint_claim.FprintClaimError("changed")
+        self.revalidate_count += 1
+
+
 async def fake_caller_collector(_bus, sender):
     return FakePinnedCaller(sender)
 
 
+def fake_claim_evidence_collector(_caller, _username):
+    return FakeClaimEvidence()
+
+
 def make_device(backend=None):
     return MODULE.FprintDevice(
-        backend or FakeBackend(), object(), fake_caller_collector
+        backend or FakeBackend(),
+        object(),
+        fake_caller_collector,
+        fake_claim_evidence_collector,
     )
 
 
@@ -186,6 +206,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(device.claimed_user)
             self.assertIsNone(device.claimed_sender)
             self.assertIsNone(device.claimed_caller)
+            self.assertIsNone(device.claimed_evidence)
             self.assertTrue(pinned.closed)
         finally:
             MODULE.current_dbus_sender = old
@@ -196,6 +217,16 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         pinned = device.claimed_caller
         self.assertIsNotNone(pinned)
         pinned.closed = True
+        with self.assertRaises(MODULE.DBusError) as raised:
+            device.VerifyStart("any")
+        self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
+
+    async def test_claim_revalidates_session_and_account_on_scoped_calls(self):
+        device = make_device()
+        await claim(device)
+        evidence = device.claimed_evidence
+        self.assertIsNotNone(evidence)
+        evidence.invalid = True
         with self.assertRaises(MODULE.DBusError) as raised:
             device.VerifyStart("any")
         self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
@@ -211,7 +242,10 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             return pinned
 
         device = MODULE.FprintDevice(
-            FakeBackend(), object(), delayed_collector
+            FakeBackend(),
+            object(),
+            delayed_collector,
+            fake_claim_evidence_collector,
         )
         claim_task = asyncio.create_task(claim(device))
         await collecting.wait()
@@ -232,7 +266,10 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             return FakePinnedCaller(sender)
 
         device = MODULE.FprintDevice(
-            FakeBackend(), object(), delayed_collector
+            FakeBackend(),
+            object(),
+            delayed_collector,
+            fake_claim_evidence_collector,
         )
         first = asyncio.create_task(claim(device))
         await collecting.wait()
@@ -243,6 +280,24 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await second
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
         await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_failed_claim_evidence_closes_process_pin(self):
+        pinned = FakePinnedCaller(":1.100")
+
+        async def caller_collector(_bus, _sender):
+            return pinned
+
+        def evidence_collector(_caller, _username):
+            raise MODULE.t2_fprint_claim.FprintClaimError("denied")
+
+        device = MODULE.FprintDevice(
+            FakeBackend(), object(), caller_collector, evidence_collector
+        )
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await claim(device)
+        self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
+        self.assertTrue(pinned.closed)
+        self.assertIsNone(device.claimed_user)
 
     async def test_unstarted_claim_expires(self):
         old_timeout = MODULE.UNSTARTED_CLAIM_SECONDS

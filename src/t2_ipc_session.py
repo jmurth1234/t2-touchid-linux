@@ -124,7 +124,7 @@ class SessionBackend(Protocol):
 AccountCollector = Callable[[int], t2_linux_account.AccountEvidence]
 
 
-def _validated_account(
+def validate_account(
     value: object, uid: int
 ) -> t2_linux_account.AccountEvidence:
     if (
@@ -326,10 +326,12 @@ class PinnedPeer:
         subject: t2_polkit_grant.ProcessSubject,
         *,
         proc_root: Path,
+        allow_root: bool = False,
     ) -> None:
         self.pidfd = pidfd
         self.subject = subject
         self.proc_root = proc_root
+        self.allow_root = allow_root
         self._closed = False
 
     @classmethod
@@ -340,6 +342,7 @@ class PinnedPeer:
         uid: int,
         *,
         proc_root: Path = t2_polkit_grant.PROC_ROOT,
+        allow_root: bool = False,
     ) -> "PinnedPeer":
         """Take ownership of a D-Bus/SO_PEERPIDFD process descriptor."""
         if (
@@ -348,7 +351,8 @@ class PinnedPeer:
             or type(pid) is not int
             or not 1 <= pid <= t2_polkit_grant.MAX_PID
             or type(uid) is not int
-            or not 1 <= uid < (1 << 32) - 1
+            or type(allow_root) is not bool
+            or not (0 if allow_root else 1) <= uid < (1 << 32) - 1
             or not isinstance(proc_root, Path)
             or not proc_root.is_absolute()
         ):
@@ -380,9 +384,11 @@ class PinnedPeer:
             ):
                 raise IPCSessionError("pidfd does not match the credential PID")
             subject = t2_polkit_grant.read_process_subject(
-                pid, uid, proc_root=proc_root
+                pid, uid, proc_root=proc_root, allow_root=allow_root
             )
-            peer = cls(pidfd, subject, proc_root=proc_root)
+            peer = cls(
+                pidfd, subject, proc_root=proc_root, allow_root=allow_root
+            )
             peer.verify()
             return peer
         except BaseException:
@@ -444,6 +450,7 @@ class PinnedPeer:
             self.subject.pid,
             self.subject.uid,
             proc_root=self.proc_root,
+            allow_root=self.allow_root,
         )
         if current != self.subject:
             raise IPCSessionError("IPC peer process identity changed")
@@ -481,19 +488,35 @@ def _acceptable(description: SessionDescription, uid: int) -> bool:
 def collect_session(
     peer: PinnedPeer,
     backend: SessionBackend | None = None,
+    *,
+    expected_uid: int | None = None,
 ) -> SessionEvidence:
     if not isinstance(peer, PinnedPeer):
         raise IPCSessionError("pinned IPC peer has the wrong type")
     backend = backend or LibsystemdSessionBackend()
     peer.verify()
+    selected_uid = peer.subject.uid if expected_uid is None else expected_uid
+    if (
+        type(selected_uid) is not int
+        or not 1 <= selected_uid < (1 << 32) - 1
+        or (
+            peer.subject.uid != selected_uid
+            and peer.subject.uid != t2_linux_account.ROOT_UID
+        )
+    ):
+        raise IPCSessionError("claimed Linux UID is not bound to the peer")
     direct = backend.session_for_pidfd(peer.pidfd)
     binding = "pidfd-session"
     selected: tuple[str, ...]
     if direct is not None:
         selected = (direct,)
     else:
+        if peer.subject.uid == t2_linux_account.ROOT_UID:
+            raise IPCSessionError(
+                "root caller has no directly bound login session"
+            )
         binding = "uid-active-session"
-        selected = backend.active_sessions(peer.subject.uid)
+        selected = backend.active_sessions(selected_uid)
     acceptable: list[tuple[str, SessionDescription]] = []
     for session in selected:
         try:
@@ -502,7 +525,7 @@ def collect_session(
             if direct is not None:
                 raise
             continue
-        if _acceptable(description, peer.subject.uid):
+        if _acceptable(description, selected_uid):
             acceptable.append((session, description))
     if len(acceptable) != 1:
         raise IPCSessionError(
@@ -596,7 +619,7 @@ class AuthorizationSession:
             selected_backend = backend or LibsystemdSessionBackend()
             session = collect_session(peer, selected_backend)
             try:
-                account = _validated_account(
+                account = validate_account(
                     account_collector(peer.subject.uid), peer.subject.uid
                 )
             except t2_linux_account.LinuxAccountError as error:
@@ -630,7 +653,7 @@ class AuthorizationSession:
                 "caller login session changed during authorization"
             )
         try:
-            current_account = _validated_account(
+            current_account = validate_account(
                 self._account_collector(self._peer.subject.uid),
                 self._peer.subject.uid,
             )

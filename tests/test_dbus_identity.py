@@ -59,6 +59,10 @@ class DBusIdentityTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(bus.calls[0].member, "GetConnectionCredentials")
             self.assertEqual(bus.calls[0].body, [":1.42"])
             self.assertNotIn(str(os.getpid()), str(caller.redacted()))
+            peer = caller.duplicate_peer()
+            peer_descriptor = peer.pidfd
+            with peer:
+                self.assertEqual(peer.subject.pid, os.getpid())
         finally:
             pinned_descriptor = caller.pidfd
             caller.close()
@@ -66,6 +70,8 @@ class DBusIdentityTests(unittest.IsolatedAsyncioTestCase):
             fcntl.fcntl(received_descriptor, fcntl.F_GETFD)
         with self.assertRaises(OSError):
             fcntl.fcntl(pinned_descriptor, fcntl.F_GETFD)
+        with self.assertRaises(OSError):
+            fcntl.fcntl(peer_descriptor, fcntl.F_GETFD)
 
     async def test_root_identity_is_pinned_but_not_granted_mutation_here(self):
         # The parser supports root callers needed by PAM verification. This
