@@ -197,7 +197,7 @@ class MappingAdminCommandTests(unittest.TestCase):
         self.assertIn('INSTALLED_SOURCE = Path("/opt/t2-touchid/src")', command)
         self.assertIn("sys.path.insert(0, str(INSTALLED_SOURCE))", command)
         self.assertIn("src/t2-touchid-user-map.py", install)
-        self.assertIn("t2-touchid-user-map}", uninstall)
+        self.assertIn("t2-touchid-user-map", uninstall)
         self.assertIn("--purge-private-data", uninstall)
         self.assertIn("Preserved config, credentials, keybags", uninstall)
 

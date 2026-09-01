@@ -78,7 +78,9 @@ class UserBrokerServiceAssetTests(unittest.TestCase):
             self.assertNotIn("t2-touchid-user-broker.socket", text)
             self.assertNotIn("t2-touchid-user-broker@.service", text)
         self.assertNotIn(
-            "/usr/local/sbin/t2-touchid-user-broker", install
+            '"$source_dir/src/t2-touchid-user-broker.py" '
+            "/usr/local/sbin/t2-touchid-user-broker\n",
+            install,
         )
 
     def test_entrypoint_has_fixed_read_only_policy_and_generic_failure(self):

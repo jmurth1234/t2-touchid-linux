@@ -5837,6 +5837,14 @@ The fprintd compatibility device still lists one logical finger name because
 that slot represents “any built-in identity for the configured Apple user”; it
 is not a hardware identity count.
 
+That distinction is now an explicit broker-exposure invariant. The redacted
+gate consumes the reconciled inventory count (minimum two) and a separate
+same-boot operator attestation that two distinct fingers matched; it never
+infers either fact from fprintd's compatibility-slot listing. It also requires
+the rebuilt live module, stable read-only AKS alias observation, and an enabled
+protected mapping before permitting even the staged negative service test.
+Passing the gate does not install the candidate broker socket.
+
 The installed `t2-touchid-identities` read-only management inventory now joins
 the strict committed user Catacomb to a fresh stable SEP double-read under the
 exclusive operation lock. It requires exact equality among local, per-user,

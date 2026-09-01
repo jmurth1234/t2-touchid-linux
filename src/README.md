@@ -180,6 +180,15 @@ and templated sandboxed service live in `systemd/research/`, have no `[Install]`
 section, and are excluded from the installer until the documented live gates
 pass.
 
+`t2_user_broker_exposure_gate.py` and the installed
+`t2-touchid-user-broker-gate` diagnostic join only redacted evidence: the live
+module/build match, stable AKS operations `0x06`/`0x19`, a reconciled minimum of
+two T2 identities, the operator's same-boot two-distinct-finger verification,
+and a present enabled protected mapping. The report explicitly records that no
+T2 mutation occurred and that the broker socket is not installed. Even a fully
+passing report authorizes only the staged negative service test, not service
+installation or enablement.
+
 `t2_linux_account.py` supplies the previously abstract caller account
 generation. It supports a strict local-files profile only: one numeric UID must
 have one root-owned local passwd row, NSS must resolve the same complete record,

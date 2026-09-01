@@ -27,5 +27,15 @@ Exposure remains gated on all of the following evidence:
 5. A negative client/PolicyKit test must prove an unmapped or inactive caller
    receives no inventory and cannot activate a keybag.
 
+The first four prerequisites are summarized without identifiers or mutation by:
+
+```sh
+sudo t2-touchid-user-broker-gate \
+  --acknowledge-two-distinct-fingers-verified-this-boot
+```
+
+Exit status zero means only that gate 5 may be staged. This command does not
+copy, start, or enable either unit in this directory.
+
 After those gates pass, the units still require a reviewed installer, rollback
 path, socket-path client, and live failure-injection tests before enablement.

@@ -122,6 +122,9 @@ or an alternative sleep mode has been validated on the specific Mac model.
   decoding plus an exact, non-exposed AKS observation/command adapter.
 - `t2-aks-observe-test`: redacted read-only hardware validation of the
   configured alias through operations `0x06` and `0x19`.
+- `t2-touchid-user-broker-gate`: redacted read-only summary of every prerequisite
+  for the first staged negative mapped-user broker test; it never installs or
+  starts the candidate socket.
 - `systemd/`: system and audible-feedback units.
 - `pam/`: clamshell-safe Omarchy PAM templates.
 - `polkit/`: distinct non-transitive action definitions for future brokers.
@@ -513,6 +516,19 @@ machine-wide operation lock, and prints no identifiers:
 ```sh
 sudo t2-aks-observe-test
 ```
+
+Before any mapped-user broker exposure, collect all of its independent gates in
+one identifier-free report. The acknowledgement is valid only after two
+distinct enrolled fingers have each matched during the current boot:
+
+```sh
+sudo t2-touchid-user-broker-gate \
+  --acknowledge-two-distinct-fingers-verified-this-boot
+```
+
+The report distinguishes the reconciled T2 identity count from fprintd's one
+compatibility alias. A successful report means only that an unmapped/inactive
+caller negative test may be staged; the candidate socket remains uninstalled.
 
 Rename one current identity label (this does not alter its fingerprint
 template or fprintd's compatibility-slot name):

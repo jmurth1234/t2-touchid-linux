@@ -114,6 +114,8 @@ evidence, not intent.
       and exact request/response command binding.
 - [x] Add verified, disabled-by-construction candidate systemd units and a
       fixed read-only entry point without installing or enabling them.
+- [x] Add one redacted non-mutating broker-exposure diagnostic that keeps the
+      reconciled T2 identity count distinct from fprintd's compatibility alias.
 - [x] Add a live local-files account-generation assertion over the exact
       UID/passwd/shadow/database/home binding and revalidate it after PolicyKit.
 - [x] Add atomic administrator creation/rebinding for protected account
@@ -126,6 +128,9 @@ evidence, not intent.
       and bind its private account UUID into alias readiness evidence.
 - [ ] Validate operation `0x06` and the read-only alias observer on hardware
       after loading the rebuilt pinned module at reboot.
+- [x] Verify after reboot that the pre-existing and Linux-enrolled fingerprints
+      independently match while fprintd truthfully exposes one compatibility
+      alias for the configured Apple user.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
       verification on the proven machine.
 - [ ] Implement Linux-native enrollment/unenrollment policy for multiple users.
