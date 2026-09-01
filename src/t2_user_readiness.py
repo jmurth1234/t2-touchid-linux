@@ -51,12 +51,13 @@ class PersistentEvidence:
     catacomb_reconciled: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class AliasEvidence:
     present: bool
     special_alias: int | None
     bag_uuid: str | None
     lock_state: int | None
+    account_uuid: str | None
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,12 @@ def _validate_evidence(
     if not alias.present:
         if any(
             value is not None
-            for value in (alias.special_alias, alias.bag_uuid, alias.lock_state)
+            for value in (
+                alias.special_alias,
+                alias.bag_uuid,
+                alias.lock_state,
+                alias.account_uuid,
+            )
         ):
             raise UserReadinessError("absent alias contains contradictory evidence")
         return
@@ -130,12 +136,16 @@ def _validate_evidence(
         type(alias.special_alias) is not int
         or alias.special_alias >= 0
         or not isinstance(alias.bag_uuid, str)
+        or not isinstance(alias.account_uuid, str)
         or type(alias.lock_state) is not int
         or not 0 <= alias.lock_state <= 0xFFFF
     ):
         raise UserReadinessError("present alias evidence is incomplete or invalid")
     try:
         t2_user_mapping._canonical_uuid(alias.bag_uuid, "live bag UUID")
+        t2_user_mapping._canonical_uuid(
+            alias.account_uuid, "live Apple account UUID"
+        )
     except t2_user_mapping.UserMappingError as error:
         raise UserReadinessError(str(error)) from error
 
@@ -171,6 +181,7 @@ def assess(
     if (
         alias.special_alias != selected.special_bag_alias
         or alias.bag_uuid != selected.bag_uuid
+        or alias.account_uuid != selected.account_uuid
     ):
         return _decision("alias-binding-mismatch", "quarantine", quarantine=True)
     assert alias.lock_state is not None

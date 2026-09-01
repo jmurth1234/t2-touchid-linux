@@ -22,6 +22,21 @@ class AKSAliasObservationError(RuntimeError):
     pass
 
 
+def _same_file(before: os.stat_result, after: os.stat_result) -> bool:
+    fields = (
+        "st_dev",
+        "st_ino",
+        "st_mode",
+        "st_uid",
+        "st_gid",
+        "st_nlink",
+        "st_size",
+        "st_mtime_ns",
+        "st_ctime_ns",
+    )
+    return all(getattr(before, field) == getattr(after, field) for field in fields)
+
+
 def _default_runner(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
@@ -89,14 +104,14 @@ class AKSAliasObserver:
             if hasattr(os, "O_NOFOLLOW"):
                 flags |= os.O_NOFOLLOW
             descriptor = os.open(path, flags)
-            info = os.fstat(descriptor)
+            before = os.fstat(descriptor)
             if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_uid != self._owner_uid
-                or info.st_nlink != 1
-                or stat.S_IMODE(info.st_mode) != 0o600
-                or not 0 < info.st_size <= maximum
-                or (exact is not None and info.st_size != exact)
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != self._owner_uid
+                or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or not 0 < before.st_size <= maximum
+                or (exact is not None and before.st_size != exact)
             ):
                 raise AKSAliasObservationError(
                     "AKS observation artifact is not private and exact"
@@ -107,7 +122,8 @@ class AKSAliasObserver:
                 if not block:
                     break
                 data.extend(block)
-            if len(data) != info.st_size:
+            after = os.fstat(descriptor)
+            if len(data) != before.st_size or not _same_file(before, after):
                 raise AKSAliasObservationError(
                     "AKS observation artifact changed during read"
                 )
@@ -138,6 +154,14 @@ class AKSAliasObserver:
                     )
                 return None
             if completed.returncode != 0:
+                if completed.stderr.strip() in {
+                    "T2_AKS_IOC_EXCHANGE: Permission denied",
+                    "T2_AKS_IOC_EXCHANGE: Operation not permitted",
+                }:
+                    raise AKSAliasObservationError(
+                        "kernel rejected read-only AKS operation 0x06; "
+                        "install the rebuilt module and reboot"
+                    )
                 raise AKSAliasObservationError("AKS bag UUID observation failed")
             raw = self._read_private(output, maximum=16, exact=16)
             parsed = uuid.UUID(bytes=raw)
@@ -203,7 +227,7 @@ class AKSAliasObserver:
                             "AKS alias changed during absence observation"
                         )
                     return t2_user_readiness.AliasEvidence(
-                        False, None, None, None
+                        False, None, None, None, None
                     )
                 state = self._state(special_alias, private / "state")
                 second = self._copy_bag_uuid(special_alias, private / "uuid-2")
@@ -216,7 +240,11 @@ class AKSAliasObserver:
                         "AKS state belongs to a different handle"
                     )
                 return t2_user_readiness.AliasEvidence(
-                    True, special_alias, first, state.lock_state
+                    True,
+                    special_alias,
+                    first,
+                    state.lock_state,
+                    state.user_uuid,
                 )
         except AKSAliasObservationError:
             raise

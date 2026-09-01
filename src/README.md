@@ -35,9 +35,9 @@ negotiated v2 header and calendar-time extension.
 
 The research-only `get-device-state-v1 SESSION HANDLE SELECTOR OUTPUT` command
 implements the recovered 24-byte operation-`0x19` codec. Its output can contain
-a private keybag UUID, is created mode `0600`, and must never be committed or
-published. Decode only a private copy, redact identifiers in notes, and remove
-the raw output when the observation is complete.
+a private Apple account UUID, is created mode `0600`, and must never be
+committed or published. Decode only a private copy, redact identifiers in
+notes, and remove the raw output when the observation is complete.
 
 The read-only `copy-keybag-uuid SESSION HANDLE OUTPUT` command implements the
 matching kext's exact raw endpoint operation `0x06`: a zero result placeholder,
@@ -173,17 +173,19 @@ target remains ready, accepts activation only with the separate activation
 grant, and uses the policy-bound operation UUID as its journal UUID so a grant
 cannot be detached from recovery evidence.
 `t2_aks_state.py` strictly decodes the exact ten-field DER keybag-state schema
-observed on the proven build, including canonical SET ordering, integer
-encoding, queried handle, lock state, and private user UUID. `t2_aks_observer.py`
+observed on the proven build, including Apple's exact UTF-8 key ordering,
+integer encoding, queried handle, lock state, and private user UUID.
+`t2_aks_observer.py`
 brackets that state with two operation-`0x06` bag-UUID reads, stores raw output
-only inside a private transient directory, and deletes it immediately.
+only inside a private transient directory, verifies the private account UUID,
+and deletes it immediately.
 `t2_aks_transport.py` composes that observer with the existing load, bind, and
 unlock commands; password bytes traverse a pipe and command output must match
 the exact typed reply. These modules provide the concrete dependency boundary,
-but no public IPC request protocol, account-binding/rebinding CLI,
-recovery CLI, or public activation command is present. Hardware validation of
-operation `0x06` requires installing
-the rebuilt pinned module and rebooting before this adapter can be enabled.
+but no public IPC request protocol, recovery CLI, or public activation command
+is present. `t2-aks-observe-test` is only a redacted read-only hardware gate;
+operation `0x06` requires installing the rebuilt pinned module and rebooting
+before that validation can pass.
 
 The `t2-touchid-manage` rename path resolves one slot only after that
 reconciliation gate,

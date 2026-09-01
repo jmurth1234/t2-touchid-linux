@@ -139,6 +139,9 @@ def recover(
     bag_uuid_matches = bool(
         observed.present and observed.bag_uuid == selected.bag_uuid
     )
+    account_uuid_matches = bool(
+        observed.present and observed.account_uuid == selected.account_uuid
+    )
     activation_journal.append_checked(
         path,
         history.operation_id,
@@ -149,6 +152,7 @@ def recover(
             "readiness_state": decision.state,
             "alias_present": alias_present,
             "bag_uuid_matches": bag_uuid_matches,
+            "account_uuid_matches": account_uuid_matches,
             "match_ready": resolution == "ready",
             "mutation_performed": False,
         },

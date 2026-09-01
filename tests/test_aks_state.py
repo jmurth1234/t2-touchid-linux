@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 SOURCE = Path(__file__).parents[1] / "src"
@@ -64,7 +67,7 @@ def state_blob(handle: int = -501, lock_state: int = 0) -> bytes:
         "ss": 0x06000004,
         "uuuid": uuid.UUID(int=7).bytes,
     }
-    members = sorted(item(key, value) for key, value in fields.items())
+    members = [item(key, fields[key]) for key in sorted(fields)]
     return tlv(0x31, b"".join(members))
 
 
@@ -104,7 +107,7 @@ class AKSStateTests(unittest.TestCase):
         self.assertEqual(decoded.user_uuid, str(uuid.UUID(int=7)))
         self.assertNotIn(decoded.user_uuid, str(decoded.redacted()))
 
-    def test_rejects_trailing_missing_unknown_duplicate_and_unsorted_fields(self):
+    def test_rejects_trailing_missing_unknown_duplicate_and_wrong_field_order(self):
         valid = state_blob()
         with self.assertRaises(state.AKSStateError):
             state.decode(valid + b"\0")
@@ -117,9 +120,12 @@ class AKSStateTests(unittest.TestCase):
             members.append(root[start:offset])
         for content in (
             b"".join(members[:-1]),
-            b"".join(sorted(members + [item("wat", 1)])),
-            b"".join(sorted(members + [members[0]])),
+            b"".join(members + [item("wat", 1)]),
+            b"".join(members + [members[0]]),
             b"".join(reversed(members)),
+            # Generic DER SET OF byte ordering is not the Apple dictionary
+            # ordering observed on hardware and must not be accepted here.
+            b"".join(sorted(members)),
         ):
             with self.subTest(length=len(content)):
                 with self.assertRaises(state.AKSStateError):
@@ -139,15 +145,21 @@ class AKSStateTests(unittest.TestCase):
             "uuuid": item("uuuid", uuid.UUID(int=7).bytes),
         }
         with self.assertRaises(state.AKSStateError):
-            state.decode(tlv(0x31, b"".join(sorted(fields.values()))))
+            state.decode(
+                tlv(0x31, b"".join(fields[key] for key in sorted(fields)))
+            )
         fields["bh"] = item("bh", -501)
         fields["sls"] = item("sls", b"x")
         with self.assertRaises(state.AKSStateError):
-            state.decode(tlv(0x31, b"".join(sorted(fields.values()))))
+            state.decode(
+                tlv(0x31, b"".join(fields[key] for key in sorted(fields)))
+            )
         fields["sls"] = item("sls", 0)
         fields["uuuid"] = item("uuuid", bytes(16))
         with self.assertRaises(state.AKSStateError):
-            state.decode(tlv(0x31, b"".join(sorted(fields.values()))))
+            state.decode(
+                tlv(0x31, b"".join(fields[key] for key in sorted(fields)))
+            )
 
     def test_rejects_nonminimal_lengths_and_out_of_range_lock_state(self):
         valid = state_blob()
@@ -190,6 +202,7 @@ class AKSAliasObserverTests(unittest.TestCase):
         self.assertTrue(result.present)
         self.assertEqual(result.special_alias, -501)
         self.assertEqual(result.bag_uuid, self.bag)
+        self.assertEqual(result.account_uuid, str(uuid.UUID(int=7)))
         self.assertEqual(result.lock_state, 1)
         self.assertEqual(len(runner.calls), 3)
         self.assertEqual(list(self.root.iterdir()), [])
@@ -216,6 +229,55 @@ class AKSAliasObserverTests(unittest.TestCase):
             with self.subTest(runner=runner):
                 with self.assertRaises(observer.AKSAliasObservationError):
                     self.make(runner).observe_alias(-501)
+
+    def test_stale_kernel_allowlist_reports_the_reboot_gate(self):
+        completed = subprocess.CompletedProcess(
+            [], 1, "", "T2_AKS_IOC_EXCHANGE: Permission denied\n"
+        )
+        instance = self.make(lambda command: completed)
+        with self.assertRaisesRegex(
+            observer.AKSAliasObservationError, "rebuilt module and reboot"
+        ):
+            instance.observe_alias(-501)
+
+    def test_private_artifact_reader_rejects_same_length_metadata_change(self):
+        path = self.root / "artifact"
+        path.write_bytes(b"0123456789abcdef")
+        path.chmod(0o600)
+        descriptor = os.open(path, os.O_RDONLY)
+        common = {
+            "st_mode": stat.S_IFREG | 0o600,
+            "st_uid": os.geteuid(),
+            "st_gid": os.getegid(),
+            "st_nlink": 1,
+            "st_size": 16,
+            "st_dev": 1,
+            "st_ino": 2,
+            "st_mtime_ns": 3,
+        }
+        try:
+            with (
+                mock.patch.object(observer.os, "open", return_value=descriptor),
+                mock.patch.object(
+                    observer.os,
+                    "fstat",
+                    side_effect=(
+                        SimpleNamespace(**common, st_ctime_ns=4),
+                        SimpleNamespace(**common, st_ctime_ns=5),
+                    ),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    observer.AKSAliasObservationError, "changed"
+                ):
+                    self.make(FakeRunner([]))._read_private(
+                        path, maximum=16, exact=16
+                    )
+        finally:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
     def test_rejects_unproven_session_paths_generation_and_alias(self):
         with self.assertRaises(observer.AKSAliasObservationError):

@@ -105,6 +105,7 @@ def alias(lock_state=0, **changes):
         "special_alias": -501,
         "bag_uuid": identifier(2),
         "lock_state": lock_state,
+        "account_uuid": identifier(1),
     }
     values.update(changes)
     return readiness.AliasEvidence(**values)
@@ -202,7 +203,7 @@ class UserPolicyTests(unittest.TestCase):
 
     def test_not_ready_target_requires_a_separate_bound_activation_grant(self):
         current = request("enroll")
-        absent = readiness.AliasEvidence(False, None, None, None)
+        absent = readiness.AliasEvidence(False, None, None, None, None)
         missing = self.authorize(request=current, alias=absent)
         self.assertEqual(missing.state, "activation-authorization-required")
         self.assertTrue(missing.activation_required)

@@ -24,6 +24,7 @@ ROOT_UID = 0
 MAX_FILE_SIZE = 1024 * 1024
 MAX_MAPPINGS = 64
 UINT32_MAX = (1 << 32) - 1
+INT32_MAX = (1 << 31) - 1
 KEYBAG_ROOT = PurePosixPath("/var/lib/t2-touchid/users")
 CAPABILITIES = frozenset({"verify", "enroll", "identity-management"})
 UNLOCK_MODES = frozenset({"password-on-demand", "host-encrypted-credential"})
@@ -154,6 +155,8 @@ def _parse_mapping(value: Any) -> UserMapping:
         raise UserMappingError("mapping entry fields are incomplete or unsupported")
     linux_uid = _unsigned(value["linux_uid"], "Linux UID", minimum=1)
     apple_uid = _unsigned(value["apple_uid"], "Apple UID", minimum=10)
+    if apple_uid > INT32_MAX:
+        raise UserMappingError("Apple UID cannot form a signed AKS alias")
     unlock_mode = value["unlock_mode"]
     if not isinstance(unlock_mode, str) or unlock_mode not in UNLOCK_MODES:
         raise UserMappingError("unlock mode is unsupported")

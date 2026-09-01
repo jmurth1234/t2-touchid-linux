@@ -105,14 +105,9 @@ def decode(data: bytes) -> KeybagState:
 
     values: dict[str, int | bytes] = {}
     offset = 0
-    previous_encoded: bytes | None = None
+    field_order: list[str] = []
     while offset < len(root):
-        item_start = offset
         sequence, offset = _tlv(root, offset, 0x30)
-        encoded = root[item_start:offset]
-        if previous_encoded is not None and encoded <= previous_encoded:
-            raise AKSStateError("DER SET members are not in canonical order")
-        previous_encoded = encoded
 
         key_content, sequence_offset = _tlv(sequence, 0, 0x0C)
         try:
@@ -121,6 +116,7 @@ def decode(data: bytes) -> KeybagState:
             raise AKSStateError("keybag state key is not ASCII") from error
         if key in values:
             raise AKSStateError("keybag state contains a duplicate key")
+        field_order.append(key)
         if sequence_offset >= len(sequence):
             raise AKSStateError("keybag state value is missing")
         tag = sequence[sequence_offset]
@@ -148,6 +144,13 @@ def decode(data: bytes) -> KeybagState:
     }
     if set(values) != expected:
         raise AKSStateError("keybag state fields are incomplete or unsupported")
+    # Apple's DER dictionary encoder orders entries by their UTF-8 key.  It
+    # does not apply DER SET OF's bytewise ordering to the complete encoded
+    # SEQUENCE values (which would place the shorter `sb` entry first).  Keep
+    # this exact live-wire ordering fail-closed instead of accepting arbitrary
+    # SET order or imposing the wrong generic DER rule.
+    if field_order != sorted(expected):
+        raise AKSStateError("keybag state fields are not in Apple key order")
     if not all(type(values[key]) is int for key in expected - {"uuuid"}):
         raise AKSStateError("keybag state integer field has the wrong type")
     raw_uuid = values["uuuid"]

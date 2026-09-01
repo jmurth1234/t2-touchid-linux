@@ -103,6 +103,8 @@ evidence, not intent.
       generations; both transitions force disabled and never auto-accept drift.
 - [ ] Add a separate live Apple/AKS/Catacomb reconciliation transaction before
       a disabled mapping may be enabled.
+- [x] Validate the operation-`0x19` state decoder against live Apple key order
+      and bind its private account UUID into alias readiness evidence.
 - [ ] Validate operation `0x06` and the read-only alias observer on hardware
       after loading the rebuilt pinned module at reboot.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor

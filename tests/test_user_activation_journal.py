@@ -83,7 +83,9 @@ class UserActivationJournalTests(unittest.TestCase):
         )
 
     def test_absent_alias_reaches_ready_only_through_all_observations(self):
-        history = self.create(readiness.AliasEvidence(False, None, None, None))
+        history = self.create(
+            readiness.AliasEvidence(False, None, None, None, None)
+        )
         self.assertEqual(history.phase, activation.UserActivationPhase.BASELINE)
         self.append(
             "USER_KEYBAG_LOAD_INTENT",
@@ -116,6 +118,7 @@ class UserActivationJournalTests(unittest.TestCase):
                 "runtime_generation": self.runtime,
                 "special_alias": -501,
                 "bag_uuid_matches": True,
+                "account_uuid_matches": True,
                 "command_status": 0,
                 "command_raised": False,
             },
@@ -134,6 +137,7 @@ class UserActivationJournalTests(unittest.TestCase):
                 "runtime_generation": self.runtime,
                 "special_alias": -501,
                 "bag_uuid_matches": True,
+                "account_uuid_matches": True,
                 "readiness_state": "ready",
                 "source": "unlock-readback",
                 "command_status": 0,
@@ -144,7 +148,11 @@ class UserActivationJournalTests(unittest.TestCase):
         self.assertEqual(history.temporary_handle, 7)
 
     def test_preexisting_locked_alias_skips_load_and_bind(self):
-        self.create(readiness.AliasEvidence(True, -501, identifier(2), 1))
+        self.create(
+            readiness.AliasEvidence(
+                True, -501, identifier(2), 1, identifier(1)
+            )
+        )
         self.append(
             "USER_ALIAS_UNLOCK_INTENT",
             {
@@ -159,6 +167,7 @@ class UserActivationJournalTests(unittest.TestCase):
                 "runtime_generation": self.runtime,
                 "special_alias": -501,
                 "bag_uuid_matches": True,
+                "account_uuid_matches": True,
                 "readiness_state": "ready",
                 "source": "unlock-readback",
                 "command_status": None,
@@ -169,7 +178,9 @@ class UserActivationJournalTests(unittest.TestCase):
         self.assertIsNone(history.temporary_handle)
 
     def test_outcome_unknown_is_terminal_and_records_no_secret(self):
-        history = self.create(readiness.AliasEvidence(False, None, None, None))
+        history = self.create(
+            readiness.AliasEvidence(False, None, None, None, None)
+        )
         self.append(
             "USER_KEYBAG_LOAD_INTENT",
             {
@@ -203,8 +214,12 @@ class UserActivationJournalTests(unittest.TestCase):
 
     def test_create_rejects_ready_denied_or_quarantined_mapping(self):
         aliases = (
-            readiness.AliasEvidence(True, -501, identifier(2), 0),
-            readiness.AliasEvidence(True, -502, identifier(2), 0),
+            readiness.AliasEvidence(
+                True, -501, identifier(2), 0, identifier(1)
+            ),
+            readiness.AliasEvidence(
+                True, -502, identifier(2), 0, identifier(1)
+            ),
         )
         for alias in aliases:
             with self.subTest(alias=alias):
@@ -223,7 +238,9 @@ class UserActivationJournalTests(unittest.TestCase):
                     )
 
     def test_wrong_handle_or_generation_cannot_advance(self):
-        history = self.create(readiness.AliasEvidence(False, None, None, None))
+        history = self.create(
+            readiness.AliasEvidence(False, None, None, None, None)
+        )
         self.append(
             "USER_KEYBAG_LOAD_INTENT",
             {
@@ -245,7 +262,9 @@ class UserActivationJournalTests(unittest.TestCase):
             )
 
     def test_terminal_stage_must_match_current_phase(self):
-        history = self.create(readiness.AliasEvidence(False, None, None, None))
+        history = self.create(
+            readiness.AliasEvidence(False, None, None, None, None)
+        )
         self.append(
             "USER_KEYBAG_LOAD_INTENT",
             {

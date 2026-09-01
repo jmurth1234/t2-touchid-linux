@@ -45,9 +45,25 @@ if [[ $acm_research != 0 && $acm_research != 1 ]]; then
   echo "T2_TOUCHID_ENABLE_ACM_RESEARCH must be exactly 0 or 1." >&2
   exit 2
 fi
-macos_user_id=$(sed -n 's/^T2_TOUCHID_MACOS_USER_ID=//p' /etc/t2-touchid.conf | tail -n 1)
-if [[ ! $macos_user_id =~ ^[0-9]+$ ]] || (( macos_user_id > 4294967295 )); then
-  echo "T2_TOUCHID_MACOS_USER_ID must be an unsigned 32-bit integer." >&2
+mapfile -t macos_user_ids < <(
+  sed -n 's/^T2_TOUCHID_MACOS_USER_ID=//p' /etc/t2-touchid.conf
+)
+if (( ${#macos_user_ids[@]} != 1 )); then
+  echo "T2_TOUCHID_MACOS_USER_ID must occur exactly once." >&2
+  exit 2
+fi
+macos_user_id=${macos_user_ids[0]}
+if [[ ! $macos_user_id =~ ^[1-9][0-9]*$ || ${#macos_user_id} -gt 10 ]] || \
+    (( 10#$macos_user_id < 10 || 10#$macos_user_id > 2147483647 )); then
+  echo "T2_TOUCHID_MACOS_USER_ID cannot form a signed AKS alias." >&2
+  exit 2
+fi
+mapfile -t special_bags < <(
+  sed -n 's/^T2_TOUCHID_SPECIAL_BAG=//p' /etc/t2-touchid.conf
+)
+if (( ${#special_bags[@]} != 1 )) || \
+    [[ ${special_bags[0]} != "-$macos_user_id" ]]; then
+  echo "T2_TOUCHID_SPECIAL_BAG must be the derived negative Apple user ID." >&2
   exit 2
 fi
 aks_platform_cdhash=$(sed -n 's/^T2_TOUCHID_AKS_PLATFORM_CDHASH=//p' /etc/t2-touchid.conf | tail -n 1)
@@ -72,6 +88,7 @@ install -o root -g root -m 0755 "$source_dir/src/t2-touchid-manage.py" /usr/loca
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-baseline.py" /usr/local/sbin/t2-touchid-baseline
 install -o root -g root -m 0755 "$source_dir/src/t2-catacomb-fixture-check.py" /usr/local/sbin/t2-catacomb-fixture-check
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-preflight.py" /usr/local/sbin/t2-acm-preflight
+install -o root -g root -m 0755 "$source_dir/src/t2-aks-observe-test.py" /usr/local/sbin/t2-aks-observe-test
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-lifecycle-test.py" /usr/local/sbin/t2-acm-lifecycle-test
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-policy-preflight.py" /usr/local/sbin/t2-acm-policy-preflight
 install -o root -g root -m 0755 "$source_dir/src/t2-acm-authorize-test.py" /usr/local/sbin/t2-acm-authorize-test

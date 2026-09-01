@@ -206,6 +206,7 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
                     "runtime_generation",
                     "special_alias",
                     "bag_uuid_matches",
+                    "account_uuid_matches",
                     "command_status",
                     "command_raised",
                 },
@@ -216,6 +217,7 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
                 evidence["runtime_generation"] != baseline["runtime_generation"]
                 or evidence["special_alias"] != baseline["special_alias"]
                 or evidence["bag_uuid_matches"] is not True
+                or evidence["account_uuid_matches"] is not True
                 or type(evidence["command_raised"]) is not bool
                 or (evidence["command_raised"] and evidence["command_status"] is not None)
             ):
@@ -252,6 +254,7 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
                     "runtime_generation",
                     "special_alias",
                     "bag_uuid_matches",
+                    "account_uuid_matches",
                     "readiness_state",
                     "source",
                     "command_status",
@@ -264,6 +267,7 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
                 evidence["runtime_generation"] != baseline["runtime_generation"]
                 or evidence["special_alias"] != baseline["special_alias"]
                 or evidence["bag_uuid_matches"] is not True
+                or evidence["account_uuid_matches"] is not True
                 or evidence["readiness_state"] != "ready"
                 or evidence["source"]
                 != (
@@ -326,6 +330,7 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
                     "readiness_state",
                     "alias_present",
                     "bag_uuid_matches",
+                    "account_uuid_matches",
                     "match_ready",
                     "mutation_performed",
                 },
@@ -336,6 +341,7 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
                 evidence["runtime_generation"] == baseline["runtime_generation"]
                 or type(evidence["alias_present"]) is not bool
                 or type(evidence["bag_uuid_matches"]) is not bool
+                or type(evidence["account_uuid_matches"]) is not bool
                 or type(evidence["match_ready"]) is not bool
                 or evidence["mutation_performed"] is not False
             ):
@@ -347,6 +353,7 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
                     state != "ready"
                     or evidence["alias_present"] is not True
                     or evidence["bag_uuid_matches"] is not True
+                    or evidence["account_uuid_matches"] is not True
                     or evidence["match_ready"] is not True
                 ):
                     raise UserActivationJournalError("ready recovery is invalid")
@@ -361,6 +368,7 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
                     }
                     or evidence["alias_present"] is not True
                     or evidence["bag_uuid_matches"] is not True
+                    or evidence["account_uuid_matches"] is not True
                     or evidence["match_ready"] is not False
                 ):
                     raise UserActivationJournalError("not-ready recovery is invalid")
@@ -370,6 +378,7 @@ def validate_history(records: list[dict[str, Any]]) -> UserActivationHistory:
                     state != "alias-absent"
                     or evidence["alias_present"] is not False
                     or evidence["bag_uuid_matches"] is not False
+                    or evidence["account_uuid_matches"] is not False
                     or evidence["match_ready"] is not False
                 ):
                     raise UserActivationJournalError("blocked recovery is invalid")

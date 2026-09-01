@@ -83,9 +83,11 @@ class UserActivationRecoveryTests(unittest.TestCase):
         path = Path(self.temp.name) / f"activation-{self.counter}.jsonl"
         runtime = identifier(20)
         if stage == "unlock":
-            before = readiness.AliasEvidence(True, -501, identifier(2), 1)
+            before = readiness.AliasEvidence(
+                True, -501, identifier(2), 1, identifier(1)
+            )
         else:
-            before = readiness.AliasEvidence(False, None, None, None)
+            before = readiness.AliasEvidence(False, None, None, None, None)
         history = journal.create(
             path,
             self.mapping_set,
@@ -157,7 +159,7 @@ class UserActivationRecoveryTests(unittest.TestCase):
             self.mapping_set,
             self.selected,
             persistent(),
-            Observer(readiness.AliasEvidence(False, None, None, None)),
+            Observer(readiness.AliasEvidence(False, None, None, None, None)),
         )
         self.assertEqual(result.resolution, "blocked")
         self.assertFalse(result.mutation_performed)
@@ -170,7 +172,11 @@ class UserActivationRecoveryTests(unittest.TestCase):
             self.mapping_set,
             self.selected,
             persistent(),
-            Observer(readiness.AliasEvidence(True, -501, identifier(2), 0)),
+            Observer(
+                readiness.AliasEvidence(
+                    True, -501, identifier(2), 0, identifier(1)
+                )
+            ),
         )
         self.assertEqual(result.resolution, "quarantine")
         self.assertEqual(journal.read(path).phase, journal.UserActivationPhase.QUARANTINED)
@@ -182,14 +188,22 @@ class UserActivationRecoveryTests(unittest.TestCase):
             self.mapping_set,
             self.selected,
             persistent(),
-            Observer(readiness.AliasEvidence(True, -501, identifier(2), 0)),
+            Observer(
+                readiness.AliasEvidence(
+                    True, -501, identifier(2), 0, identifier(1)
+                )
+            ),
         )
         self.assertEqual(result.resolution, "ready")
         self.assertEqual(journal.read(path).phase, journal.UserActivationPhase.RECOVERED_READY)
 
     def test_unlock_stage_locked_alias_closes_not_ready_without_retry(self):
         path = self.unknown("unlock")
-        observer = Observer(readiness.AliasEvidence(True, -501, identifier(2), 1))
+        observer = Observer(
+            readiness.AliasEvidence(
+                True, -501, identifier(2), 1, identifier(1)
+            )
+        )
         result = recovery.recover(
             path, self.mapping_set, self.selected, persistent(), observer
         )
@@ -204,11 +218,15 @@ class UserActivationRecoveryTests(unittest.TestCase):
         cases = (
             (
                 persistent(),
-                readiness.AliasEvidence(True, -501, identifier(9), 0),
+                readiness.AliasEvidence(
+                    True, -501, identifier(9), 0, identifier(1)
+                ),
             ),
             (
                 persistent(account_uuid=identifier(9)),
-                readiness.AliasEvidence(True, -501, identifier(2), 0),
+                readiness.AliasEvidence(
+                    True, -501, identifier(2), 0, identifier(1)
+                ),
             ),
         )
         for persistent_state, alias in cases:
@@ -236,7 +254,9 @@ class UserActivationRecoveryTests(unittest.TestCase):
                 self.selected,
                 persistent(),
                 Observer(
-                    readiness.AliasEvidence(True, -501, identifier(2), 0),
+                    readiness.AliasEvidence(
+                        True, -501, identifier(2), 0, identifier(1)
+                    ),
                     generation=identifier(20),
                 ),
             )
@@ -274,7 +294,11 @@ class UserActivationRecoveryTests(unittest.TestCase):
                 changed_set,
                 changed_set.mappings[0],
                 persistent(),
-                Observer(readiness.AliasEvidence(True, -501, identifier(2), 0)),
+                Observer(
+                    readiness.AliasEvidence(
+                        True, -501, identifier(2), 0, identifier(1)
+                    )
+                ),
             )
 
     def test_untrustworthy_observation_leaves_journal_outcome_unknown(self):
@@ -296,7 +320,11 @@ class UserActivationRecoveryTests(unittest.TestCase):
 
     def test_recovery_cannot_be_replayed_after_terminal_observation(self):
         path = self.unknown("bind")
-        observer = Observer(readiness.AliasEvidence(True, -501, identifier(2), 0))
+        observer = Observer(
+            readiness.AliasEvidence(
+                True, -501, identifier(2), 0, identifier(1)
+            )
+        )
         recovery.recover(
             path, self.mapping_set, self.selected, persistent(), observer
         )

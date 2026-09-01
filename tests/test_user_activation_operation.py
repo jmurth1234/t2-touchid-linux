@@ -56,9 +56,11 @@ def persistent() -> readiness.PersistentEvidence:
     )
 
 
-ABSENT = readiness.AliasEvidence(False, None, None, None)
-LOCKED = readiness.AliasEvidence(True, -501, identifier(2), readiness.DEVICE_LOCKED)
-READY = readiness.AliasEvidence(True, -501, identifier(2), 0)
+ABSENT = readiness.AliasEvidence(False, None, None, None, None)
+LOCKED = readiness.AliasEvidence(
+    True, -501, identifier(2), readiness.DEVICE_LOCKED, identifier(1)
+)
+READY = readiness.AliasEvidence(True, -501, identifier(2), 0, identifier(1))
 UNSET = object()
 
 

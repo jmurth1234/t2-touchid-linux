@@ -112,6 +112,7 @@ class UserMappingTests(unittest.TestCase):
         cases = {
             "low Apple UID": ("apple_uid", 9),
             "Boolean UID": ("linux_uid", True),
+            "unrepresentable Apple alias": ("apple_uid", 1 << 31),
             "uppercase digest": ("keybag_sha256", "A" * 64),
             "zero UUID": ("account_uuid", str(uuid.UUID(int=0))),
             "wrong keybag path": ("keybag_path", "/tmp/user.kb"),

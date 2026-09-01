@@ -2947,7 +2947,7 @@ word plus one length-prefixed 16-byte blob. This is primary evidence for a
 narrow read-only allowlist, not a guessed mapping from macOS selector `0x17`.
 
 The existing live operation-`0x19` selector-0 result is DER, not an opaque
-property list. The captured dictionary is a canonical SET of ten two-item
+property list. The captured dictionary is a SET of ten two-item
 sequences: `bh`, `mua`, `sb`, `sfa`, `sgs`, `sls`, `sms`, `srcd`, `ss`, and
 `uuuid`. Matching kext constants identify `sls` as state lock-state, `ss` as
 the state word, and `uuuid` as the private configured user UUID; it is not the
@@ -2955,17 +2955,31 @@ bag UUID. The new decoder therefore obtains the bag UUID only from operation
 `0x06`, validates the queried signed handle and `sls` independently from the
 DER state, and never mislabels `uuuid` as keybag identity.
 
+The first live Linux decoder run exposed a subtle but important distinction:
+Apple orders this dictionary by UTF-8 key (`bh`, `mua`, `sb`, ...), not by the
+complete encoded SEQUENCE octets required by generic DER SET OF sorting (which
+would place the shorter `sb` member first). The decoder and fixtures now require
+the exact live Apple key order while retaining minimal-length, minimal-integer,
+exact-field, exact-type, and bounded-value checks. The live operation-`0x19`
+state then decoded successfully with queried handle `-501`, lock state zero,
+maximum attempts 11, and all private identifiers redacted.
+
 The non-exposed concrete observer brackets one strict selector-0 state read
 with two operation-`0x06` UUID reads under the caller's machine-wide lease.
-Only exact UUID equality, exact queried-handle equality, canonical DER, private
-transient file metadata, and a bounded known lock-state word produce alias
-evidence. Double absence produces structural absence; any appearance,
+Only exact bag-UUID equality, an independently decoded account UUID, exact
+queried-handle equality, exact Apple dictionary encoding, stable private
+transient-file metadata, and a bounded lock-state word produce alias evidence.
+The readiness boundary compares both live UUIDs with the protected mapping.
+Double absence produces structural absence; any appearance,
 disappearance, rebinding, malformed output, or command ambiguity fails closed.
 The activation adapter then composes this observer with the already proven
 load, make-system/bind, and unlock commands. It transfers the wipeable password
 view through an anonymous pipe, never argv or environment. This code is not a
-public multi-user feature: operation `0x06` still needs read-only live validation
-after the rebuilt pinned module is installed and loaded at reboot.
+public multi-user feature. The first operation-`0x06` probe correctly failed
+with `EPERM` while the doctor reported that the old live module differed from
+the newly installed build. This proves the stale allowlist was not bypassed;
+one reboot is still required before the redacted `t2-aks-observe-test` can close
+the read-only hardware gate.
 
 The previously missing caller/delegation boundary is now represented by a pure,
 non-exposed policy resolver. A request contains a Linux target UID but no Apple

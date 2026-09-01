@@ -58,6 +58,7 @@ def alias(lock_state: int = 0, **changes) -> readiness.AliasEvidence:
         "special_alias": -501,
         "bag_uuid": identifier(2),
         "lock_state": lock_state,
+        "account_uuid": identifier(1),
     }
     values.update(changes)
     return readiness.AliasEvidence(**values)
@@ -108,7 +109,7 @@ class UserReadinessTests(unittest.TestCase):
             selected(),
             "verify",
             persistent(),
-            readiness.AliasEvidence(False, None, None, None),
+            readiness.AliasEvidence(False, None, None, None, None),
         )
         self.assertEqual(result.state, "alias-absent")
         self.assertEqual(result.next_step, "activate-and-reconcile-alias")
@@ -118,6 +119,7 @@ class UserReadinessTests(unittest.TestCase):
         for evidence in (
             alias(special_alias=-502),
             alias(bag_uuid=identifier(9)),
+            alias(account_uuid=identifier(9)),
         ):
             with self.subTest(evidence=evidence):
                 result = readiness.assess(
@@ -171,7 +173,7 @@ class UserReadinessTests(unittest.TestCase):
                 selected(),
                 "verify",
                 persistent(),
-                readiness.AliasEvidence(False, -501, None, None),
+                readiness.AliasEvidence(False, -501, None, None, None),
             )
 
     def test_redacted_result_contains_no_user_or_bag_identifier(self):

@@ -117,6 +117,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
   durable activation, execution, and read-only recovery core; no CLI exists.
 - `src/t2_aks_{state,observer,transport}.py`: strict operation-`0x19` state
   decoding plus an exact, non-exposed AKS observation/command adapter.
+- `t2-aks-observe-test`: redacted read-only hardware validation of the
+  configured alias through operations `0x06` and `0x19`.
 - `systemd/`: system and audible-feedback units.
 - `pam/`: clamshell-safe Omarchy PAM templates.
 - `polkit/`: distinct non-transitive action definitions for future brokers.
@@ -419,12 +421,19 @@ not-ready, blocked, or quarantined.
 The concrete adapter now uses the matching kext's exact read-only endpoint-7
 operation `0x06` to double-read a handle's live bag UUID and strictly decodes
 the proven operation-`0x19` DER state dictionary around that read. Any alias,
-UUID, handle, file-mode, schema, or lock-state instability fails closed. The
-same adapter composes the existing load/bind/unlock commands and sends password
+bag UUID, account UUID, handle, file-mode, schema, or lock-state instability
+fails closed. The same adapter composes the existing load/bind/unlock commands
+and sends password
 bytes through a pipe, never argv or the environment. It remains non-exposed:
 there is no public activation command or automatic recovery path, and the new
 kernel allowlist still needs its first read-only hardware validation after the
-updated pinned module is loaded by a reboot.
+updated pinned module is loaded by a reboot. The diagnostic for that one gate
+is read-only, derives the alias from the protected configuration, takes the
+machine-wide operation lock, and prints no identifiers:
+
+```sh
+sudo t2-aks-observe-test
+```
 
 Rename one current identity label (this does not alter its fingerprint
 template or fprintd's compatibility-slot name):
