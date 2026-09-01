@@ -380,7 +380,7 @@ that future socket. It delegates activation-environment validation to
 libsystemd, requires exactly one `Accept=yes` descriptor named `connection`,
 then independently proves it is a connected, non-listening Unix seqpacket
 socket. The root process dispatches one request and closes the descriptor on
-every outcome. No daemon loop, socket path, unit, executable, or enablement is
+every outcome. No daemon loop, socket path, unit, PATH command, or enablement is
 installed yet.
 
 The matching non-exposed client core sends exactly one canonical request and
@@ -388,6 +388,15 @@ receives one bounded seqpacket response with the same truncation/ancillary-data
 rejection. It requires a preflight response to repeat the requested operation
 and an identities request to receive only the inventory response shape. It has
 no socket path, connection constructor, fallback command, or installed CLI.
+
+Candidate systemd units and the fixed read-only entry point now live under
+`systemd/research/` and `src/`, respectively. They use `Accept=yes`, bounded
+connection/trigger limits, one process per connected seqpacket, and a service
+sandbox restricted to the Bridge IPv6 path, local Unix/D-Bus, `/dev/t2-aks`,
+and the lock paths required by the broker. They contain no `[Install]` section,
+are deliberately omitted from `install.sh`, and must not be copied or started
+until the documented module, operation-`0x06`, fingerprint-survivor, mapping,
+and negative-caller gates all pass.
 
 The same adapter now derives the caller's account generation itself rather than
 accepting an opaque digest from its future client. The deliberately conservative

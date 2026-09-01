@@ -3146,8 +3146,8 @@ requires a root process, exactly one descriptor starting at fd 3 with the
 default `connection` name, and independently verifies connected
 `AF_UNIX`/`SOCK_SEQPACKET` state with `SO_ACCEPTCONN=0`. It dispatches one
 request and closes the descriptor on success or failure. The repository still
-does not install a socket unit, service template, executable entry point, or
-public client, so this does not widen the live attack surface before the
+does not install a socket unit, service template, PATH command, or public
+client, so this does not widen the live attack surface before the
 endpoint-7 hardware gate passes.
 
 The matching non-exposed client transport now sends one canonical request and
@@ -3158,6 +3158,18 @@ accepts only the typed inventory response. Cross-command replies, operation
 substitution, malformed responses, stream sockets, retries, and fallback
 commands all fail closed. There is still no socket-path constructor or public
 CLI, so this completes transport mechanics without activating the service.
+
+Disabled-by-construction systemd candidates now specify the eventual process
+shape without exposing it. The seqpacket socket uses `Accept=yes`, one fresh
+root service per connected descriptor, per-source/global connection bounds,
+and activation-rate limits. The fixed entry point has no arguments and always
+sets modification policy false. The service sandbox retains only local
+Unix/D-Bus, Bridge IPv6, `/dev/t2-aks`, read-only home traversal for account
+evidence, and the runtime/mapping lock paths. Both units omit `[Install]`, live
+outside the installer's copied unit directory, and are covered by tests that
+forbid installer/start/enable references. Exposure still requires a matching
+running DKMS build, live operation-`0x06` success, both fingerprint survivors,
+an enabled reconciled mapping, and a negative unmapped/inactive-caller test.
 
 The protected mapping administrator now has one concrete disabled-state writer.
 `t2-touchid-user-map bind-disabled` requires an explicit already-provisioned

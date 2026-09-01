@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Candidate only: install.sh deliberately does not install this unit.
+[Unit]
+Description=Experimental read-only T2 Touch ID user broker socket
+Documentation=file:/opt/t2-touchid/README.md
+
+[Socket]
+ListenSequentialPacket=/run/t2-touchid/user-broker.sock
+Accept=yes
+FileDescriptorName=connection
+SocketUser=root
+SocketGroup=root
+SocketMode=0666
+DirectoryMode=0755
+RemoveOnStop=yes
+FlushPending=yes
+MaxConnections=8
+MaxConnectionsPerSource=2
+TriggerLimitIntervalSec=2s
+TriggerLimitBurst=20

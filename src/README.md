@@ -161,7 +161,7 @@ sends, bounded receives, no truncation, no ancillary descriptors, canonical
 JSON, and typed responses. The client additionally binds preflight replies to
 the exact requested operation and permits only the inventory response for an
 `identities/inventory` request. It offers no retry or command fallback and is
-not installed as an executable.
+not exposed as a command.
 
 `t2_user_broker_socket_activation.py` is a non-installed one-connection process
 adapter for a future systemd `Accept=yes` unit. It calls
@@ -171,6 +171,14 @@ root, exactly one fd starting at 3 with the default `connection` name, an
 `AF_UNIX`/`SOCK_SEQPACKET` type, `SO_ACCEPTCONN=0`, and a live peer. It owns and
 closes that descriptor after exactly one dispatcher call. No socket or service
 unit invokes this adapter yet.
+
+`t2-touchid-user-broker.py` is the corresponding fixed-policy candidate entry
+point. It has no arguments, socket path, or fallback: one systemd activation
+connection runs with modification disabled and PolicyKit interaction enabled;
+failures produce one generic journal message. The candidate `Accept=yes` socket
+and templated sandboxed service live in `systemd/research/`, have no `[Install]`
+section, and are excluded from the installer until the documented live gates
+pass.
 
 `t2_linux_account.py` supplies the previously abstract caller account
 generation. It supports a strict local-files profile only: one numeric UID must

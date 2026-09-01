@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Candidate only: install.sh deliberately does not install this unit.
+[Unit]
+Description=Experimental read-only T2 Touch ID user broker connection
+Documentation=file:/opt/t2-touchid/README.md
+Requires=t2-biometric-ready.service
+After=t2-biometric-ready.service dbus.service network-online.target
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExecStart=/opt/t2-touchid/.venv/bin/python /opt/t2-touchid/src/t2-touchid-user-broker.py
+User=root
+Group=root
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+StandardInput=null
+StandardOutput=null
+StandardError=journal
+TimeoutStartSec=90s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=no
+PrivateNetwork=no
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectClock=yes
+PrivateMounts=yes
+RestrictAddressFamilies=AF_UNIX AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+DevicePolicy=closed
+DeviceAllow=/dev/t2-aks rw
+ReadWritePaths=/run/t2-touchid /var/lib/t2-touchid

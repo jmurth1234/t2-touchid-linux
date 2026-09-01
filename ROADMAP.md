@@ -112,6 +112,8 @@ evidence, not intent.
       owns exactly one connected Unix seqpacket descriptor per process.
 - [x] Add a non-exposed one-exchange client core with bounded response framing
       and exact request/response command binding.
+- [x] Add verified, disabled-by-construction candidate systemd units and a
+      fixed read-only entry point without installing or enabling them.
 - [x] Add a live local-files account-generation assertion over the exact
       UID/passwd/shadow/database/home binding and revalidate it after PolicyKit.
 - [x] Add atomic administrator creation/rebinding for protected account
