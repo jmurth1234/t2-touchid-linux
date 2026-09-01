@@ -3066,6 +3066,31 @@ protected target mapping, and the activation boundary compares the downstream
 binding with that same selected mapping. A grant for one generation of a UID
 cannot therefore be detached and paired with another generation of that UID.
 
+The protected mapping now has one concrete writer, but still no enable path.
+`t2-touchid-user-map bind-disabled` requires an explicit already-provisioned
+Apple UID/account UUID/bag UUID, explicit capabilities, the canonical private
+per-UID keybag, a live `local-files-v1` account assertion, and a long-form
+acknowledgement. Apple values are structurally checked and cross-record unique,
+but are not claimed live until the later hardware reconciliation. The new
+record is always disabled.
+
+`rebind-disabled` is the sole account-generation replacement path. It loads the
+exact protected mapping under a root-owned lock, rehashes the unchanged keybag,
+collects the new account assertion twice, preserves all Apple/keybag/mode/
+capability fields, and atomically publishes the new record disabled even if the
+old record was enabled. This makes UID reuse an administrator-visible transfer
+decision without making that decision sufficient for biometric authority.
+There is no automatic update on passwd drift and no enable verb.
+
+Both operations use a canonical serializer, same-directory mode-0600 temporary
+file, fsync, generation-checked atomic publish, directory fsync, and exact
+protected read-back. First creation uses `renameat2(RENAME_NOREPLACE)`, so a
+racing file cannot be overwritten. `status` performs no write or lock-file
+creation and repeats the mapping read around live account collection. A
+post-rename durability/read-back error must be resolved by status rather than
+blind retry. Live mapping enable still requires serialized broker quiescence
+and exact Apple/AKS/Catacomb reconciliation and remains unimplemented.
+
 The safest host-side activation is not to reuse `-501` for every Linux user.
 Each already-provisioned Apple user retains its Apple UID-derived alias
 (`-UID`), so switching from UID 501 to 502 selects `-502` rather than rebinding

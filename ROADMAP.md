@@ -99,8 +99,10 @@ evidence, not intent.
       user-manager apps, and post-PolicyKit session revalidation.
 - [x] Add a live local-files account-generation assertion over the exact
       UID/passwd/shadow/database/home binding and revalidate it after PolicyKit.
-- [ ] Add explicit administrator provisioning/rebinding for protected account
-      generations; never auto-accept a changed account assertion.
+- [x] Add atomic administrator creation/rebinding for protected account
+      generations; both transitions force disabled and never auto-accept drift.
+- [ ] Add a separate live Apple/AKS/Catacomb reconciliation transaction before
+      a disabled mapping may be enabled.
 - [ ] Validate operation `0x06` and the read-only alias observer on hardware
       after loading the rebuilt pinned module at reboot.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor

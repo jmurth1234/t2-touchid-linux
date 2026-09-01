@@ -124,6 +124,25 @@ no shadow data appears in returned or redacted evidence. A passwd rewrite—even
 for another account—is deliberately fail-closed and requires administrator
 re-attestation; LDAP and systemd-homed are not silently approximated.
 
+`t2_user_mapping_admin.py` is the only writer for the canonical
+`/var/lib/t2-touchid/users.json`. It anchors all opens to a validated root-owned
+directory, serializes writers with a private `flock`, hashes the canonical
+root-private per-UID keybag twice, and repeats live account evidence before
+publish. Initial publication uses Linux `renameat2(RENAME_NOREPLACE)`; updates
+require the exact generation loaded under the lock and use a same-directory
+atomic rename. File and directory fsync plus exact protected read-back close the
+normal crash window. A pre-publish failure cleans its temporary file; a
+post-rename sync/read-back failure remains an explicit outcome to inspect with
+`status`, never a reason to repeat blindly.
+
+The installed `t2-touchid-user-map` exposes only `bind-disabled`,
+`rebind-disabled`, and redacted `status`. Both mutations require long-form
+acknowledgements, derive rather than accept the account/keybag digests, and
+always publish the selected record disabled. Rebinding preserves every Apple,
+keybag, mode, and capability field but still disables a previously enabled
+record. There is intentionally no enable verb: live AKS/Catacomb reconciliation
+and broker quiescence must be implemented first.
+
 `t2_user_readiness.py` is the next pure runtime boundary. Given a validated
 mapping plus independently collected Linux-account/keybag/Catacomb and live
 alias evidence, it returns one redacted typed decision. Exact binding and known

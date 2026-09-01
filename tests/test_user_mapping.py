@@ -79,6 +79,25 @@ class UserMappingTests(unittest.TestCase):
             },
         )
 
+    def test_canonical_serialization_sorts_and_round_trips(self):
+        parsed = mapping.parse(encoded([entry(1001, 502), entry()]))
+        canonical = mapping.serialize(parsed.mappings)
+        reparsed = mapping.parse(canonical)
+        self.assertEqual(
+            [item.linux_uid for item in reparsed.mappings], [1000, 1001]
+        )
+        self.assertEqual(reparsed, mapping.parse(mapping.serialize(reparsed.mappings)))
+        self.assertTrue(canonical.endswith(b"\n"))
+        with self.assertRaises(mapping.UserMappingError):
+            mapping.serialize([parsed.mappings[0]])
+        malformed = mapping.UserMapping(
+            **{**parsed.mappings[0].__dict__, "capabilities": frozenset({1})}
+        )
+        # The serializer accepts typed UserMapping objects only, so malformed
+        # direct construction cannot escape as a raw sorting/JSON exception.
+        with self.assertRaises(mapping.UserMappingError):
+            mapping.serialize((malformed,))
+
     def test_rejects_duplicate_authority_across_users(self):
         first = entry()
         second = entry(1001, 502)
@@ -135,8 +154,13 @@ class UserMappingTests(unittest.TestCase):
             secure = SimpleNamespace(
                 st_mode=stat.S_IFREG | 0o600,
                 st_uid=0,
+                st_gid=0,
                 st_nlink=1,
                 st_size=len(content),
+                st_dev=1,
+                st_ino=2,
+                st_mtime_ns=3,
+                st_ctime_ns=4,
             )
             with (
                 mock.patch.object(mapping.os, "open", return_value=descriptor),
@@ -145,6 +169,74 @@ class UserMappingTests(unittest.TestCase):
                 self.assertEqual(
                     mapping.load(path).resolve(1000, "verify").apple_uid, 501
                 )
+
+    def test_directory_relative_loader_rejects_unsafe_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "users.json"
+            content = encoded([entry()])
+            path.write_bytes(content)
+            path.chmod(0o600)
+            directory_descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            descriptor = os.open(path, os.O_RDONLY)
+            secure = SimpleNamespace(
+                st_mode=stat.S_IFREG | 0o600,
+                st_uid=0,
+                st_gid=0,
+                st_nlink=1,
+                st_size=len(content),
+                st_dev=1,
+                st_ino=2,
+                st_mtime_ns=3,
+                st_ctime_ns=4,
+            )
+            try:
+                with (
+                    mock.patch.object(mapping.os, "open", return_value=descriptor),
+                    mock.patch.object(mapping.os, "fstat", return_value=secure),
+                ):
+                    self.assertEqual(
+                        mapping.load_at(directory_descriptor, "users.json")
+                        .resolve(1000, "verify")
+                        .apple_uid,
+                        501,
+                    )
+                for name in ("../users.json", "/users.json", ".", ""):
+                    with self.subTest(name=name):
+                        with self.assertRaises(mapping.UserMappingError):
+                            mapping.load_at(directory_descriptor, name)
+            finally:
+                os.close(directory_descriptor)
+
+    def test_descriptor_loader_detects_same_length_metadata_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "users.json"
+            content = encoded([entry()])
+            path.write_bytes(content)
+            path.chmod(0o600)
+            descriptor = os.open(path, os.O_RDONLY)
+            common = {
+                "st_mode": stat.S_IFREG | 0o600,
+                "st_uid": 0,
+                "st_gid": 0,
+                "st_nlink": 1,
+                "st_size": len(content),
+                "st_dev": 1,
+                "st_ino": 2,
+                "st_mtime_ns": 3,
+            }
+            try:
+                with mock.patch.object(
+                    mapping.os,
+                    "fstat",
+                    side_effect=(
+                        SimpleNamespace(**common, st_ctime_ns=4),
+                        SimpleNamespace(**common, st_ctime_ns=5),
+                    ),
+                ):
+                    with self.assertRaisesRegex(mapping.UserMappingError, "changed"):
+                        mapping._load_descriptor(descriptor)
+            finally:
+                os.close(descriptor)
 
 
 if __name__ == "__main__":

@@ -111,6 +111,8 @@ or an alternative sleep mode has been validated on the specific Mac model.
 - `src/t2_linux_account.py`: strict local-files account-generation collector
   that detects UID/account/password/database replacement without accepting a
   caller-supplied username or generation.
+- `src/t2_user_mapping_admin.py` and `t2-touchid-user-map`: crash-safe,
+  root-only creation and explicit account rebinding of disabled mappings.
 - `src/t2_user_activation_{journal,operation,recovery}.py`: transport-free
   durable activation, execution, and read-only recovery core; no CLI exists.
 - `src/t2_aks_{state,observer,transport}.py`: strict operation-`0x19` state
@@ -342,7 +344,7 @@ session exists. Session ID/start time and process identity are checked again
 after PolicyKit returns. PID reuse, setuid subjects, session switching, remote
 or greeter sessions, unknown actions, cross-user targets, timeouts, and
 ambiguous exits never create an authorized grant. There is still no public
-multi-user broker; per-user relocking, mapping provisioning/rebinding, and
+multi-user broker; per-user relocking, live enable reconciliation, and
 runtime/session orchestration remain incomplete.
 
 The same adapter now derives the caller's account generation itself rather than
@@ -357,6 +359,41 @@ or any passwd-database rewrite therefore disables the old mapping until an
 administrator explicitly rebinds it. This profile intentionally does not claim
 support for LDAP, systemd-homed, or other account stores lacking an equivalent
 stable assertion.
+
+`t2-touchid-user-map` is the root-only administration boundary for that state.
+It writes only `/var/lib/t2-touchid/users.json`, holds a private same-directory
+lock, validates the exact old generation before replacement, writes a mode-0600
+temporary file, fsyncs it, publishes with atomic rename/no-replace semantics,
+fsyncs the directory, and requires exact read-back. It derives the Linux
+account generation and canonical per-UID keybag digest itself. New bindings and
+all rebindings are forcibly disabled—even if the old record was enabled—and
+the command has no enable operation or T2 transport. A changed passwd database
+is never adopted by `status` or normal runtime.
+
+The disabled provisioning shape is:
+
+```sh
+sudo install -d -o root -g root -m 0700 \
+  /var/lib/t2-touchid/users/<linux-uid>
+sudo install -o root -g root -m 0600 <verified-keybag> \
+  /var/lib/t2-touchid/users/<linux-uid>/user.kb
+sudo t2-touchid-user-map bind-disabled \
+  --linux-uid <linux-uid> \
+  --apple-uid <apple-uid> \
+  --account-uuid <verified-account-uuid> \
+  --bag-uuid <verified-bag-uuid> \
+  --unlock-mode password-on-demand \
+  --capability verify \
+  --acknowledge-apple-authority-is-already-provisioned
+sudo t2-touchid-user-map status --linux-uid <linux-uid>
+```
+
+The Apple/account/bag values must come from already verified private inventory;
+the command validates structure and uniqueness but cannot prove them against
+the T2. If the local account generation later changes, the only host-side path
+is the explicit `rebind-disabled` acknowledgement. That transition preserves
+the Apple/keybag/capability fields, replaces only the account generation, and
+forces the result disabled. Do not use either command as an enable procedure.
 
 The accompanying pure readiness classifier already defines the fail-closed
 outcomes for that future runtime: absent aliases require activation and fresh

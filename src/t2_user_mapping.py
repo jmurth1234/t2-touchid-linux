@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 import uuid
 from dataclasses import dataclass
@@ -19,12 +20,14 @@ from typing import Any
 
 
 SCHEMA_VERSION = 1
+ROOT_UID = 0
 MAX_FILE_SIZE = 1024 * 1024
 MAX_MAPPINGS = 64
 UINT32_MAX = (1 << 32) - 1
 KEYBAG_ROOT = PurePosixPath("/var/lib/t2-touchid/users")
 CAPABILITIES = frozenset({"verify", "enroll", "identity-management"})
 UNLOCK_MODES = frozenset({"password-on-demand", "host-encrypted-credential"})
+SAFE_BASENAME = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z", re.ASCII)
 
 
 class UserMappingError(ValueError):
@@ -213,6 +216,124 @@ def parse(data: bytes) -> UserMappingSet:
     return UserMappingSet(hashlib.sha256(data).hexdigest(), mappings)
 
 
+def serialize(mappings: tuple[UserMapping, ...]) -> bytes:
+    """Return the one canonical administrator-written mapping document."""
+
+    if not isinstance(mappings, tuple) or any(
+        not isinstance(item, UserMapping) for item in mappings
+    ):
+        raise UserMappingError("mapping serialization input is invalid")
+    try:
+        ordered = tuple(sorted(mappings, key=lambda item: item.linux_uid))
+        document = {
+            "schema_version": SCHEMA_VERSION,
+            "mappings": [
+                {
+                    "linux_uid": item.linux_uid,
+                    "linux_account_generation": item.linux_account_generation,
+                    "apple_uid": item.apple_uid,
+                    "account_uuid": item.account_uuid,
+                    "bag_uuid": item.bag_uuid,
+                    "keybag_path": item.keybag_path,
+                    "keybag_sha256": item.keybag_sha256,
+                    "unlock_mode": item.unlock_mode,
+                    "capabilities": sorted(item.capabilities),
+                    "enabled": item.enabled,
+                }
+                for item in ordered
+            ],
+        }
+        encoded = (
+            json.dumps(
+                document,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+            + "\n"
+        ).encode("ascii")
+    except (AttributeError, TypeError, ValueError) as error:
+        raise UserMappingError("mapping serialization failed") from error
+    parsed = parse(encoded)
+    if parsed.mappings != ordered:
+        raise UserMappingError("mapping serialization did not round trip")
+    return encoded
+
+
+def _secure_file(info: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == ROOT_UID
+        and info.st_nlink == 1
+        and not info.st_mode & 0o077
+        and 0 < info.st_size <= MAX_FILE_SIZE
+    )
+
+
+def _same_file(before: os.stat_result, after: os.stat_result) -> bool:
+    fields = (
+        "st_dev",
+        "st_ino",
+        "st_mode",
+        "st_uid",
+        "st_gid",
+        "st_nlink",
+        "st_size",
+        "st_mtime_ns",
+        "st_ctime_ns",
+    )
+    return all(getattr(before, field) == getattr(after, field) for field in fields)
+
+
+def _load_descriptor(descriptor: int) -> UserMappingSet:
+    if type(descriptor) is not int or descriptor < 0:
+        raise UserMappingError("mapping descriptor is invalid")
+    try:
+        before = os.fstat(descriptor)
+        if not _secure_file(before):
+            raise UserMappingError("mapping file is not private and root-owned")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        data = bytearray()
+        while len(data) <= MAX_FILE_SIZE:
+            block = os.read(
+                descriptor, min(65536, MAX_FILE_SIZE + 1 - len(data))
+            )
+            if not block:
+                break
+            data.extend(block)
+        after = os.fstat(descriptor)
+        if len(data) != before.st_size or not _same_file(before, after):
+            raise UserMappingError("mapping file changed while it was being read")
+        return parse(bytes(data))
+    except OSError as error:
+        raise UserMappingError("mapping file cannot be read safely") from error
+
+
+def load_at(directory_descriptor: int, name: str) -> UserMappingSet:
+    """Load one protected basename relative to an already trusted directory."""
+
+    if (
+        type(directory_descriptor) is not int
+        or directory_descriptor < 0
+        or not isinstance(name, str)
+        or SAFE_BASENAME.fullmatch(name) is None
+        or name in {".", ".."}
+    ):
+        raise UserMappingError("mapping location is invalid")
+    descriptor = -1
+    try:
+        flags = os.O_RDONLY | os.O_CLOEXEC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(name, flags, dir_fd=directory_descriptor)
+        return _load_descriptor(descriptor)
+    except OSError as error:
+        raise UserMappingError("mapping file cannot be read safely") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def load(path: Path) -> UserMappingSet:
     descriptor = -1
     try:
@@ -220,24 +341,7 @@ def load(path: Path) -> UserMappingSet:
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         descriptor = os.open(path, flags)
-        info = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != 0
-            or info.st_nlink != 1
-            or info.st_mode & 0o077
-            or not 0 < info.st_size <= MAX_FILE_SIZE
-        ):
-            raise UserMappingError("mapping file is not private and root-owned")
-        data = bytearray()
-        while len(data) <= MAX_FILE_SIZE:
-            block = os.read(descriptor, min(65536, MAX_FILE_SIZE + 1 - len(data)))
-            if not block:
-                break
-            data.extend(block)
-        if len(data) != info.st_size:
-            raise UserMappingError("mapping file changed while it was being read")
-        return parse(bytes(data))
+        return _load_descriptor(descriptor)
     except OSError as error:
         raise UserMappingError("mapping file cannot be read safely") from error
     finally:
