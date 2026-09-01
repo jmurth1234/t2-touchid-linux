@@ -371,6 +371,26 @@ class IdentityManagementCommandTests(unittest.TestCase):
             "right-index-finger",
         )
 
+    def test_protected_mapping_capability_must_be_enabled(self):
+        configuration = {
+            "protected_mapping_present": True,
+            "mapping_enabled": False,
+            "mapping_capabilities": frozenset({"identity-management"}),
+        }
+        with self.assertRaisesRegex(
+            MODULE.IdentityManagementError, "does not permit"
+        ):
+            MODULE.require_mapping_capability(
+                configuration, "identity-management"
+            )
+        configuration["mapping_enabled"] = True
+        MODULE.require_mapping_capability(
+            configuration, "identity-management"
+        )
+
+    def test_legacy_injected_configuration_remains_testable(self):
+        MODULE.require_mapping_capability({}, "identity-management")
+
     def test_management_mutations_never_manufacture_password_attestation(self):
         source = (SOURCE / "t2-touchid-manage.py").read_text(encoding="utf-8")
         self.assertNotIn("password_fallback_verified=True", source)

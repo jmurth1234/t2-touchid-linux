@@ -54,6 +54,7 @@ import t2_identity_rename_recovery
 import t2_identity_rename_reconciliation
 import t2_mutation_journal
 import t2_mutation_registry
+import t2_user_mapping
 
 
 CONFIG = Path("/etc/t2-touchid.conf")
@@ -67,6 +68,7 @@ OPERATION_LOCK = Path("/run/t2-touchid/operation.lock")
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 SYSTEMD_INHIBIT = Path("/usr/bin/systemd-inhibit")
 CAT = Path("/usr/bin/cat")
+MAPPING_PATH = Path("/var/lib/t2-touchid/users.json")
 
 
 class IdentityManagementError(RuntimeError):
@@ -123,6 +125,33 @@ def runtime_configuration() -> dict[str, object]:
         or not values["T2_TOUCHID_INTERFACE"]
     ):
         raise IdentityManagementError("runtime account mapping is invalid")
+    mapping_generation = hashlib.sha256(CONFIG.read_bytes()).hexdigest()
+    protected_mapping_present = MAPPING_PATH.exists()
+    mapping_enabled = False
+    mapping_capabilities: frozenset[str] = frozenset()
+    if protected_mapping_present:
+        try:
+            mapping_set = t2_user_mapping.load(MAPPING_PATH)
+            selected = [
+                item
+                for item in mapping_set.mappings
+                if item.linux_uid == linux_uid
+            ]
+        except t2_user_mapping.UserMappingError as error:
+            raise IdentityManagementError(
+                "protected account mapping is invalid"
+            ) from error
+        if (
+            len(selected) != 1
+            or selected[0].apple_uid != int(apple_text)
+            or selected[0].special_bag_alias != int(special_text)
+        ):
+            raise IdentityManagementError(
+                "protected account mapping differs from runtime configuration"
+            )
+        mapping_generation = mapping_set.generation
+        mapping_enabled = selected[0].enabled
+        mapping_capabilities = selected[0].capabilities
     return {
         "linux_user": values["T2_TOUCHID_USER"],
         "linux_uid": linux_uid,
@@ -130,8 +159,29 @@ def runtime_configuration() -> dict[str, object]:
         "special_bag": int(special_text),
         "host": values["T2_TOUCHID_HOST"],
         "interface": values["T2_TOUCHID_INTERFACE"],
-        "mapping_generation": hashlib.sha256(CONFIG.read_bytes()).hexdigest(),
+        "mapping_generation": mapping_generation,
+        "protected_mapping_present": protected_mapping_present,
+        "mapping_enabled": mapping_enabled,
+        "mapping_capabilities": mapping_capabilities,
     }
+
+
+def require_mapping_capability(
+    configuration: dict[str, object], capability: str
+) -> None:
+    """Require the protected authority when called from the real CLI path."""
+
+    if configuration.get("protected_mapping_present") is not True:
+        return
+    capabilities = configuration.get("mapping_capabilities")
+    if (
+        configuration.get("mapping_enabled") is not True
+        or not isinstance(capabilities, frozenset)
+        or capability not in capabilities
+    ):
+        raise IdentityManagementError(
+            f"protected mapping does not permit {capability}"
+        )
 
 
 def _port() -> int:
@@ -382,6 +432,7 @@ def status() -> dict[str, object]:
 def run_rename(
     configuration: dict[str, object], *, slot: int, new_name: str
 ) -> dict[str, object]:
+    require_mapping_capability(configuration, "identity-management")
     if t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
         raise IdentityManagementError(
             "an earlier biometric mutation is unfinished or awaits verification"
@@ -525,6 +576,7 @@ def run_fprint_rename_preflight(
     """Forecast one canonical label migration without persisting or dispatching."""
 
     require_fprint_name(new_name)
+    require_mapping_capability(configuration, "identity-management")
     if t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
         raise IdentityManagementError(
             "an earlier biometric mutation is unfinished or awaits verification"
@@ -596,6 +648,7 @@ def _persist_delete(
 def run_delete(
     configuration: dict[str, object], *, slot: int
 ) -> dict[str, object]:
+    require_mapping_capability(configuration, "identity-management")
     if t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
         raise IdentityManagementError(
             "an earlier biometric mutation is unfinished or awaits verification"
@@ -697,6 +750,7 @@ def run_delete(
 def run_delete_preflight(
     configuration: dict[str, object], *, slot: int
 ) -> dict[str, object]:
+    require_mapping_capability(configuration, "identity-management")
     if t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
         raise IdentityManagementError(
             "an earlier biometric mutation is unfinished or awaits verification"
