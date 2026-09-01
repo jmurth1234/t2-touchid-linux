@@ -148,6 +148,16 @@ The facade must not invent a fixed progress percentage or enrollment-stage
 count from variable T2 progress. `num-enroll-stages` remains undefined (`-1`)
 until a stable protocol-derived stage model is proven.
 
+The pure `t2_fprint_enrollment_runtime` translator now enforces this table.
+It emits `enroll-stage-passed` only for strictly increasing, bounded T2
+progress; suppresses duplicate progress; maps quality guidance only to the
+documented fprint vocabulary; and reports completion only after the typed
+coordinator result proves policy, persistence, and final reconciliation.
+Regressed progress, identity/terminal events that bypass final reconciliation,
+or incomplete success become fail-closed errors. The facade also serves the
+complete historical property set through `Get` and `GetAll`; stage count stays
+`-1`, while finger-present/needed state is ready for the future worker stream.
+
 After an immediate E3 success, the existing E4 post-reboot proof still must be
 completed. A boot-time read-only reconciler should finish that proof
 automatically and audibly/visibly report failure; ordinary users should not

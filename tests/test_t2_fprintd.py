@@ -90,6 +90,34 @@ async def claim(device, username=None):
 
 
 class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_complete_historical_property_set_is_available(self):
+        device = make_device()
+        device.finger_present = True
+        request = MODULE.Message(
+            destination=MODULE.BUS_NAME,
+            path=MODULE.DEVICE_PATH,
+            interface="org.freedesktop.DBus.Properties",
+            member="GetAll",
+            signature="s",
+            body=["net.reactivated.Fprint.Device"],
+            serial=1,
+        )
+        reply = MODULE.legacy_property_reply(request, device)
+        values = reply.body[0]
+        self.assertEqual(
+            set(values),
+            {
+                "name",
+                "num-enroll-stages",
+                "scan-type",
+                "finger-present",
+                "finger-needed",
+            },
+        )
+        self.assertEqual(values["num-enroll-stages"].value, -1)
+        self.assertTrue(values["finger-present"].value)
+        self.assertFalse(values["finger-needed"].value)
+
     async def test_listing_refreshes_backend_projection(self):
         backend = FakeBackend()
         backend.list_fingers = AsyncMock(

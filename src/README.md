@@ -210,6 +210,13 @@ allows only enrollment or identity management, forces mutation policy on, and
 closes the session on every exit. No fprint D-Bus mutation method or T2
 mutation consumer consumes it yet.
 
+`t2_fprint_enrollment_runtime.py` is the pure status boundary for that future
+consumer. It translates accepted increasing progress and retry guidance only
+to documented fprint statuses, suppresses duplicate progress, and refuses to
+emit `enroll-completed` until the coordinator proves policy, persistence, and
+reconciliation. The facade now exposes fprint's complete historical property
+set via both `Get` and `GetAll`; the unproven stage count remains `-1`.
+
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;
 the identities runner is intrinsically non-modifying and cannot collect

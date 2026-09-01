@@ -161,6 +161,9 @@ evidence, not intent.
 - [ ] Implement fprintd-native enrollment and deletion through the journaled,
       explicit-target Linux mutation brokers; never treat a D-Bus finger label
       as biometric authority.
+- [x] Implement a pure, documented fprint enrollment-status/property boundary
+      with monotonic progress, quality guidance, and reconciliation-gated
+      completion; retain an undefined stage count until hardware proves one.
 - [x] Publish the caller-bound, credential-scoped, cancellable native fprint
       mutation design and delivery gates before exposing any mutation method.
 - [x] Bind each fprint claim and every claim-scoped method to the exact

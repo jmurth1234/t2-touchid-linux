@@ -431,6 +431,8 @@ class FprintDevice(ServiceInterface):
         self.verify_task: asyncio.Task | None = None
         self.claim_expiry_task: asyncio.Task | None = None
         self.enrolled_fingers: tuple[str, ...] = (ENROLLED_FINGER,)
+        self.finger_present = False
+        self.finger_needed = False
 
     @dbus_property(access=PropertyAccess.READ, name="name")
     def device_name(self) -> "s":
@@ -707,6 +709,43 @@ class FprintManager(ServiceInterface):
         return DEVICE_PATH
 
 
+def legacy_property_reply(message: Message, device: FprintDevice):
+    """Serve fprint's historical hyphenated property names."""
+    if (
+        not isinstance(message, Message)
+        or not isinstance(device, FprintDevice)
+        or message.message_type != MessageType.METHOD_CALL
+        or message.path != DEVICE_PATH
+        or message.interface != "org.freedesktop.DBus.Properties"
+    ):
+        return False
+    values = {
+        "name": Variant("s", "Apple T2 Touch ID"),
+        "num-enroll-stages": Variant("i", -1),
+        "scan-type": Variant("s", "press"),
+        "finger-present": Variant("b", device.finger_present),
+        "finger-needed": Variant("b", device.finger_needed),
+    }
+    if (
+        message.member == "Get"
+        and message.body
+        and message.body[0] == "net.reactivated.Fprint.Device"
+        and len(message.body) == 2
+        and message.body[1] in values
+    ):
+        return Message.new_method_return(
+            message, signature="v", body=[values[message.body[1]]]
+        )
+    if (
+        message.member == "GetAll"
+        and message.body == ["net.reactivated.Fprint.Device"]
+    ):
+        return Message.new_method_return(
+            message, signature="a{sv}", body=[values]
+        )
+    return False
+
+
 async def main_async(args: argparse.Namespace) -> None:
     project_dir = Path(
         os.environ.get(
@@ -717,27 +756,13 @@ async def main_async(args: argparse.Namespace) -> None:
     bus = await SenderAwareMessageBus(
         bus_type=BusType.SYSTEM, negotiate_unix_fd=True
     ).connect()
+    device = FprintDevice(backend, bus)
 
     # fprintd's historical ABI contains hyphenated property names, although
     # D-Bus member-name validators (including dbus-next's) reject hyphens.
     # Intercept the compatibility property before dbus-next's property layer.
     def legacy_property_handler(message: Message):
-        if (
-            message.message_type != MessageType.METHOD_CALL
-            or message.path != DEVICE_PATH
-            or message.interface != "org.freedesktop.DBus.Properties"
-        ):
-            return False
-        if (
-            message.member == "Get"
-            and message.body == ["net.reactivated.Fprint.Device", "scan-type"]
-        ):
-            return Message.new_method_return(
-                message, signature="v", body=[Variant("s", "press")]
-            )
-        return False
-
-    device = FprintDevice(backend, bus)
+        return legacy_property_reply(message, device)
 
     def sender_departure_handler(message: Message):
         if (
