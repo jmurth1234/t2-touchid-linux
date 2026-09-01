@@ -16,6 +16,7 @@ sys.path.insert(0, str(SOURCE))
 
 import t2_enrollment_journal as enrollment_journal
 import t2_catacomb_codec as catacomb_codec
+import t2_identity_delete_journal as delete_journal
 import t2_identity_rename_journal as rename_journal
 import t2_linux_account as linux_account
 import t2_post_reboot_reconciler as reconciler
@@ -363,6 +364,102 @@ class PostRebootReconcilerTests(unittest.TestCase):
             ):
                 candidate = reconciler._pending_candidate()
         self.assertEqual(candidate.kind, "rename")
+        self.assertEqual(candidate.capability, "identity-management")
+        self.assertEqual(candidate.path, path)
+        self.assertIs(candidate.history, history)
+
+    def test_stable_delete_appends_only_delete_post_reboot_proof(self):
+        history = SimpleNamespace(
+            operation_id=identifier(70),
+            phase=delete_journal.IdentityDeletePhase.RECONCILED,
+            record_count=14,
+            head_hash="9" * 64,
+            baseline=dict(self.baseline),
+        )
+        path = Path("/var/lib/t2-touchid/mutations") / (
+            f"{history.operation_id}.jsonl"
+        )
+        candidate = reconciler.PendingMutation(
+            "delete-one", "identity-management", path, history
+        )
+        verified = SimpleNamespace(
+            phase=delete_journal.IdentityDeletePhase.POST_REBOOT_VERIFIED
+        )
+        delete_append = mock.Mock(return_value=verified)
+        enrollment_append = mock.Mock()
+        rename_append = mock.Mock()
+        patches = self.common_patches(candidate)
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6],
+            mock.patch.object(
+                reconciler.t2_identity_delete_reconciliation,
+                "append_post_reboot_verified",
+                delete_append,
+            ),
+            mock.patch.object(
+                reconciler.t2_enrollment_reconciliation,
+                "append_post_reboot_verified",
+                enrollment_append,
+            ),
+            mock.patch.object(
+                reconciler.t2_identity_rename_reconciliation,
+                "append_post_reboot_verified",
+                rename_append,
+            ),
+        ):
+            result = reconciler.run(
+                live_factory=lambda: self.live,
+                account_collector=lambda _uid: self.account,
+                keybag_reader=lambda _path: "b" * 64,
+                runtime_state=lambda _alias: (1, 42),
+                boot_reader=lambda: identifier(40),
+            )
+        self.assertEqual(result.state, "delete-one-post-reboot-verified")
+        self.assertTrue(result.journal_updated)
+        enrollment_append.assert_not_called()
+        rename_append.assert_not_called()
+        self.assertIs(delete_append.call_args.kwargs["local"], self.local)
+        self.assertIs(delete_append.call_args.kwargs["host"], self.material.host)
+        self.assertIs(delete_append.call_args.kwargs["live"], self.material.live)
+
+    def test_candidate_scan_selects_one_reconciled_delete(self):
+        history = SimpleNamespace(
+            operation_id=identifier(80),
+            phase=delete_journal.IdentityDeletePhase.RECONCILED,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / f"{history.operation_id}.jsonl"
+            path.touch()
+            entry = SimpleNamespace(blocks_new_mutation=True)
+            with (
+                mock.patch.object(reconciler, "MUTATION_ROOT", root),
+                mock.patch.object(
+                    reconciler.t2_mutation_registry,
+                    "scan",
+                    return_value=(entry,),
+                ),
+                mock.patch.object(
+                    reconciler.t2_mutation_journal,
+                    "read",
+                    return_value=[
+                        {"evidence": {"operation_kind": "delete-one"}}
+                    ],
+                ),
+                mock.patch.object(
+                    reconciler.t2_identity_delete_journal,
+                    "validate_history",
+                    return_value=history,
+                ),
+            ):
+                candidate = reconciler._pending_candidate()
+        self.assertEqual(candidate.kind, "delete-one")
         self.assertEqual(candidate.capability, "identity-management")
         self.assertEqual(candidate.path, path)
         self.assertIs(candidate.history, history)

@@ -345,10 +345,10 @@ sudo t2-touchid-enroll verify-post-reboot
 Current development builds also install
 `t2-touchid-post-reboot.service`, a credential-free read-only oneshot ordered
 before fprintd. It performs the same strict E4 proof automatically, also
-closes a completed label rename with that transaction's typed post-reboot
-proof, and leaves either journal untouched on any mismatch. Manual commands
-remain diagnostic fallbacks until the automatic service has passed the
-installed hardware controls documented in the roadmap.
+closes a completed label rename or single deletion with that transaction's
+typed post-reboot proof, and leaves any journal untouched on a mismatch. Manual
+commands remain diagnostic fallbacks until the automatic service has passed
+the installed hardware controls documented in the roadmap.
 
 Do not simply repeat `start` after an interruption or ambiguous result. Inspect
 `status`, then use only the recovery path it identifies:
@@ -660,7 +660,9 @@ then trusts only a stable SEP inventory—not the command status—to decide
 whether deletion occurred. If SEP removed the identity, the broker persists
 only the selected user's survivor archive and independently reads it back. A
 reconciled deletion remains blocking until a different Linux boot and Bridge
-connection prove the exact survivor set and clean Catacomb state:
+connection prove the exact survivor set and clean Catacomb state. The same
+credential-free boot service performs that read-only proof automatically; the
+manual command remains available for diagnosis:
 
 ```sh
 sudo t2-touchid-manage verify-delete-post-reboot

@@ -12,6 +12,8 @@ from pathlib import Path
 import t2_enrollment_journal
 import t2_enrollment_reconciliation
 import t2_catacomb_codec
+import t2_identity_delete_journal
+import t2_identity_delete_reconciliation
 import t2_identity_rename_journal
 import t2_identity_rename_reconciliation
 import t2_linux_account
@@ -92,9 +94,8 @@ def _pending_candidate() -> PendingMutation | None:
                 raise PostRebootReconcilerError(
                     "mutation journal has no typed baseline"
                 )
-            if evidence.get("operation_kind") != "enroll":
-                if evidence.get("operation_kind") != "rename":
-                    continue
+            operation_kind = evidence.get("operation_kind")
+            if operation_kind == "rename":
                 history = t2_identity_rename_journal.validate_history(records)
                 if (
                     history.phase
@@ -105,7 +106,21 @@ def _pending_candidate() -> PendingMutation | None:
                             "rename", "identity-management", path, history
                         )
                     )
-            else:
+            elif operation_kind == "delete-one":
+                history = t2_identity_delete_journal.validate_history(records)
+                if (
+                    history.phase
+                    is t2_identity_delete_journal.IdentityDeletePhase.RECONCILED
+                ):
+                    candidates.append(
+                        PendingMutation(
+                            "delete-one",
+                            "identity-management",
+                            path,
+                            history,
+                        )
+                    )
+            elif operation_kind == "enroll":
                 history = t2_enrollment_journal.validate_history(records)
                 if (
                     history.phase
@@ -115,6 +130,8 @@ def _pending_candidate() -> PendingMutation | None:
                     candidates.append(
                         PendingMutation("enroll", "enroll", path, history)
                     )
+            else:
+                continue
     except PostRebootReconcilerError:
         raise
     except (
@@ -122,6 +139,7 @@ def _pending_candidate() -> PendingMutation | None:
         t2_mutation_registry.MutationRegistryError,
         t2_mutation_journal.JournalError,
         t2_enrollment_journal.EnrollmentJournalError,
+        t2_identity_delete_journal.IdentityDeleteJournalError,
         t2_identity_rename_journal.IdentityRenameJournalError,
     ) as error:
         raise PostRebootReconcilerError(
@@ -167,13 +185,16 @@ def _select_mapping(
 def _unchanged_history(candidate: PendingMutation) -> None:
     expected = candidate.history
     try:
-        current = (
-            t2_enrollment_journal.read(candidate.path)
-            if candidate.kind == "enroll"
-            else t2_identity_rename_journal.read(candidate.path)
-        )
+        readers = {
+            "enroll": t2_enrollment_journal.read,
+            "rename": t2_identity_rename_journal.read,
+            "delete-one": t2_identity_delete_journal.read,
+        }
+        current = readers[candidate.kind](candidate.path)
     except (
+        KeyError,
         t2_enrollment_journal.EnrollmentJournalError,
+        t2_identity_delete_journal.IdentityDeleteJournalError,
         t2_identity_rename_journal.IdentityRenameJournalError,
     ) as error:
         raise PostRebootReconcilerError(
@@ -367,6 +388,21 @@ def run(
                 expected_phase = (
                     t2_identity_rename_journal.IdentityRenamePhase.POST_REBOOT_VERIFIED
                 )
+            elif candidate.kind == "delete-one":
+                verified = (
+                    t2_identity_delete_reconciliation.append_post_reboot_verified(
+                        journal_path,
+                        history.operation_id,
+                        local=material.local,
+                        host=material.host,
+                        live=material.live,
+                        linux_boot_uuid=boot_uuid,
+                        mapping_generation=mapping_set.generation,
+                    )
+                )
+                expected_phase = (
+                    t2_identity_delete_journal.IdentityDeletePhase.POST_REBOOT_VERIFIED
+                )
             else:
                 raise PostRebootReconcilerError(
                     "post-reboot mutation kind is unsupported"
@@ -383,6 +419,7 @@ def run(
     except (
         OSError,
         t2_enrollment_reconciliation.EnrollmentReconciliationError,
+        t2_identity_delete_reconciliation.IdentityDeleteReconciliationError,
         t2_identity_rename_reconciliation.IdentityRenameReconciliationError,
         t2_linux_account.LinuxAccountError,
         t2_system_credential.SystemCredentialError,

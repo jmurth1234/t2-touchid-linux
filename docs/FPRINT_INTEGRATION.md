@@ -165,12 +165,14 @@ claim before and after worker launch and retains completion until stop.
 
 The credential-free `t2-touchid-post-reboot` oneshot now supplies automatic
 post-reboot proof in source. It runs before fprintd, selects exactly one
-eligible reconciled enrollment or label-rename journal, reproduces the
-protected mapping/account/keybag binding, checks both the positive runtime
-handle and special alias, and collects stable local/host/SEP state on a fresh
-Bridge generation. It then appends only that journal's typed terminal proof:
-`E4_POST_REBOOT_VERIFIED` or `RENAME_POST_REBOOT_VERIFIED`. It has no password
-credential and no enrollment, rename, or persistence command path.
+eligible reconciled enrollment, label-rename, or single-delete journal,
+reproduces the protected mapping/account/keybag binding, checks both the
+positive runtime handle and special alias, and collects stable local/host/SEP
+state on a fresh Bridge generation. It then appends only that journal's typed
+terminal proof:
+`E4_POST_REBOOT_VERIFIED`, `RENAME_POST_REBOOT_VERIFIED`, or
+`DELETE_POST_REBOOT_VERIFIED`. It has no password credential and no
+enrollment, rename, delete, or persistence command path.
 `EnrollStart` remains disabled until this path and the worker negatives are
 proven on the installed machine.
 

@@ -197,6 +197,8 @@ evidence, not intent.
       appending only `E4_POST_REBOOT_VERIFIED`; keep live deployment pending.
 - [x] Extend that same credential-free, mutation-incapable boot boundary to
       append only a completed label rename's typed post-reboot proof.
+- [x] Route a completed single deletion through the same read-only boot
+      boundary while keeping live deletion itself unproven and fail-closed.
 - [ ] Prove the worker's mapping-disabled, wrong-caller, expired-grant,
       disconnect, wrong-generation, and automatic-E4 controls on the installed
       machine, then connect `EnrollStart`/`EnrollStop`.
