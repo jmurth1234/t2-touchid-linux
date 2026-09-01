@@ -101,8 +101,10 @@ evidence, not intent.
       UID/passwd/shadow/database/home binding and revalidate it after PolicyKit.
 - [x] Add atomic administrator creation/rebinding for protected account
       generations; both transitions force disabled and never auto-accept drift.
-- [ ] Add a separate live Apple/AKS/Catacomb reconciliation transaction before
-      a disabled mapping may be enabled.
+- [x] Add a separate atomic live Apple/AKS/Catacomb reconciliation transaction
+      before a disabled mapping may be enabled; its live session is read-only.
+- [x] Add unconditional atomic administrator revocation that never depends on
+      live T2, Bridge, Catacomb, account, or keybag availability.
 - [x] Validate the operation-`0x19` state decoder against live Apple key order
       and bind its private account UUID into alias readiness evidence.
 - [ ] Validate operation `0x06` and the read-only alias observer on hardware

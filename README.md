@@ -112,7 +112,10 @@ or an alternative sleep mode has been validated on the specific Mac model.
   that detects UID/account/password/database replacement without accepting a
   caller-supplied username or generation.
 - `src/t2_user_mapping_admin.py` and `t2-touchid-user-map`: crash-safe,
-  root-only creation and explicit account rebinding of disabled mappings.
+  root-only creation, explicit account rebinding, and separately reconciled
+  enablement of protected mappings.
+- `src/t2_user_reconciliation{,_live}.py`: atomic mapping-enable transaction
+  over a read-only, generation-pinned Bridge/Catacomb/AKS session.
 - `src/t2_user_activation_{journal,operation,recovery}.py`: transport-free
   durable activation, execution, and read-only recovery core; no CLI exists.
 - `src/t2_aks_{state,observer,transport}.py`: strict operation-`0x19` state
@@ -346,8 +349,8 @@ session exists. Session ID/start time and process identity are checked again
 after PolicyKit returns. PID reuse, setuid subjects, session switching, remote
 or greeter sessions, unknown actions, cross-user targets, timeouts, and
 ambiguous exits never create an authorized grant. There is still no public
-multi-user broker; per-user relocking, live enable reconciliation, and
-runtime/session orchestration remain incomplete.
+multi-user broker; per-user relocking and runtime/session orchestration remain
+incomplete.
 
 The same adapter now derives the caller's account generation itself rather than
 accepting an opaque digest from its future client. The deliberately conservative
@@ -368,9 +371,8 @@ lock, validates the exact old generation before replacement, writes a mode-0600
 temporary file, fsyncs it, publishes with atomic rename/no-replace semantics,
 fsyncs the directory, and requires exact read-back. It derives the Linux
 account generation and canonical per-UID keybag digest itself. New bindings and
-all rebindings are forcibly disabled—even if the old record was enabled—and
-the command has no enable operation or T2 transport. A changed passwd database
-is never adopted by `status` or normal runtime.
+all rebindings are forcibly disabled—even if the old record was enabled. A
+changed passwd database is never adopted by `status` or normal runtime.
 
 The disabled provisioning shape is:
 
@@ -395,7 +397,38 @@ the command validates structure and uniqueness but cannot prove them against
 the T2. If the local account generation later changes, the only host-side path
 is the explicit `rebind-disabled` acknowledgement. That transition preserves
 the Apple/keybag/capability fields, replaces only the account generation, and
-forces the result disabled. Do not use either command as an enable procedure.
+forces the result disabled. Neither command is an enable procedure.
+
+Enablement is a separate read-only live reconciliation transaction. It holds
+the mapping writer lock, then the machine-wide biometric operation lock and one
+Bridge generation; collects the local Catacomb, stable SEP inventory, live AKS
+bag UUID, private AKS account UUID, and lock state twice; rechecks the Linux
+account and keybag between those collections; and requires exact equality. It
+also requires a clean SEP Catacomb, exact local/live identity equality, a ready
+known lock state, and successful readiness evaluation for every stored
+capability. Only then does it atomically flip that one exact record to enabled.
+The session interface has no T2 mutation method. A failure after publication is
+outcome-unknown and must be inspected with `status`, never blindly retried.
+
+```sh
+sudo t2-touchid-user-map enable-reconciled \
+  --linux-uid <linux-uid> \
+  --acknowledge-live-apple-aks-catacomb-reconciliation-and-enable
+```
+
+This command cannot pass until the read-only operation-`0x06` hardware gate is
+validated with the rebuilt live module. It does not provision Apple users,
+create keybags, activate aliases, unlock a bag, or mutate fingerprints.
+
+Revocation never depends on the T2, Bridge network, Catacomb, account, or
+keybag remaining available. An administrator can atomically force an enabled
+record disabled at any time:
+
+```sh
+sudo t2-touchid-user-map disable \
+  --linux-uid <linux-uid> \
+  --acknowledge-immediate-mapping-revocation
+```
 
 The accompanying pure readiness classifier already defines the fail-closed
 outcomes for that future runtime: absent aliases require activation and fresh

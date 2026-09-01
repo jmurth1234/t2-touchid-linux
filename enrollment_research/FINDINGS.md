@@ -3080,7 +3080,7 @@ protected target mapping, and the activation boundary compares the downstream
 binding with that same selected mapping. A grant for one generation of a UID
 cannot therefore be detached and paired with another generation of that UID.
 
-The protected mapping now has one concrete writer, but still no enable path.
+The protected mapping administrator now has one concrete disabled-state writer.
 `t2-touchid-user-map bind-disabled` requires an explicit already-provisioned
 Apple UID/account UUID/bag UUID, explicit capabilities, the canonical private
 per-UID keybag, a live `local-files-v1` account assertion, and a long-form
@@ -3094,7 +3094,8 @@ collects the new account assertion twice, preserves all Apple/keybag/mode/
 capability fields, and atomically publishes the new record disabled even if the
 old record was enabled. This makes UID reuse an administrator-visible transfer
 decision without making that decision sufficient for biometric authority.
-There is no automatic update on passwd drift and no enable verb.
+There is no automatic update on passwd drift and neither administrator mutation
+is an enable verb.
 
 Both operations use a canonical serializer, same-directory mode-0600 temporary
 file, fsync, generation-checked atomic publish, directory fsync, and exact
@@ -3102,8 +3103,33 @@ protected read-back. First creation uses `renameat2(RENAME_NOREPLACE)`, so a
 racing file cannot be overwritten. `status` performs no write or lock-file
 creation and repeats the mapping read around live account collection. A
 post-rename durability/read-back error must be resolved by status rather than
-blind retry. Live mapping enable still requires serialized broker quiescence
-and exact Apple/AKS/Catacomb reconciliation and remains unimplemented.
+blind retry. The separate enable transaction described below owns serialized
+broker quiescence and exact Apple/AKS/Catacomb reconciliation.
+
+That enable boundary is now concrete and remains separate from administrator
+binding/rebinding. `enable-reconciled` holds the protected mapping lock before
+entering a fixed read-only live session, which then owns the global biometric
+operation lock and one Bridge connection generation. Under both locks it reads
+the committed local Catacomb, requires stable per-user/global SEP identity
+equality and clean master/selected-user Catacomb state, observes the AKS alias's
+bag UUID and independent account UUID, and rereads the local components. The
+transaction repeats the complete live collection around fresh account and
+keybag checks and requires byte/typed-evidence equality before atomic publish.
+
+The selected record is evaluated as enabled in memory for every explicit
+capability, but the persistent file remains disabled until all decisions are
+exactly `ready`. The live-session protocol has only `collect`; it cannot load,
+bind, unlock, enroll, rename, or delete. An error once publication begins is
+reported outcome-unknown and cannot be retried without read-only status. This
+closes the host transaction design; its concrete operation-`0x06` leg still
+awaits the already-required reboot hardware validation.
+
+Enablement is deliberately asymmetric with revocation. The administrator can
+run `disable` under only the protected mapping lock; it atomically changes the
+selected enabled record to disabled while preserving every other field and
+does not consult any live account, keybag, Bridge, Catacomb, or AKS state. A
+failed dependency can therefore block granting authority but can never block
+removing it.
 
 The safest host-side activation is not to reuse `-501` for every Linux user.
 Each already-provisioned Apple user retains its Apple UID-derived alias

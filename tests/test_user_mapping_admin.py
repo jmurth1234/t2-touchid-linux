@@ -185,6 +185,42 @@ class MappingAdminTests(unittest.TestCase):
                     self.rebind(**changes)
                 self.assertEqual(self.path.read_bytes(), before)
 
+    def test_disable_is_an_unconditional_atomic_revocation(self):
+        self.bind()
+        current = mapping.load(self.path)
+        enabled = replace(current.mappings[0], enabled=True)
+        self.path.write_bytes(mapping.serialize((enabled,)))
+        self.path.chmod(0o600)
+        result = admin.disable(
+            linux_uid=self.uid,
+            acknowledge_immediate_mapping_revocation=True,
+            path=self.path,
+        )
+        selected = mapping.load(self.path).mappings[0]
+        self.assertFalse(selected.enabled)
+        self.assertEqual(replace(selected, enabled=True), enabled)
+        self.assertEqual(result.operation, "disable")
+        self.assertEqual(result.state, "mapping-disabled")
+        self.assertTrue(result.mapping_disabled)
+        self.assertIsNone(result.account_generation_current)
+
+    def test_disable_requires_ack_and_an_enabled_unique_mapping(self):
+        self.bind()
+        before = self.path.read_bytes()
+        with self.assertRaises(admin.UserMappingAdminError):
+            admin.disable(
+                linux_uid=self.uid,
+                acknowledge_immediate_mapping_revocation=False,
+                path=self.path,
+            )
+        with self.assertRaisesRegex(admin.UserMappingAdminError, "already disabled"):
+            admin.disable(
+                linux_uid=self.uid,
+                acknowledge_immediate_mapping_revocation=True,
+                path=self.path,
+            )
+        self.assertEqual(self.path.read_bytes(), before)
+
     def test_status_distinguishes_current_changed_and_aggregate(self):
         self.bind()
         aggregate = admin.status(path=self.path)

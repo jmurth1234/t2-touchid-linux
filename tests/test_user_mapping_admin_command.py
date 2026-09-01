@@ -117,6 +117,63 @@ class MappingAdminCommandTests(unittest.TestCase):
                 self.assertEqual(MODULE.main(["status"]), 0)
         status.assert_called_once_with(linux_uid=None)
 
+    def test_enable_routes_only_to_the_fixed_live_reconciliation_session(self):
+        expected = MODULE.t2_user_reconciliation.ReconciliationResult(
+            "mapping-enabled-after-live-reconciliation",
+            1,
+            1,
+            2,
+        )
+        with mock.patch.object(
+            MODULE.t2_user_reconciliation,
+            "enable_reconciled",
+            return_value=expected,
+        ) as enable:
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    MODULE.main(
+                        [
+                            "enable-reconciled",
+                            "--linux-uid",
+                            "1000",
+                            "--acknowledge-live-apple-aks-catacomb-"
+                            "reconciliation-and-enable",
+                        ]
+                    ),
+                    0,
+                )
+        enable.assert_called_once_with(
+            linux_uid=1000,
+            acknowledge_live_apple_authority_and_enable=True,
+            live_session_factory=(
+                MODULE.t2_user_reconciliation_live.LiveUserReconciliationSession
+            ),
+        )
+
+    def test_disable_routes_to_immediate_admin_revocation(self):
+        expected = result("disable")
+        with mock.patch.object(
+            MODULE.t2_user_mapping_admin,
+            "disable",
+            return_value=expected,
+        ) as disable:
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    MODULE.main(
+                        [
+                            "disable",
+                            "--linux-uid",
+                            "1000",
+                            "--acknowledge-immediate-mapping-revocation",
+                        ]
+                    ),
+                    0,
+                )
+        disable.assert_called_once_with(
+            linux_uid=1000,
+            acknowledge_immediate_mapping_revocation=True,
+        )
+
     def test_admin_failure_is_clean_and_nonzero(self):
         error = io.StringIO()
         with (

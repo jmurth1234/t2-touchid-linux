@@ -502,6 +502,54 @@ def rebind_disabled(
         os.close(directory)
 
 
+def disable(
+    *,
+    linux_uid: int,
+    acknowledge_immediate_mapping_revocation: bool,
+    path: Path = DEFAULT_MAPPING_PATH,
+) -> AdminResult:
+    """Atomically revoke one enabled mapping without requiring live hardware."""
+
+    _require_root()
+    if acknowledge_immediate_mapping_revocation is not True:
+        raise UserMappingAdminError("mapping revocation acknowledgement is required")
+    try:
+        linux_uid = t2_user_mapping._unsigned(
+            linux_uid, "Linux UID", minimum=1
+        )
+    except t2_user_mapping.UserMappingError as error:
+        raise UserMappingAdminError(str(error)) from error
+    directory, name = _open_parent(path)
+    lock = -1
+    try:
+        lock = _open_lock(directory, name)
+        current = _load_optional(directory, name)
+        if current is None:
+            raise UserMappingAdminError("protected mapping does not exist")
+        matches = [item for item in current.mappings if item.linux_uid == linux_uid]
+        if len(matches) != 1:
+            raise UserMappingAdminError("Linux UID has no unique protected mapping")
+        selected = matches[0]
+        if not selected.enabled:
+            raise UserMappingAdminError("protected mapping is already disabled")
+        replacement = replace(selected, enabled=False)
+        updated = tuple(
+            replacement if item == selected else item for item in current.mappings
+        )
+        final = _publish(directory, name, updated, current.generation)
+        return _result(
+            "disable",
+            "mapping-disabled",
+            final,
+            account_current=None,
+            mapping_disabled=True,
+        )
+    finally:
+        if lock >= 0:
+            os.close(lock)
+        os.close(directory)
+
+
 def status(
     *,
     linux_uid: int | None = None,

@@ -10,14 +10,16 @@ import sys
 
 import t2_user_mapping
 import t2_user_mapping_admin
+import t2_user_reconciliation
+import t2_user_reconciliation_live
 
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(
         prog="t2-touchid-user-map",
         description=(
-            "Create or rebind disabled T2 account mappings. This command never "
-            "enables a mapping and never mutates the T2."
+            "Create or rebind disabled T2 account mappings, or enable one only "
+            "after stable live reconciliation. This command never mutates the T2."
         ),
     )
     commands = value.add_subparsers(dest="command", required=True)
@@ -67,6 +69,36 @@ def parser() -> argparse.ArgumentParser:
         ),
     )
 
+    enable = commands.add_parser(
+        "enable-reconciled",
+        help=(
+            "enable one disabled mapping after stable account, keybag, "
+            "Catacomb, identity, and AKS reconciliation"
+        ),
+    )
+    enable.add_argument("--linux-uid", required=True, type=int)
+    enable.add_argument(
+        "--acknowledge-live-apple-aks-catacomb-reconciliation-and-enable",
+        action="store_true",
+        required=True,
+        help=(
+            "confirm that the exact disabled mapping may be enabled only if "
+            "two read-only live collections remain fully reconciled"
+        ),
+    )
+
+    disable = commands.add_parser(
+        "disable",
+        help="immediately revoke one enabled mapping without live hardware",
+    )
+    disable.add_argument("--linux-uid", required=True, type=int)
+    disable.add_argument(
+        "--acknowledge-immediate-mapping-revocation",
+        action="store_true",
+        required=True,
+        help="confirm that the selected mapping will stop authorizing operations",
+    )
+
     status = commands.add_parser("status", help="show a redacted mapping status")
     status.add_argument(
         "--linux-uid",
@@ -98,11 +130,32 @@ def main(argv: list[str] | None = None) -> int:
                     arguments.acknowledge_account_generation_replacement
                 ),
             )
+        elif arguments.command == "enable-reconciled":
+            result = t2_user_reconciliation.enable_reconciled(
+                linux_uid=arguments.linux_uid,
+                acknowledge_live_apple_authority_and_enable=(
+                    arguments.acknowledge_live_apple_aks_catacomb_reconciliation_and_enable
+                ),
+                live_session_factory=(
+                    t2_user_reconciliation_live.LiveUserReconciliationSession
+                ),
+            )
+        elif arguments.command == "disable":
+            result = t2_user_mapping_admin.disable(
+                linux_uid=arguments.linux_uid,
+                acknowledge_immediate_mapping_revocation=(
+                    arguments.acknowledge_immediate_mapping_revocation
+                ),
+            )
         else:
             result = t2_user_mapping_admin.status(
                 linux_uid=arguments.linux_uid,
             )
-    except t2_user_mapping_admin.UserMappingAdminError as error:
+    except (
+        t2_user_mapping_admin.UserMappingAdminError,
+        t2_user_reconciliation.UserReconciliationError,
+        t2_user_reconciliation_live.LiveUserReconciliationError,
+    ) as error:
         print(f"t2-touchid-user-map: {error}", file=sys.stderr)
         return 1
     print(json.dumps(result.redacted(), sort_keys=True, indent=2))

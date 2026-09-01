@@ -135,13 +135,24 @@ normal crash window. A pre-publish failure cleans its temporary file; a
 post-rename sync/read-back failure remains an explicit outcome to inspect with
 `status`, never a reason to repeat blindly.
 
-The installed `t2-touchid-user-map` exposes only `bind-disabled`,
-`rebind-disabled`, and redacted `status`. Both mutations require long-form
+The installed `t2-touchid-user-map` exposes `bind-disabled`,
+`rebind-disabled`, unconditional `disable`, redacted `status`, and the separate
+`enable-reconciled` transaction. The administrator mutations require long-form
 acknowledgements, derive rather than accept the account/keybag digests, and
 always publish the selected record disabled. Rebinding preserves every Apple,
 keybag, mode, and capability field but still disables a previously enabled
-record. There is intentionally no enable verb: live AKS/Catacomb reconciliation
-and broker quiescence must be implemented first.
+record. Revocation requires no live hardware or account evidence, so loss of a
+dependency can never prevent an administrator from disabling authority.
+
+`t2_user_reconciliation.py` is the only enable writer. It holds the mapping
+writer lock across an injected read-only live session, two exact evidence
+collections, intervening Linux-account/keybag rechecks, and the atomic publish.
+`t2_user_reconciliation_live.py` is the fixed concrete session: it acquires the
+machine-wide operation lock, owns one Bridge generation, requires stable local
+Catacomb bytes and clean live SEP state, reconciles local/per-user/global
+identity sets, and observes both live AKS UUID bindings. Its interface exposes
+no activation, unlock, enrollment, or identity mutation. Every capability must
+classify ready before the selected disabled record is enabled.
 
 `t2_user_readiness.py` is the next pure runtime boundary. Given a validated
 mapping plus independently collected Linux-account/keybag/Catacomb and live
