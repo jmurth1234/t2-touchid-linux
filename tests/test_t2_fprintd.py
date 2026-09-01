@@ -1361,6 +1361,16 @@ class BackendRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("BindReadOnlyPaths=%s", installer)
         self.assertIn("05-account-home.conf", installer)
         self.assertIn("05-account-home.conf", uninstaller)
+        adaptive = (
+            root / "systemd/system/t2-touchid-adaptive-sync.service"
+        ).read_text(encoding="utf-8")
+        self.assertIn("ProtectHome=tmpfs", adaptive)
+        self.assertNotIn("ProtectHome=yes", adaptive)
+        self.assertIn("for service in fprintd t2-touchid-adaptive-sync", installer)
+        self.assertIn(
+            "t2-touchid-adaptive-sync.service.d/05-account-home.conf",
+            uninstaller,
+        )
 
     async def test_adaptive_sync_dispatch_is_explicit_and_exact(self):
         backend = MODULE.T2Backend.__new__(MODULE.T2Backend)

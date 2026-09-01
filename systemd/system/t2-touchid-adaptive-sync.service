@@ -13,7 +13,9 @@ StateDirectoryMode=0700
 UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=yes
+# The installer binds only the configured account home back into this empty
+# namespace, read-only, so protected mapping evidence remains live.
+ProtectHome=tmpfs
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectKernelLogs=yes
