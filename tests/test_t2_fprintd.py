@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import xml.etree.ElementTree as ElementTree
 from unittest import mock
 from unittest.mock import AsyncMock
 
@@ -202,6 +203,66 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values["num-enroll-stages"].value, -1)
         self.assertTrue(values["finger-present"].value)
         self.assertFalse(values["finger-needed"].value)
+
+    async def test_introspection_advertises_complete_historical_properties(self):
+        device = make_device()
+        request = MODULE.Message(
+            destination=MODULE.BUS_NAME,
+            path=MODULE.DEVICE_PATH,
+            interface="org.freedesktop.DBus.Introspectable",
+            member="Introspect",
+            serial=1,
+        )
+        reply = MODULE.legacy_introspection_reply(request, device)
+        root = ElementTree.fromstring(reply.body[0])
+        interface = next(
+            item
+            for item in root.findall("interface")
+            if item.attrib.get("name") == "net.reactivated.Fprint.Device"
+        )
+        self.assertEqual(
+            {
+                item.attrib["name"]: (
+                    item.attrib["type"], item.attrib["access"]
+                )
+                for item in interface.findall("property")
+            },
+            {
+                "name": ("s", "read"),
+                "num-enroll-stages": ("i", "read"),
+                "scan-type": ("s", "read"),
+                "finger-present": ("b", "read"),
+                "finger-needed": ("b", "read"),
+            },
+        )
+        self.assertEqual(
+            {
+                item.attrib["name"] for item in interface.findall("method")
+            },
+            {
+                "Claim",
+                "Release",
+                "ListEnrolledFingers",
+                "VerifyStart",
+                "VerifyStop",
+                "EnrollStart",
+                "EnrollStop",
+                "DeleteEnrolledFingers",
+                "DeleteEnrolledFingers2",
+                "DeleteEnrolledFinger",
+            },
+        )
+
+        wrong_path = MODULE.Message(
+            destination=MODULE.BUS_NAME,
+            path=MODULE.MANAGER_PATH,
+            interface="org.freedesktop.DBus.Introspectable",
+            member="Introspect",
+            serial=2,
+        )
+        self.assertFalse(
+            MODULE.legacy_introspection_reply(wrong_path, device)
+        )
 
     async def test_dynamic_finger_properties_emit_exact_changes(self):
         bus = FakeBus()

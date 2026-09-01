@@ -23,6 +23,7 @@ if str(LOCAL_SOURCE) not in sys.path:
 
 from dbus_next import BusType, DBusError, Message, MessageType, Variant
 from dbus_next.constants import PropertyAccess
+from dbus_next import introspection as dbus_introspection
 from dbus_next.service import ServiceInterface, dbus_property, method, signal
 
 import t2_fprint_projection
@@ -1173,6 +1174,45 @@ def legacy_property_reply(message: Message, device: FprintDevice):
     return False
 
 
+def legacy_introspection_reply(message: Message, device: FprintDevice):
+    """Advertise the same historical properties served by the raw handler."""
+
+    if (
+        not isinstance(message, Message)
+        or not isinstance(device, FprintDevice)
+        or message.message_type != MessageType.METHOD_CALL
+        or message.path != DEVICE_PATH
+        or message.interface != "org.freedesktop.DBus.Introspectable"
+        or message.member != "Introspect"
+        or message.body
+        or str(message.signature)
+    ):
+        return False
+    node = dbus_introspection.Node.default(DEVICE_PATH)
+    node.interfaces.append(device.introspect())
+    document = node.tostring()
+    closing = document.rfind("</interface>")
+    if closing < 0:
+        raise RuntimeError("fprint introspection has no device interface")
+    # dbus-next correctly rejects hyphens as D-Bus member names, while
+    # fprintd's long-standing property ABI nevertheless uses them. The raw
+    # Get/GetAll handler already serves these exact names; inject only their
+    # XML declarations into the final exported interface.
+    declarations = "".join(
+        f'    <property name="{name}" type="{signature}" access="read" />\n'
+        for name, signature in (
+            ("num-enroll-stages", "i"),
+            ("scan-type", "s"),
+            ("finger-present", "b"),
+            ("finger-needed", "b"),
+        )
+    )
+    document = document[:closing] + declarations + document[closing:]
+    return Message.new_method_return(
+        message, signature="s", body=[document]
+    )
+
+
 async def main_async(args: argparse.Namespace) -> None:
     project_dir = Path(
         os.environ.get(
@@ -1210,6 +1250,10 @@ async def main_async(args: argparse.Namespace) -> None:
             asyncio.create_task(device.sender_departed(message.body[0]))
         return False
 
+    def legacy_introspection_handler(message: Message):
+        return legacy_introspection_reply(message, device)
+
+    bus.add_message_handler(legacy_introspection_handler)
     bus.add_message_handler(legacy_property_handler)
     bus.add_message_handler(sender_departure_handler)
     bus.export(MANAGER_PATH, FprintManager())

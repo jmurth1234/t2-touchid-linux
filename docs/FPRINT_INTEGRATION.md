@@ -215,6 +215,9 @@ reinterpret a journaled biometric operation.
 Verification marks `finger-needed` while its match task is active and clears
 it on every terminal, cancellation, and stop path. Enrollment derives both
 properties from its typed worker stream.
+Its raw compatibility layer now advertises those same five historical
+properties through `Introspect`; a generic desktop client therefore sees the
+same property contract that `Get` and `GetAll` actually serve.
 
 The pure `t2_fprint_enrollment_runtime` translator now enforces the proven
 subset of this table.

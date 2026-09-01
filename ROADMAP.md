@@ -191,6 +191,8 @@ evidence, not intent.
       delivery to mutation outcome.
 - [x] Publish verification waiting/terminal `finger-needed` transitions across
       success, failure, cancellation, and standard `VerifyStop` cleanup.
+- [x] Advertise all five historical fprintd properties through D-Bus
+      introspection as well as the compatibility `Get`/`GetAll` handler.
 - [x] Implement the async fprint enrollment lifecycle around a synchronous
       worker with ordered event-loop feedback and cooperative, journal-aware
       stop/release/task cancellation; attach no live consumer yet.
