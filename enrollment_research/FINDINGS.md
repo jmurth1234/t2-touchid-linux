@@ -2978,8 +2978,9 @@ view through an anonymous pipe, never argv or environment. This code is not a
 public multi-user feature. The first operation-`0x06` probe correctly failed
 with `EPERM` while the doctor reported that the old live module differed from
 the newly installed build. This proves the stale allowlist was not bypassed;
-one reboot is still required before the redacted `t2-aks-observe-test` can close
-the read-only hardware gate.
+after reboot the rebuilt DKMS module matched the live build and the redacted
+observer validated stable `0x06`/`0x19` results, exact queried alias, both UUID
+bindings, and lock state zero without mutation. The hardware gate is closed.
 
 The previously missing caller/delegation boundary is now represented by a pure,
 non-exposed policy resolver. A request contains a Linux target UID but no Apple
@@ -3172,12 +3173,14 @@ running DKMS build, live operation-`0x06` success, both fingerprint survivors,
 an enabled reconciled mapping, and a negative unmapped/inactive-caller test.
 
 The protected mapping administrator now has one concrete disabled-state writer.
-`t2-touchid-user-map bind-disabled` requires an explicit already-provisioned
-Apple UID/account UUID/bag UUID, explicit capabilities, the canonical private
-per-UID keybag, a live `local-files-v1` account assertion, and a long-form
-acknowledgement. Apple values are structurally checked and cross-record unique,
-but are not claimed live until the later hardware reconciliation. The new
-record is always disabled.
+`t2-touchid-user-map bind-current-disabled` requires explicit capabilities,
+the canonical private per-UID keybag, a live `local-files-v1` account assertion,
+and a long-form acknowledgement. It accepts no Apple identifier arguments.
+Instead, under the biometric operation lock, it derives the one configured
+Apple user and alias from root-private configuration and collects the exact
+account/bag UUIDs through the stable live AKS observer. Those values never enter
+argv, shell history, or public output. The new record is always disabled and
+must still pass the independent complete live reconciliation before enablement.
 
 `rebind-disabled` is the sole account-generation replacement path. It loads the
 exact protected mapping under a root-owned lock, rehashes the unchanged keybag,
@@ -3211,9 +3214,9 @@ The selected record is evaluated as enabled in memory for every explicit
 capability, but the persistent file remains disabled until all decisions are
 exactly `ready`. The live-session protocol has only `collect`; it cannot load,
 bind, unlock, enroll, rename, or delete. An error once publication begins is
-reported outcome-unknown and cannot be retried without read-only status. This
-closes the host transaction design; its concrete operation-`0x06` leg still
-awaits the already-required reboot hardware validation.
+reported outcome-unknown and cannot be retried without read-only status. The
+rebuilt module's concrete operation-`0x06` leg and the complete read-only alias
+observer have now passed reboot hardware validation.
 
 Enablement is deliberately asymmetric with revocation. The administrator can
 run `disable` under only the protected mapping lock; it atomically changes the
@@ -5833,6 +5836,8 @@ Post-reboot verification closed that experiment: both the pre-existing finger
 and the Linux-enrolled finger independently produced `verify-match`, the live
 configured-user and global inventories both reported two identities, and the
 typed mutation journal passed its post-reboot gate with no pending transaction.
+On the later rebuilt-module boot, both enrolled fingers again matched and a
+third, unenrolled control finger produced `verify-no-match`.
 The fprintd compatibility device still lists one logical finger name because
 that slot represents “any built-in identity for the configured Apple user”; it
 is not a hardware identity count.

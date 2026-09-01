@@ -213,7 +213,7 @@ normal crash window. A pre-publish failure cleans its temporary file; a
 post-rename sync/read-back failure remains an explicit outcome to inspect with
 `status`, never a reason to repeat blindly.
 
-The installed `t2-touchid-user-map` exposes `bind-disabled`,
+The installed `t2-touchid-user-map` exposes `bind-current-disabled`,
 `rebind-disabled`, unconditional `disable`, redacted `status`, and the separate
 `enable-reconciled` transaction. The administrator mutations require long-form
 acknowledgements, derive rather than accept the account/keybag digests, and
@@ -221,6 +221,14 @@ always publish the selected record disabled. Rebinding preserves every Apple,
 keybag, mode, and capability field but still disables a previously enabled
 record. Revocation requires no live hardware or account evidence, so loss of a
 dependency can never prevent an administrator from disabling authority.
+
+`t2_current_user_authority.py` removes Apple UID/account UUID/bag UUID values
+from the public mapping command line. It reads one exact configured Apple user
+and matching negative alias from the root-private configuration, holds the
+machine-wide operation lock, and accepts only a present stable `0x06`/`0x19`
+observation with canonical nonzero UUIDs and known lock-state bits. The values
+remain in-process and feed only the disabled mapping writer; its public result
+is identifier-free and the collector performs no T2 mutation.
 
 `t2_user_reconciliation.py` is the only enable writer. It holds the mapping
 writer lock across an injected read-only live session, two exact evidence
@@ -273,8 +281,7 @@ unlock commands; password bytes traverse a pipe and command output must match
 the exact typed reply. These modules provide the concrete dependency boundary,
 but no public IPC request protocol, recovery CLI, or public activation command
 is present. `t2-aks-observe-test` is only a redacted read-only hardware gate;
-operation `0x06` requires installing the rebuilt pinned module and rebooting
-before that validation can pass.
+operation `0x06` has passed live validation with the rebuilt pinned module.
 
 The `t2-touchid-manage` rename path resolves one slot only after that
 reconciliation gate,

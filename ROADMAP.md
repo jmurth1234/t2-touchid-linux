@@ -126,14 +126,23 @@ evidence, not intent.
       live T2, Bridge, Catacomb, account, or keybag availability.
 - [x] Validate the operation-`0x19` state decoder against live Apple key order
       and bind its private account UUID into alias readiness evidence.
-- [ ] Validate operation `0x06` and the read-only alias observer on hardware
+- [x] Validate operation `0x06` and the read-only alias observer on hardware
       after loading the rebuilt pinned module at reboot.
 - [x] Verify after reboot that the pre-existing and Linux-enrolled fingerprints
       independently match while fprintd truthfully exposes one compatibility
       alias for the configured Apple user.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
       verification on the proven machine.
-- [ ] Implement Linux-native enrollment/unenrollment policy for multiple users.
+- [ ] Replace the verification-only fprintd compatibility alias with truthful
+      per-identity listing derived from fresh reconciled T2 inventory.
+- [ ] Implement fprintd-native enrollment and deletion through the journaled,
+      explicit-target Linux mutation brokers; never treat a D-Bus finger label
+      as biometric authority.
+- [ ] Support mapped Linux users through the same caller/session/PolicyKit and
+      protected Apple-user authority model, including negative cross-user tests.
+- [ ] Validate the complete fprint client experience—list, enroll, verify,
+      delete, cancellation, contention, PAM, and desktop UI—without requiring
+      repository-specific commands for ordinary use.
 
 ## Hardware/root-only gates
 

@@ -14,6 +14,7 @@ from unittest import mock
 SOURCE = Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SOURCE))
 import t2_user_mapping_admin as admin
+import t2_current_user_authority as current_authority
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -36,12 +37,20 @@ def result(operation="status"):
 
 
 class MappingAdminCommandTests(unittest.TestCase):
-    def test_bind_passes_explicit_inputs_and_prints_only_redacted_result(self):
+    def test_bind_derives_private_authority_and_prints_only_redacted_result(self):
         account_uuid = "00000000-0000-0000-0000-000000000001"
         bag_uuid = "00000000-0000-0000-0000-000000000002"
+        authority = current_authority.CurrentAppleAuthority(
+            501, account_uuid, bag_uuid, 0
+        )
         expected = result("bind")
         output = io.StringIO()
         with (
+            mock.patch.object(
+                MODULE.t2_current_user_authority,
+                "collect",
+                return_value=authority,
+            ) as collect,
             mock.patch.object(
                 MODULE.t2_user_mapping_admin,
                 "bind_disabled",
@@ -51,25 +60,20 @@ class MappingAdminCommandTests(unittest.TestCase):
         ):
             status = MODULE.main(
                 [
-                    "bind-disabled",
+                    "bind-current-disabled",
                     "--linux-uid",
                     "1000",
-                    "--apple-uid",
-                    "501",
-                    "--account-uuid",
-                    account_uuid,
-                    "--bag-uuid",
-                    bag_uuid,
                     "--unlock-mode",
                     "password-on-demand",
                     "--capability",
                     "verify",
                     "--capability",
                     "enroll",
-                    "--acknowledge-apple-authority-is-already-provisioned",
+                    "--acknowledge-current-apple-authority-is-already-provisioned",
                 ]
             )
         self.assertEqual(status, 0)
+        collect.assert_called_once_with()
         bind.assert_called_once_with(
             linux_uid=1000,
             apple_uid=501,
@@ -84,6 +88,15 @@ class MappingAdminCommandTests(unittest.TestCase):
         self.assertNotIn(account_uuid, rendered)
         self.assertNotIn(bag_uuid, rendered)
         self.assertNotIn("1000", rendered)
+
+    def test_bind_cli_has_no_private_apple_identifier_arguments(self):
+        bind = MODULE.parser()._subparsers._group_actions[0].choices[
+            "bind-current-disabled"
+        ]
+        destinations = {action.dest for action in bind._actions}
+        self.assertNotIn("apple_uid", destinations)
+        self.assertNotIn("account_uuid", destinations)
+        self.assertNotIn("bag_uuid", destinations)
 
     def test_rebind_and_status_route_without_mapping_path_override(self):
         with mock.patch.object(
@@ -188,6 +201,36 @@ class MappingAdminCommandTests(unittest.TestCase):
         self.assertEqual(
             error.getvalue(),
             "t2-touchid-user-map: mapping unavailable\n",
+        )
+
+        with (
+            mock.patch.object(
+                MODULE.t2_current_user_authority,
+                "collect",
+                side_effect=current_authority.CurrentUserAuthorityError(
+                    "authority unavailable"
+                ),
+            ),
+            redirect_stderr(error := io.StringIO()),
+        ):
+            self.assertEqual(
+                MODULE.main(
+                    [
+                        "bind-current-disabled",
+                        "--linux-uid",
+                        "1000",
+                        "--unlock-mode",
+                        "password-on-demand",
+                        "--capability",
+                        "verify",
+                        "--acknowledge-current-apple-authority-is-already-provisioned",
+                    ]
+                ),
+                1,
+            )
+        self.assertEqual(
+            error.getvalue(),
+            "t2-touchid-user-map: authority unavailable\n",
         )
 
     def test_install_and_uninstall_own_command_without_purging_by_default(self):

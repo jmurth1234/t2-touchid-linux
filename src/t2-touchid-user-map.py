@@ -21,6 +21,7 @@ import t2_user_mapping
 import t2_user_mapping_admin
 import t2_user_reconciliation
 import t2_user_reconciliation_live
+import t2_current_user_authority
 
 
 def parser() -> argparse.ArgumentParser:
@@ -34,13 +35,13 @@ def parser() -> argparse.ArgumentParser:
     commands = value.add_subparsers(dest="command", required=True)
 
     bind = commands.add_parser(
-        "bind-disabled",
-        help="add one disabled mapping for an already-provisioned Apple user",
+        "bind-current-disabled",
+        help=(
+            "derive the configured Apple authority privately and add one "
+            "disabled mapping"
+        ),
     )
     bind.add_argument("--linux-uid", required=True, type=int)
-    bind.add_argument("--apple-uid", required=True, type=int)
-    bind.add_argument("--account-uuid", required=True)
-    bind.add_argument("--bag-uuid", required=True)
     bind.add_argument(
         "--unlock-mode",
         required=True,
@@ -54,12 +55,12 @@ def parser() -> argparse.ArgumentParser:
         help="repeat for every explicitly permitted future capability",
     )
     bind.add_argument(
-        "--acknowledge-apple-authority-is-already-provisioned",
+        "--acknowledge-current-apple-authority-is-already-provisioned",
         action="store_true",
         required=True,
         help=(
-            "confirm these Apple identifiers refer to an already-provisioned "
-            "user; the resulting mapping remains disabled"
+            "confirm the root-derived configured Apple authority is already "
+            "provisioned; the resulting mapping remains disabled"
         ),
     )
 
@@ -120,16 +121,17 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
-        if arguments.command == "bind-disabled":
+        if arguments.command == "bind-current-disabled":
+            authority = t2_current_user_authority.collect()
             result = t2_user_mapping_admin.bind_disabled(
                 linux_uid=arguments.linux_uid,
-                apple_uid=arguments.apple_uid,
-                account_uuid=arguments.account_uuid,
-                bag_uuid=arguments.bag_uuid,
+                apple_uid=authority.apple_uid,
+                account_uuid=authority.account_uuid,
+                bag_uuid=authority.bag_uuid,
                 unlock_mode=arguments.unlock_mode,
                 capabilities=tuple(arguments.capability),
                 acknowledge_apple_authority_is_already_provisioned=(
-                    arguments.acknowledge_apple_authority_is_already_provisioned
+                    arguments.acknowledge_current_apple_authority_is_already_provisioned
                 ),
             )
         elif arguments.command == "rebind-disabled":
@@ -162,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
             )
     except (
         t2_user_mapping_admin.UserMappingAdminError,
+        t2_current_user_authority.CurrentUserAuthorityError,
         t2_user_reconciliation.UserReconciliationError,
         t2_user_reconciliation_live.LiveUserReconciliationError,
     ) as error:

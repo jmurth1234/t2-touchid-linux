@@ -430,22 +430,22 @@ sudo install -d -o root -g root -m 0700 \
   /var/lib/t2-touchid/users/<linux-uid>
 sudo install -o root -g root -m 0600 <verified-keybag> \
   /var/lib/t2-touchid/users/<linux-uid>/user.kb
-sudo t2-touchid-user-map bind-disabled \
+sudo t2-touchid-user-map bind-current-disabled \
   --linux-uid <linux-uid> \
-  --apple-uid <apple-uid> \
-  --account-uuid <verified-account-uuid> \
-  --bag-uuid <verified-bag-uuid> \
   --unlock-mode password-on-demand \
   --capability verify \
-  --acknowledge-apple-authority-is-already-provisioned
+  --acknowledge-current-apple-authority-is-already-provisioned
 sudo t2-touchid-user-map status --linux-uid <linux-uid>
 ```
 
-The Apple/account/bag values must come from already verified private inventory;
-the command validates structure and uniqueness but cannot prove them against
-the T2. If the local account generation later changes, the only host-side path
-is the explicit `rebind-disabled` acknowledgement. That transition preserves
-the Apple/keybag/capability fields, replaces only the account generation, and
+The command takes no Apple UID or UUID arguments. It derives the configured
+Apple user and alias from the root-private configuration, holds the biometric
+operation lock, and obtains the exact account/bag UUIDs through stable read-only
+AKS operations `0x06`/`0x19`. Private authority therefore never enters argv,
+shell history, or command output. The new record is still forced disabled. If
+the local account generation later changes, the only host-side path is the
+explicit `rebind-disabled` acknowledgement. That transition preserves the
+Apple/keybag/capability fields, replaces only the account generation, and
 forces the result disabled. Neither command is an enable procedure.
 
 Enablement is a separate read-only live reconciliation transaction. It holds
@@ -465,8 +465,8 @@ sudo t2-touchid-user-map enable-reconciled \
   --acknowledge-live-apple-aks-catacomb-reconciliation-and-enable
 ```
 
-This command cannot pass until the read-only operation-`0x06` hardware gate is
-validated with the rebuilt live module. It does not provision Apple users,
+The read-only operation-`0x06` hardware gate has passed on the proven machine
+with the rebuilt live module. Enablement still does not provision Apple users,
 create keybags, activate aliases, unlock a bag, or mutate fingerprints.
 
 Revocation never depends on the T2, Bridge network, Catacomb, account, or
@@ -507,11 +507,10 @@ bag UUID, account UUID, handle, file-mode, schema, or lock-state instability
 fails closed. The same adapter composes the existing load/bind/unlock commands
 and sends password
 bytes through a pipe, never argv or the environment. It remains non-exposed:
-there is no public activation command or automatic recovery path, and the new
-kernel allowlist still needs its first read-only hardware validation after the
-updated pinned module is loaded by a reboot. The diagnostic for that one gate
-is read-only, derives the alias from the protected configuration, takes the
-machine-wide operation lock, and prints no identifiers:
+there is no public activation command or automatic recovery path. The rebuilt
+kernel allowlist and observer have now passed their first read-only hardware
+validation. The diagnostic derives the alias from protected configuration,
+takes the machine-wide operation lock, and prints no identifiers:
 
 ```sh
 sudo t2-aks-observe-test
