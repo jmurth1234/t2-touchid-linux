@@ -41,6 +41,7 @@ import t2_identity_delete
 import t2_identity_delete_bridge
 import t2_identity_delete_journal
 import t2_identity_delete_operation
+import t2_identity_delete_pipeline
 import t2_identity_delete_persistence
 import t2_identity_delete_reconciliation
 import t2_identity_delete_recovery
@@ -499,47 +500,14 @@ def _persist_delete(
     operation_id: str,
     plan: t2_identity_delete.IdentityDeletePlan,
 ) -> t2_identity_delete_journal.IdentityDeleteHistory:
-    transport = t2_catacomb_bridge.CatacombBridgeTransport(
-        lease,
-        protocol_version=2,
-        connection_generation=lease.connection_generation,
-    )
-
-    def readback() -> t2_identity_delete_persistence.DeleteReadbackAttestation:
-        observed_live = t2_bridge_inventory.collect_stable_private_inventory(
-            lease, configuration["apple_uid"]
-        )
-        history = t2_identity_delete_journal.read(journal_path)
-        observed_host = t2_enrollment_finalizer.read_local_host_snapshot(
-            store, history.baseline
-        )
-        components = store.read_committed_components()
-        observed_local = t2_catacomb_codec.decode_user_catacomb(
-            components[f'user_{configuration["apple_uid"]:08x}.cat'],
-            configuration["apple_uid"],
-        )
-        attestation = t2_identity_delete_reconciliation.classify(
-            history,
-            plan,
-            local=observed_local,
-            host=observed_host,
-            live=observed_live,
-            mapping_generation=configuration["mapping_generation"],
-        )
-        return t2_identity_delete_persistence.DeleteReadbackAttestation(
-            attestation.connection_generation,
-            attestation.snapshot_sha256,
-            attestation.identity_count,
-        )
-
-    return t2_identity_delete_persistence.run(
-        journal_path,
-        operation_id,
-        plan=plan,
-        transport=transport,
+    return t2_identity_delete_pipeline.persist(
+        lease=lease,
         store=store,
+        journal_path=journal_path,
+        operation_id=operation_id,
+        plan=plan,
+        apple_uid=configuration["apple_uid"],
         mapping_generation=configuration["mapping_generation"],
-        readback=readback,
     )
 
 

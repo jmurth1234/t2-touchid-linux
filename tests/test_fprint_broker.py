@@ -89,7 +89,7 @@ class FprintBrokerTests(unittest.TestCase):
             adapter.run_mutation(
                 self.caller,
                 self.evidence,
-                operation="identity-management",
+                operation="delete-one",
                 consumer=lambda authority, session: None,
             )
         self.assertTrue(authorization.closed)
@@ -98,7 +98,7 @@ class FprintBrokerTests(unittest.TestCase):
         with mock.patch.object(
             claim.ClaimEvidence, "authorization_session"
         ) as derive:
-            for operation in ("verify", "raw-sep", ""):
+            for operation in ("verify", "identity-management", "raw-sep", ""):
                 with self.subTest(operation=operation), self.assertRaises(
                     adapter.FprintBrokerError
                 ):

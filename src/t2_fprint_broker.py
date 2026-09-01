@@ -8,7 +8,7 @@ import t2_fprint_claim
 import t2_user_broker
 
 
-MUTATION_OPERATIONS = frozenset({"enroll", "identity-management"})
+MUTATION_OPERATIONS = frozenset({"enroll", "rename", "delete-one"})
 
 
 class FprintBrokerError(RuntimeError):
