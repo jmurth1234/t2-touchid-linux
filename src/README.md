@@ -49,7 +49,6 @@ Build with `make`. Do not load both this module and `t2_sep_probe` together.
 The currently loaded registration-only revision is pinned; testing a rebuilt
 revision requires a reboot rather than an unload.
 
-
 ## Kernel transport
 
 The module claims PCI function `106b:1802` and provides the SEP endpoint-7 path
@@ -131,8 +130,10 @@ before ACM attachment. It does not enroll, delete, or evaluate an ACM policy.
 
 ## ACM authorization research
 
-The installed wrapper selects the known positive runtime keybag and requires a
-narrow acknowledgement for this non-ACM path:
+`t2-acm-authorize-test` is the installed wrapper for these paths. Its
+`--diagnostic-password-only` mode runs the `verify-password-only` stage
+isolation above: it selects the known positive runtime keybag, creates and
+attaches no ACM context, and requires a narrow acknowledgement:
 
 ```sh
 sudo t2-acm-authorize-test --diagnostic-password-only \
@@ -191,9 +192,9 @@ their pre-match gate and post-match unchanged-state attestation.
 
 ### Named-match authority
 
-`t2_fprint_match_selection.py` is the private authority half of that future
-listing. It accepts a strictly decoded user Catacomb and one exact tuple of
-live 20-byte per-user identity records, requires complete unique canonical
+`t2_fprint_match_selection.py` is the private authority half of the canonical
+listing above. It accepts a strictly decoded user Catacomb and one exact tuple
+of live 20-byte per-user identity records, requires complete unique canonical
 fprint names and exact UUID-set agreement, then returns exactly one opaque
 record for the requested name. Record order is not authority, `any` is not a
 target name, and no UUID, Apple user, or raw record appears in its public
@@ -223,7 +224,7 @@ call revalidates all three layers. A root PAM client is accepted only when its
 process has either stable all-root credentials or the exact setuid-PAM shape
 `real=user; effective=saved=filesystem=root`. The latter shape pins the
 originating real UID as part of the immutable process subject; any UID
-transition invalidates the claim. It may use the unique active-local- session
+transition invalidates the claim. It may use the unique active-local-session
 fallback only for that pinned real UID because sudo's PAM helper is not itself
 registered with logind. An all-root process still requires a direct
 pidfd-to-session binding and cannot use that fallback. `NameOwnerChanged`
@@ -358,8 +359,8 @@ disconnect, or nonzero authoritative start/cancel reply permanently poisons or
 rejects the operation. Exact 24G830 discards the numeric `enrollContinue`
 return, so a well-formed matching continue reply queues its interleaved service
 events and journals that return as non-authoritative. It composes with the
-journaled enrollment core in tests, but no live lease, baseline-to-
-authorization coordinator, or enrollment CLI is exposed.
+journaled enrollment core in tests, but no live lease,
+baseline-to-authorization coordinator, or enrollment CLI is exposed.
 
 `t2_bridge_wire.py` holds the shared BridgeXPC framing used by both the
 read-only probe and the enrollment path. `t2_bridge_connection.py` owns one
@@ -587,16 +588,17 @@ facade check is never accepted as authority across the worker handoff.
 evidence for the uninstalled native-enrollment and combined identity-management
 drop-ins. The gate requires exact core health, current module/DKMS, AKS alias
 observation, an enabled protected mapping, a complete canonical projection, no
-blocking enrollment or identity- management journal, an effective default-off
-daemon, and explicit prior-live- control attestations. It reports readiness
+blocking enrollment or identity-management journal, an effective default-off
+daemon, and explicit prior-live-control attestations. It reports readiness
 only; it cannot stage a unit or invoke enrollment or deletion.
 
-`t2_fprint_enrollment_runtime.py` is the pure status boundary for that future
-consumer. It translates accepted increasing progress and retry guidance only to
-documented fprint statuses, suppresses duplicate progress, and refuses to emit
-`enroll-completed` until the coordinator proves policy, persistence, and
-reconciliation. The facade exposes fprint's complete historical property set
-via both `Get` and `GetAll`; the unproven stage count remains `-1`.
+`t2_fprint_enrollment_runtime.py` is the pure status boundary for that
+enrollment consumer. It translates accepted increasing progress and retry
+guidance only to documented fprint statuses, suppresses duplicate progress, and
+refuses to emit `enroll-completed` until the coordinator proves policy,
+persistence, and reconciliation. The facade exposes fprint's complete
+historical property set via both `Get` and `GetAll`; the unproven stage count
+remains `-1`.
 
 `t2_fprint_enrollment_controller.py` keeps one synchronous worker off the D-Bus
 event loop and sends translated updates back to that loop in order. Its
@@ -619,20 +621,20 @@ cooperative cancellation.
 
 `t2_fprint_worker_protocol.py` is the bounded Unix-seqpacket boundary around
 that consumer. One canonical start packet carries a canonical finger name and
-the original protected account/session evidence alongside exactly one SCM-
-transferred pidfd. The receiver independently validates the descriptor, PID,
-UID, and start time. Subsequent packets are identifier-free progress or one
-exact cancellation. `t2_fprint_worker_launcher.py` binds the private socket,
-authenticates the accepted process against its exact transient systemd unit,
-and supplies the encrypted credential only through `LoadCredentialEncrypted`.
-Its argv contains only the operation socket path.
+the original protected account/session evidence alongside exactly one
+SCM-transferred pidfd. The receiver independently validates the descriptor,
+PID, UID, and start time. Subsequent packets are identifier-free progress or
+one exact cancellation. `t2_fprint_worker_launcher.py` binds the private
+socket, authenticates the accepted process against its exact transient systemd
+unit, and supplies the encrypted credential only through
+`LoadCredentialEncrypted`. Its argv contains only the operation socket path.
 
 `t2_system_credential.py` validates the service-scoped credential and runtime
 keybag state, proves password fallback through `verify-password-only-stdin`,
 and binds ACM through the new `verify-password-acm-stdin` command. Mutable
 password buffers are wiped and tool output is suppressed. `t2_fprint_worker`
-reconstructs the pinned authorization session, requires an enabled host-
-encrypted-credential mapping, and runs the real broker/consumer while a
+reconstructs the pinned authorization session, requires an enabled
+host-encrypted-credential mapping, and runs the real broker/consumer while a
 dedicated listener converts cancellation or peer loss into cooperative
 reconciliation. `t2_fprint_worker_client.py` supplies the async facade
 lifecycle behind the daemon's explicit default-off research flag and waits for
@@ -745,21 +747,21 @@ identity sets, and observes both live AKS UUID bindings. Its interface exposes
 no activation, unlock, enrollment, or identity mutation. Every capability must
 classify ready before the selected disabled record is enabled.
 
-`t2_user_readiness.py` is the next pure runtime boundary. Given a validated
-mapping plus independently collected Linux-account/keybag/Catacomb and live
-alias evidence, it returns one redacted typed decision. Exact binding and known
-safe SKS state are required for `ready`; an absent alias requests activation,
-device-lock/first-unlock requests password bootstrap, lockout requests
-recovery, and binding collisions, Catacomb corruption, or unknown state bits
-quarantine the mapping. The classifier deliberately has no transport and cannot
-perform the requested next step. This keeps future observation/recovery logic
-separate from AKS mutation and prevents an error return from becoming an
-implicit retry.
+`t2_user_readiness.py` is the pure runtime readiness boundary. Given a
+validated mapping plus independently collected Linux-account/keybag/Catacomb
+and live alias evidence, it returns one redacted typed decision. Exact binding
+and known safe SKS state are required for `ready`; an absent alias requests
+activation, device-lock/first-unlock requests password bootstrap, lockout
+requests recovery, and binding collisions, Catacomb corruption, or unknown
+state bits quarantine the mapping. The classifier deliberately has no transport
+and cannot perform the requested next step. This keeps future
+observation/recovery logic separate from AKS mutation and prevents an error
+return from becoming an implicit retry.
 
 ### Policy resolution and PolicyKit grants
 
-`t2_user_policy.py` is the pure policy boundary above that mapping, for the
-operations `verify`, `inventory`, `enroll`, `rename`, and `delete-one`. It
+`t2_user_policy.py` is the pure policy boundary above `t2_user_mapping.py`, for
+the operations `verify`, `inventory`, `enroll`, `rename`, and `delete-one`. It
 accepts only an authenticated active self-session, resolves the target
 exclusively by numeric Linux UID through the protected mapping, and requires an
 operation-specific grant bound to caller, target, live account generation,

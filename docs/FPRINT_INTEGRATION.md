@@ -341,8 +341,7 @@ last remaining identity.
 Native mutation remains disabled until all of these are demonstrated:
 
 - D-Bus claim ownership cannot be stolen, rebound, or used cross-user.
-- Mapping-disabled, capability-denied, inactive-session, wrong-account-
-  generation, expired-grant, wrong-boot, and wrong-runtime controls fail before
+- Mapping-disabled, capability-denied, inactive-session, wrong-account-generation, expired-grant, wrong-boot, and wrong-runtime controls fail before
   a mutation worker receives authority.
 - Enrollment cancellation works at finger-wait, progress, persistence, and
   outcome-unknown boundaries.

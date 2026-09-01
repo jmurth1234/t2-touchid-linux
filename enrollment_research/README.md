@@ -312,11 +312,12 @@ their version-1 command wrapper under biometric protocol 2, and device maximum
 capacity (`0x0f`) cannot be combined arithmetically with configured-user free
 capacity (`0x41`). No biometric or Catacomb mutation was performed.
 
-A second read-only hardware run on 2026-08-31 exercised that typed parser over
-the owned connection. Two byte-identical reads returned exactly one master and
-one selected-user state record; the selected user carried save bit `0x04` and
-master did not. The output was redacted to kinds and booleans, and no Catacomb
-or biometric mutation was dispatched.
+A second read-only hardware run on 2026-08-31 exercised the `0x3c`/`0x50`
+component-state parser described above over the owned connection. Two
+byte-identical reads returned exactly one master and one selected-user state
+record; the selected user carried save bit `0x04` and master did not. The
+output was redacted to kinds and booleans, and no Catacomb or biometric
+mutation was dispatched.
 
 The non-mutating hardware preflight passed on 2026-08-31 and created the
 private Linux-local store from the sole hash-named root backup. It verified the
@@ -416,9 +417,9 @@ before the same BiometricKit handler, so version 2 was allowed to reach the
 then-recovered ordinal switch while every unknown ordinal remained fail-closed.
 
 The next approved runs reached statuses 95 and 91 after contact. Stable
-recovery proved no persistent delta after each stop, and the unfinished-
-operation gate correctly prevented an overlapping invocation. Rather than
-continue recovering one observed number at a time, the exact 24G830
+recovery proved no persistent delta after each stop, and the
+unfinished-operation gate correctly prevented an overlapping invocation. Rather
+than continue recovering one observed number at a time, the exact 24G830
 `BKEnrollTouchIDOperation` -> `BKEnrollOperation` -> `BKOperation` chain was
 exhaustively enumerated. Its complete silent no-op domain is `0..50`, `52..57`,
 `59`, `69`, `71..73`, `75..77`, `79`, `81..84`, `89..92`, `94..97`, `356..500`,
@@ -440,8 +441,8 @@ stable reconciliation again proved no persistent delta. Exact 24G830
 `-[BiometricKitXPCClient enrollContinue]`. The reducer therefore treats a
 well-formed matching reply as the dispatch boundary, queues its interleaved
 validated service events, journals the numeric return as non-authoritative, and
-continues. Start, cancel, persistence, malformed-event, and connection-
-generation checks remain fail-closed.
+continues. Start, cancel, persistence, malformed-event, and
+connection-generation checks remain fail-closed.
 
 The same runs exposed a more fundamental continuation bug. Linux initially
 reused the negotiated enrollment payload version for every command, so a
