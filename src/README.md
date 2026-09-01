@@ -117,8 +117,9 @@ have one root-owned local passwd row, NSS must resolve the same complete record,
 the matching root-private shadow row must remain usable, and the home path must
 open without following its final component to a UID-owned directory. The
 generation commits to the exact passwd database epoch and bytes, the target
-passwd/shadow records, and the home filesystem object. The IPC join collects it
-before and after PolicyKit. No username or digest comes from the request, and
+passwd/shadow records, and the home device/inode/mount/birth-time object. The
+IPC join collects it before and after PolicyKit. No username or digest comes
+from the request, and
 no shadow data appears in returned or redacted evidence. A passwd rewrite—even
 for another account—is deliberately fail-closed and requires administrator
 re-attestation; LDAP and systemd-homed are not silently approximated.

@@ -350,8 +350,9 @@ accepting an opaque digest from its future client. The deliberately conservative
 `local-files-v1` profile resolves the kernel UID to one exact root-owned
 `/etc/passwd` row, requires an agreeing NSS result and protected `/etc/shadow`
 row, and binds the passwd database epoch plus the UID-owned home-directory
-object. It collects the assertion again after PolicyKit and requires byte-exact
-evidence equality. Account recreation, password/account edits, home replacement,
+device/inode/mount/birth-time object. It collects the assertion again after
+PolicyKit and requires byte-exact evidence equality. Account recreation,
+password/account edits, home replacement,
 or any passwd-database rewrite therefore disables the old mapping until an
 administrator explicitly rebinds it. This profile intentionally does not claim
 support for LDAP, systemd-homed, or other account stores lacking an equivalent

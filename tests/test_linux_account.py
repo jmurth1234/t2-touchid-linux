@@ -110,7 +110,8 @@ class LocalAccountTests(unittest.TestCase):
 
     def test_replacing_home_object_changes_generation(self):
         before = self.collect().generation
-        self.home.rmdir()
+        old_home = self.root / "old-home"
+        self.home.rename(old_home)
         self.home.mkdir(mode=0o700)
         if os.getuid() == 0:
             os.chown(self.home, self.uid, self.gid)
@@ -175,6 +176,11 @@ class LocalAccountTests(unittest.TestCase):
                 wrapped.side_effect = unsafe_home
                 with self.assertRaisesRegex(account.LinuxAccountError, "ownership"):
                     self.collect()
+
+    def test_missing_statx_birth_binding_has_no_inode_only_fallback(self):
+        with mock.patch.object(account.ctypes, "CDLL", return_value=object()):
+            with self.assertRaisesRegex(account.LinuxAccountError, "statx"):
+                self.collect()
 
     def test_mid_collection_account_change_is_rejected(self):
         calls = 0

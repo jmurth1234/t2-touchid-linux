@@ -6,7 +6,9 @@ therefore supports only a deliberately strict local-files profile: it binds the
 numeric UID to the exact local passwd record, the protected shadow record, the
 root-owned passwd database epoch, and the home-directory filesystem object.
 Deleting and recreating an account, changing its password/account record, or
-replacing the passwd database changes the resulting generation.
+replacing the passwd database changes the resulting generation. Home binding
+uses statx birth time and mount identity as well as device/inode so immediate
+inode reuse cannot impersonate the old directory.
 
 The shadow record is hashed while held in a wipeable buffer.  It is never
 returned, logged, or included in redacted output.
@@ -14,6 +16,7 @@ returned, logged, or included in redacted output.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import os
 import pwd
@@ -35,6 +38,11 @@ LOCAL_PASSWD = Path("/etc/passwd")
 LOCAL_SHADOW = Path("/etc/shadow")
 ACCOUNT_NAME = re.compile(rb"[a-z_][a-z0-9_.-]{0,63}\Z", re.ASCII)
 LENGTH = struct.Struct(">Q")
+AT_EMPTY_PATH = 0x1000
+STATX_BASIC_STATS = 0x000007FF
+STATX_BTIME = 0x00000800
+STATX_MNT_ID = 0x00001000
+STATX_BUFFER_SIZE = 256
 
 
 class LinuxAccountError(RuntimeError):
@@ -91,6 +99,15 @@ class _PasswdSnapshot:
     gecos: bytes
     home: bytes
     shell: bytes
+
+
+@dataclass(frozen=True, repr=False)
+class _HomeIdentity:
+    device: int
+    inode: int
+    mount_id: int
+    birth_time_sec: int
+    birth_time_nsec: int
 
 
 def _checked_uid(uid: object) -> int:
@@ -294,7 +311,64 @@ def _shadow_record_digest(path: Path, name: bytes) -> bytes:
         data[:] = b"\0" * len(data)
 
 
-def _home_identity(path: bytes, uid: int) -> tuple[int, int]:
+def _statx_home_identity(
+    descriptor: int, info: os.stat_result
+) -> _HomeIdentity:
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        statx = libc.statx
+    except (OSError, AttributeError) as error:
+        raise LinuxAccountError("kernel statx account binding is unavailable") from error
+    statx.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+    ]
+    statx.restype = ctypes.c_int
+    output = ctypes.create_string_buffer(STATX_BUFFER_SIZE)
+    result = statx(
+        descriptor,
+        b"",
+        AT_EMPTY_PATH,
+        STATX_BASIC_STATS | STATX_BTIME | STATX_MNT_ID,
+        ctypes.byref(output),
+    )
+    if result != 0:
+        raise LinuxAccountError("kernel statx account binding failed")
+    raw = output.raw
+    mask = struct.unpack_from("=I", raw, 0)[0]
+    statx_uid = struct.unpack_from("=I", raw, 20)[0]
+    statx_mode = struct.unpack_from("=H", raw, 28)[0]
+    inode = struct.unpack_from("=Q", raw, 32)[0]
+    birth_sec, birth_nsec = struct.unpack_from("=qI", raw, 80)
+    device_major = struct.unpack_from("=I", raw, 136)[0]
+    device_minor = struct.unpack_from("=I", raw, 140)[0]
+    mount_id = struct.unpack_from("=Q", raw, 144)[0]
+    required = STATX_BASIC_STATS | STATX_BTIME | STATX_MNT_ID
+    if (
+        mask & required != required
+        or statx_uid != info.st_uid
+        or statx_mode != info.st_mode
+        or inode != info.st_ino
+        or device_major != os.major(info.st_dev)
+        or device_minor != os.minor(info.st_dev)
+        or mount_id <= 0
+        or birth_sec <= 0
+        or not 0 <= birth_nsec < 1_000_000_000
+    ):
+        raise LinuxAccountError("kernel statx account binding is incomplete")
+    return _HomeIdentity(
+        int(info.st_dev),
+        int(info.st_ino),
+        mount_id,
+        birth_sec,
+        birth_nsec,
+    )
+
+
+def _home_identity(path: bytes, uid: int) -> _HomeIdentity:
     try:
         decoded = path.decode("utf-8")
         flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY
@@ -303,13 +377,16 @@ def _home_identity(path: bytes, uid: int) -> tuple[int, int]:
         descriptor = os.open(decoded, flags)
         try:
             info = os.fstat(descriptor)
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid:
+                raise LinuxAccountError(
+                    "local account home object has unsafe ownership"
+                )
+            identity = _statx_home_identity(descriptor, info)
         finally:
             os.close(descriptor)
     except (OSError, UnicodeDecodeError) as error:
         raise LinuxAccountError("local account home object is unavailable") from error
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid:
-        raise LinuxAccountError("local account home object has unsafe ownership")
-    return int(info.st_dev), int(info.st_ino)
+    return identity
 
 
 def _nss_matches(snapshot: _PasswdSnapshot, uid: int, resolver: Resolver) -> None:
@@ -352,7 +429,7 @@ def _generation(
     uid: int,
     passwd: _PasswdSnapshot,
     shadow_digest: bytes,
-    home: tuple[int, int],
+    home: _HomeIdentity,
 ) -> str:
     digest = hashlib.sha256()
     values = (
@@ -366,8 +443,11 @@ def _generation(
         (b"passwd-digest", passwd.database_digest),
         (b"record-digest", passwd.record_digest),
         (b"shadow-record-digest", shadow_digest),
-        (b"home-device", str(home[0]).encode("ascii")),
-        (b"home-inode", str(home[1]).encode("ascii")),
+        (b"home-device", str(home.device).encode("ascii")),
+        (b"home-inode", str(home.inode).encode("ascii")),
+        (b"home-mount-id", str(home.mount_id).encode("ascii")),
+        (b"home-birth-sec", str(home.birth_time_sec).encode("ascii")),
+        (b"home-birth-nsec", str(home.birth_time_nsec).encode("ascii")),
     )
     for label, value in values:
         _update_framed(digest, label, value)

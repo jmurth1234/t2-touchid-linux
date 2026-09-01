@@ -3039,8 +3039,10 @@ from the kernel peer UID, it requires exactly one root-owned local passwd row,
 an exactly agreeing NSS record, one root-private usable shadow row, and the
 UID-owned home-directory object opened without following its final component.
 The generation commits to the entire passwd database bytes and filesystem
-epoch, the target passwd and shadow records, and the home device/inode. Shadow
-bytes exist only in a bounded wipeable buffer and are never emitted.
+epoch, the target passwd and shadow records, and the home device/inode. Home
+identity also includes the kernel `statx` mount ID and birth timestamp, closing
+immediate inode reuse after directory replacement. Shadow bytes exist only in
+a bounded wipeable buffer and are never emitted.
 A root-only read-only collection on the proven machine returned the redacted
 `local-files-v1` profile with both protected-password and home-object bindings
 present; no UID, account name, digest, or shadow field was printed.
