@@ -757,6 +757,13 @@ backup of every local component, atomically removes only the unique local-only
 record, repeats the live inventory, and proves the survivor set. It sends no
 SEP enrollment, deletion, or Catacomb command.
 
+This exact recovery was live-proven after the dual-boot divergence described
+above. It created the backup, removed one stale local-only identity, reported
+one reconciled survivor and no SEP mutation, and restored truthful fprintd
+listing. The surviving right-index identity then passed both direct fprintd
+verification and sudo/PAM authentication; the removed identity no longer
+appeared, an unenrolled finger failed, and password fallback remained usable.
+
 If interrupted, inspect and recover its journal rather than replaying it:
 
 ```sh

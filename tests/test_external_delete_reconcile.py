@@ -181,7 +181,7 @@ def baseline_evidence():
         "mapping_generation": "1" * 64,
         "local_identity_count": 2,
         "live_identity_count": 1,
-        "stale_identity_uuid": "00000000-0000-0000-0000-000000000083",
+        "stale_identity_uuid": str(uuid.UUID(int=83)),
         "stale_entity": 1,
         "stale_name_sha256": "2" * 64,
         "local_snapshot_sha256": "3" * 64,

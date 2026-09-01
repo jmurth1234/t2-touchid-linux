@@ -6028,6 +6028,13 @@ stable live inventory, and proves local/live survivor equality. It issues no
 SEP biometric or Catacomb command. Cross-OS persistence remains unsupported
 until macOS host-Catacomb synchronization has its own safe transaction model.
 
+The recovery was subsequently exercised on that live divergent state. It
+reported a private backup, one removed local-only record, one reconciled
+identity, a local Catacomb mutation, and no SEP mutation. fprintd then listed
+only the surviving right-index identity. That identity matched through both
+fprintd and sudo/PAM, the removed identity and an unenrolled finger did not
+match, and sudo password fallback remained functional.
+
 The project therefore remains two milestones. Existing, already-provisioned
 Apple/SEP user management is technically credible after a read-only inventory
 and transaction/recovery layer. Linux-native user provisioning is a separate
