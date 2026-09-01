@@ -13,6 +13,7 @@ from pathlib import Path
 SOURCE = Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SOURCE))
 import t2_user_broker as broker
+import t2_user_broker_inventory as broker_inventory
 import t2_user_broker_protocol as protocol
 import t2_user_policy as policy
 
@@ -59,6 +60,20 @@ class UserBrokerProtocolTests(unittest.TestCase):
                 ):
                     self.assertNotIn(forbidden, encoded.lower())
 
+    def test_identities_request_is_fixed_to_inventory(self):
+        request = protocol.BrokerRequest("identities", "inventory")
+        encoded = protocol.encode_request(request)
+        self.assertEqual(protocol.decode_request(encoded), request)
+        for operation in policy.OPERATION_POLICIES:
+            if operation == "inventory":
+                continue
+            with self.subTest(operation=operation), self.assertRaises(
+                protocol.UserBrokerProtocolError
+            ):
+                protocol.encode_request(
+                    protocol.BrokerRequest("identities", operation)
+                )
+
     def test_request_rejects_unknown_duplicate_numeric_and_noncanonical_data(self):
         valid = protocol.BrokerRequest("preflight", "enroll").public()
         malformed = (
@@ -70,6 +85,8 @@ class UserBrokerProtocolTests(unittest.TestCase):
             b'{"command":"preflight","operation":"enroll",'
             b'"schema_version":true}',
             b'{"command":"preflight","operation":"raw-sep",'
+            b'"schema_version":1}',
+            b'{"command":"identities","operation":"enroll",'
             b'"schema_version":1}',
             b'{"apple_uid":501,"command":"preflight",'
             b'"operation":"enroll","schema_version":1}',
@@ -171,6 +188,89 @@ class UserBrokerProtocolTests(unittest.TestCase):
             True,
         ).public()
         valid["apple_uid"] = 501
+        encoded = json.dumps(
+            valid, sort_keys=True, separators=(",", ":")
+        ).encode("ascii")
+        with self.assertRaises(protocol.UserBrokerProtocolError):
+            protocol.decode_response(encoded)
+
+    def test_inventory_response_round_trip_is_bounded_and_identifier_free(self):
+        identities = broker_inventory.parse_public_inventory(
+            {
+                "schema_version": 1,
+                "identity_count": 2,
+                "identities": [
+                    {"slot": 1, "name": "Right index finger", "live": True},
+                    {
+                        "slot": 2,
+                        "name": "Linux enrolled finger",
+                        "live": True,
+                    },
+                ],
+                "local_live_reconciled": True,
+                "selection_scope": "current-reconciled-list",
+                "fprintd_listing_is_compatibility_alias": True,
+                "identifiers_redacted": True,
+            }
+        )
+        result = broker_inventory.BrokerInventoryResult(
+            decision(operation="inventory"), True, identities
+        )
+        request = protocol.BrokerRequest("identities", "inventory")
+        response = protocol.response_from_inventory_result(request, result)
+        encoded = protocol.encode_response(response)
+        self.assertEqual(protocol.decode_response(encoded), response)
+        public = json.loads(encoded)
+        self.assertEqual(public["command"], "identities")
+        self.assertEqual(public["inventory"]["identity_count"], 2)
+        self.assertFalse(public["t2_mutation_performed"])
+        self.assertTrue(public["identifiers_redacted"])
+        for forbidden in ("apple_uid", "uuid", "keybag", '"entity":'):
+            self.assertNotIn(forbidden, encoded.decode("ascii").lower())
+
+        denied = broker_inventory.BrokerInventoryResult(
+            decision(operation="inventory", state="operation-policy-denied"),
+            False,
+            None,
+        )
+        denied_response = protocol.response_from_inventory_result(
+            request, denied
+        )
+        denied_public = denied_response.public()
+        self.assertIsNone(denied_public["inventory"])
+        self.assertFalse(denied_public["identity_inventory_available"])
+        self.assertEqual(
+            protocol.decode_response(protocol.encode_response(denied_response)),
+            denied_response,
+        )
+
+    def test_inventory_response_rejects_false_or_unredacted_payloads(self):
+        response = protocol.InventoryResponse(
+            "authorized",
+            policy.OPERATION_POLICIES["inventory"].action,
+            True,
+            False,
+            False,
+            "ready",
+            False,
+            True,
+            None,
+        )
+        with self.assertRaises(protocol.UserBrokerProtocolError):
+            protocol.encode_response(response)
+
+        valid = protocol.InventoryResponse(
+            "operation-policy-denied",
+            policy.OPERATION_POLICIES["inventory"].action,
+            False,
+            False,
+            False,
+            "alias-absent",
+            False,
+            False,
+            None,
+        ).public()
+        valid["inventory"] = {"apple_uid": 501}
         encoded = json.dumps(
             valid, sort_keys=True, separators=(",", ":")
         ).encode("ascii")

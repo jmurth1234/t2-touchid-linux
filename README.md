@@ -351,10 +351,12 @@ after PolicyKit returns. PID reuse, setuid subjects, session switching, remote
 or greeter sessions, unknown actions, cross-user targets, timeouts, and
 ambiguous exits never create an authorized grant. There is still no public
 multi-user socket. The internal request protocol is now canonical Unix
-`SOCK_SEQPACKET` framing whose only command is a read-only preflight for one
-named operation. It accepts no UID, UUID, alias, keybag path, raw operation
-number, or file descriptor; its bounded response exposes only policy/readiness
-state and proof that a synchronous read-only handoff occurred. The internal
+`SOCK_SEQPACKET` framing. It supports a read-only `preflight` for one named
+operation and an `identities` command fixed to the inventory policy. It accepts
+no UID, UUID, alias, keybag path, raw operation number, or file descriptor; its
+bounded responses expose only policy/readiness state, synchronous read-only
+handoff proof, and—only for authorized inventory—the reconciled labels. The
+internal
 `t2_user_broker.py`
 transaction now keeps one pinned peer, mapping writer lock, biometric operation
 lock, Bridge generation, stable live evidence, and both policy grants together
@@ -363,14 +365,16 @@ peer UID and never accepts an Apple identifier from the request. Public request
 exposure, operation-specific mutating consumers, and per-user relocking remain
 incomplete.
 
-The first operation-specific consumer is also internal and read-only. The live
+The first operation-specific consumer and its dispatcher are also internal and
+read-only. The live
 session retains a canonical identifier-free identity list only after the exact
 local Catacomb, per-user SEP list, global SEP list, clean Catacomb state, alias
 binding, and Bridge generation have survived the broker's stable recollection.
 The `inventory` policy handoff can return only sequential slots, labels, count,
 and reconciliation flags. It cannot collect activation authority, select a
-different user, expose UUIDs, or perform a T2 mutation. No public socket invokes
-it yet.
+different user, expose UUIDs, or perform a T2 mutation. A one-request dispatcher
+selects only `preflight` or the exact `identities/inventory` pair and returns one
+canonical response. No public socket invokes it yet.
 
 The same adapter now derives the caller's account generation itself rather than
 accepting an opaque digest from its future client. The deliberately conservative

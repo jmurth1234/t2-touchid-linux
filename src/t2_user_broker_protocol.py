@@ -8,14 +8,18 @@ import socket
 from dataclasses import dataclass
 
 import t2_user_broker
+import t2_user_broker_inventory
 import t2_user_policy
 
 
 MAX_REQUEST_BYTES = 512
-MAX_RESPONSE_BYTES = 2048
-COMMAND = "preflight"
+MAX_RESPONSE_BYTES = 128 * 1024
+PREFLIGHT_COMMAND = "preflight"
+IDENTITIES_COMMAND = "identities"
+COMMAND = PREFLIGHT_COMMAND
+COMMANDS = frozenset({PREFLIGHT_COMMAND, IDENTITIES_COMMAND})
 REQUEST_KEYS = frozenset({"schema_version", "command", "operation"})
-RESPONSE_KEYS = frozenset(
+PREFLIGHT_RESPONSE_KEYS = frozenset(
     {
         "schema_version",
         "command",
@@ -28,6 +32,25 @@ RESPONSE_KEYS = frozenset(
         "readiness_state",
         "quarantine",
         "ready_handoff_proved",
+        "t2_mutation_performed",
+        "identifiers_redacted",
+    }
+)
+INVENTORY_RESPONSE_KEYS = frozenset(
+    {
+        "schema_version",
+        "command",
+        "operation",
+        "state",
+        "policy_action",
+        "operation_permitted",
+        "activation_required",
+        "activation_permitted",
+        "readiness_state",
+        "quarantine",
+        "broker_consumer_invoked",
+        "identity_inventory_available",
+        "inventory",
         "t2_mutation_performed",
         "identifiers_redacted",
     }
@@ -99,7 +122,7 @@ class PreflightResponse:
     def public(self) -> dict[str, object]:
         return {
             "schema_version": 1,
-            "command": COMMAND,
+            "command": PREFLIGHT_COMMAND,
             "operation": self.operation,
             "state": self.state,
             "policy_action": self.policy_action,
@@ -109,6 +132,40 @@ class PreflightResponse:
             "readiness_state": self.readiness_state,
             "quarantine": self.quarantine,
             "ready_handoff_proved": self.ready_handoff_proved,
+            "t2_mutation_performed": False,
+            "identifiers_redacted": True,
+        }
+
+
+@dataclass(frozen=True)
+class InventoryResponse:
+    state: str
+    policy_action: str
+    operation_permitted: bool
+    activation_required: bool
+    activation_permitted: bool
+    readiness_state: str | None
+    quarantine: bool
+    broker_consumer_invoked: bool
+    inventory: t2_user_broker_inventory.PublicIdentityInventory | None
+
+    def public(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "command": IDENTITIES_COMMAND,
+            "operation": "inventory",
+            "state": self.state,
+            "policy_action": self.policy_action,
+            "operation_permitted": self.operation_permitted,
+            "activation_required": self.activation_required,
+            "activation_permitted": self.activation_permitted,
+            "readiness_state": self.readiness_state,
+            "quarantine": self.quarantine,
+            "broker_consumer_invoked": self.broker_consumer_invoked,
+            "identity_inventory_available": self.inventory is not None,
+            "inventory": (
+                self.inventory.public() if self.inventory is not None else None
+            ),
             "t2_mutation_performed": False,
             "identifiers_redacted": True,
         }
@@ -163,9 +220,13 @@ def _encode(value: dict[str, object], maximum: int, label: str) -> bytes:
 def encode_request(request: BrokerRequest) -> bytes:
     if (
         not isinstance(request, BrokerRequest)
-        or request.command != COMMAND
+        or request.command not in COMMANDS
         or not isinstance(request.operation, str)
         or request.operation not in t2_user_policy.OPERATION_POLICIES
+        or (
+            request.command == IDENTITIES_COMMAND
+            and request.operation != "inventory"
+        )
     ):
         raise UserBrokerProtocolError("broker request is invalid")
     return _encode(request.public(), MAX_REQUEST_BYTES, "request")
@@ -177,12 +238,16 @@ def decode_request(data: bytes) -> BrokerRequest:
         set(value) != REQUEST_KEYS
         or type(value.get("schema_version")) is not int
         or value["schema_version"] != 1
-        or value.get("command") != COMMAND
+        or value.get("command") not in COMMANDS
         or not isinstance(value.get("operation"), str)
         or value.get("operation") not in t2_user_policy.OPERATION_POLICIES
+        or (
+            value.get("command") == IDENTITIES_COMMAND
+            and value.get("operation") != "inventory"
+        )
     ):
         raise UserBrokerProtocolError("broker request schema is invalid")
-    request = BrokerRequest(COMMAND, value["operation"])
+    request = BrokerRequest(value["command"], value["operation"])
     if encode_request(request) != data:
         raise UserBrokerProtocolError("broker request is not canonical")
     return request
@@ -252,8 +317,10 @@ def response_from_result(
     request: BrokerRequest,
     result: t2_user_broker.BrokerResult,
 ) -> PreflightResponse:
-    if not isinstance(request, BrokerRequest) or not isinstance(
-        result, t2_user_broker.BrokerResult
+    if (
+        not isinstance(request, BrokerRequest)
+        or request.command != PREFLIGHT_COMMAND
+        or not isinstance(result, t2_user_broker.BrokerResult)
     ):
         raise UserBrokerProtocolError("preflight result has the wrong type")
     decision = result.decision
@@ -274,18 +341,84 @@ def response_from_result(
     return response
 
 
-def encode_response(response: PreflightResponse) -> bytes:
-    _validate_response(response)
+def _validate_inventory_response(response: InventoryResponse) -> None:
+    if not isinstance(response, InventoryResponse):
+        raise UserBrokerProtocolError("inventory response has the wrong type")
+    _validate_response(
+        PreflightResponse(
+            "inventory",
+            response.state,
+            response.policy_action,
+            response.operation_permitted,
+            response.activation_required,
+            response.activation_permitted,
+            response.readiness_state,
+            response.quarantine,
+            response.broker_consumer_invoked,
+        )
+    )
+    if response.broker_consumer_invoked != (response.inventory is not None):
+        raise UserBrokerProtocolError("inventory handoff claim is inconsistent")
+    if response.inventory is not None:
+        try:
+            parsed = t2_user_broker_inventory.parse_public_inventory(
+                response.inventory.public()
+            )
+        except t2_user_broker_inventory.UserBrokerInventoryError as error:
+            raise UserBrokerProtocolError("inventory response is invalid") from error
+        if parsed != response.inventory:
+            raise UserBrokerProtocolError("inventory response changed during validation")
+
+
+def response_from_inventory_result(
+    request: BrokerRequest,
+    result: t2_user_broker_inventory.BrokerInventoryResult,
+) -> InventoryResponse:
+    if (
+        not isinstance(request, BrokerRequest)
+        or request != BrokerRequest(IDENTITIES_COMMAND, "inventory")
+        or not isinstance(
+            result, t2_user_broker_inventory.BrokerInventoryResult
+        )
+        or result.decision.operation != "inventory"
+    ):
+        raise UserBrokerProtocolError("inventory result has the wrong type")
+    decision = result.decision
+    response = InventoryResponse(
+        decision.state,
+        decision.policy_action,
+        decision.operation_permitted,
+        decision.activation_required,
+        decision.activation_permitted,
+        decision.readiness_state,
+        decision.quarantine,
+        result.consumer_invoked,
+        result.inventory,
+    )
+    _validate_inventory_response(response)
+    return response
+
+
+def encode_response(response: PreflightResponse | InventoryResponse) -> bytes:
+    if isinstance(response, PreflightResponse):
+        _validate_response(response)
+    elif isinstance(response, InventoryResponse):
+        _validate_inventory_response(response)
+    else:
+        raise UserBrokerProtocolError("broker response has the wrong type")
     return _encode(response.public(), MAX_RESPONSE_BYTES, "response")
 
 
-def decode_response(data: bytes) -> PreflightResponse:
+def decode_response(data: bytes) -> PreflightResponse | InventoryResponse:
     value = _decode(data, MAX_RESPONSE_BYTES, "response")
+    command = value.get("command")
+    if command == IDENTITIES_COMMAND:
+        return _decode_inventory_response(value, data)
     if (
-        set(value) != RESPONSE_KEYS
+        set(value) != PREFLIGHT_RESPONSE_KEYS
         or type(value.get("schema_version")) is not int
         or value["schema_version"] != 1
-        or value.get("command") != COMMAND
+        or command != PREFLIGHT_COMMAND
         or value.get("t2_mutation_performed") is not False
         or value.get("identifiers_redacted") is not True
     ):
@@ -304,6 +437,56 @@ def decode_response(data: bytes) -> PreflightResponse:
     _validate_response(response)
     if encode_response(response) != data:
         raise UserBrokerProtocolError("preflight response is not canonical")
+    return response
+
+
+def _decode_inventory_response(
+    value: dict[str, object], data: bytes
+) -> InventoryResponse:
+    if (
+        set(value) != INVENTORY_RESPONSE_KEYS
+        or type(value.get("schema_version")) is not int
+        or value["schema_version"] != 1
+        or value.get("command") != IDENTITIES_COMMAND
+        or value.get("operation") != "inventory"
+        or value.get("t2_mutation_performed") is not False
+        or value.get("identifiers_redacted") is not True
+        or type(value.get("broker_consumer_invoked")) is not bool
+        or type(value.get("identity_inventory_available")) is not bool
+        or value["identity_inventory_available"]
+        != value["broker_consumer_invoked"]
+    ):
+        raise UserBrokerProtocolError("inventory response schema is invalid")
+    raw_inventory = value.get("inventory")
+    if value["identity_inventory_available"]:
+        try:
+            inventory = t2_user_broker_inventory.parse_public_inventory(
+                raw_inventory
+            )
+        except t2_user_broker_inventory.UserBrokerInventoryError as error:
+            raise UserBrokerProtocolError(
+                "inventory response payload is invalid"
+            ) from error
+    else:
+        if raw_inventory is not None:
+            raise UserBrokerProtocolError(
+                "denied inventory response contains data"
+            )
+        inventory = None
+    response = InventoryResponse(
+        value.get("state"),
+        value.get("policy_action"),
+        value.get("operation_permitted"),
+        value.get("activation_required"),
+        value.get("activation_permitted"),
+        value.get("readiness_state"),
+        value.get("quarantine"),
+        value["broker_consumer_invoked"],
+        inventory,
+    )
+    _validate_inventory_response(response)
+    if encode_response(response) != data:
+        raise UserBrokerProtocolError("inventory response is not canonical")
     return response
 
 
@@ -338,7 +521,10 @@ def receive_request(connection: socket.socket) -> BrokerRequest:
     return decode_request(data)
 
 
-def send_response(connection: socket.socket, response: PreflightResponse) -> None:
+def send_response(
+    connection: socket.socket,
+    response: PreflightResponse | InventoryResponse,
+) -> None:
     _require_seqpacket(connection)
     encoded = encode_response(response)
     try:

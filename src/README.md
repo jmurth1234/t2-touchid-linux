@@ -127,14 +127,15 @@ never requests activation authority or invokes the consumer.
 
 `t2_user_broker_protocol.py` defines the non-exposed local boundary as one
 canonical, bounded Unix `SOCK_SEQPACKET` message. A request contains only
-schema version 1, `preflight`, and one named policy operation; numeric commands,
-identifiers, extra fields, noncanonical JSON, truncation, stream sockets, and
-ancillary file descriptors fail closed. `t2_user_broker_preflight.py` joins
-that packet to the full broker transaction but deliberately suppresses
+schema version 1, a command, and one named policy operation. `preflight` accepts
+the compiled operation names; `identities` accepts only `inventory`. Numeric
+commands, identifiers, extra fields, noncanonical JSON, truncation, stream
+sockets, and ancillary file descriptors fail closed. `t2_user_broker_preflight.py`
+joins preflight to the full broker transaction but deliberately suppresses
 activation collection and all T2 mutation. An authorized response is valid only
 when the broker invoked its typed synchronous consumer while holding the same
 live runtime generation; every denied response carries no authority or handoff
-claim. No listener or public service installs these modules yet.
+claim.
 
 `t2_user_broker_inventory.py` is the first typed operation consumer. The live
 reconciliation session caches its identifier-free list only after a successful
@@ -144,6 +145,14 @@ same Bridge generation, authorized `inventory` decision, sequential slots, and
 bounded Catacomb-valid labels. It requests neither modification nor activation
 authority and returns no Apple UID, UUID, alias, entity number, or keybag data.
 It remains an internal composition with no installed listener or client.
+
+`t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
+only those two read-only forms. It passes modification policy only to preflight;
+the identities runner is intrinsically non-modifying and cannot collect
+activation authority. Runner/result type mismatches, malformed packets, and
+encoding failures produce no fallback operation. The dispatcher returns one
+canonical packet, then its caller owns connection closure. No listener or
+public service installs these modules yet.
 
 `t2_linux_account.py` supplies the previously abstract caller account
 generation. It supports a strict local-files profile only: one numeric UID must

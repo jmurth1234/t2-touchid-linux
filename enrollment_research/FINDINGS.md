@@ -3127,6 +3127,17 @@ activation, change users, expose biometric or keybag identifiers, or mutate T2
 state. This consumer is still non-exposed; a public listener remains gated on
 the rebuilt module's live endpoint-7 `0x06` observation test.
 
+The internal wire boundary now dispatches exactly two command forms:
+`preflight` plus one compiled operation name, or `identities` plus the fixed
+`inventory` operation. Both use one canonical bounded `SOCK_SEQPACKET` request
+and one canonical response. The dispatcher never forwards modification policy
+to inventory, never substitutes one command after an error, and rejects an
+unexpected runner/result type before serialization. An identities response
+contains a list only when the authenticated broker synchronously invoked the
+typed inventory consumer; a denied response must carry a null list and no
+handoff claim. This remains a non-exposed dispatcher rather than a daemon or
+public client boundary.
+
 The protected mapping administrator now has one concrete disabled-state writer.
 `t2-touchid-user-map bind-disabled` requires an explicit already-provisioned
 Apple UID/account UUID/bag UUID, explicit capabilities, the canonical private

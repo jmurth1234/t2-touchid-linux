@@ -106,6 +106,8 @@ evidence, not intent.
       preflight consumer that cannot collect activation authority.
 - [x] Join the first operation-specific read-only identity inventory consumer
       to the exact stable broker snapshot without exposing a listener.
+- [x] Add a strict one-request dispatcher for `preflight` and the exact
+      `identities/inventory` pair, with no mutation command or fallback.
 - [x] Add a live local-files account-generation assertion over the exact
       UID/passwd/shadow/database/home binding and revalidate it after PolicyKit.
 - [x] Add atomic administrator creation/rebinding for protected account
