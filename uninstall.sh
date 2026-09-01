@@ -26,6 +26,7 @@ systemctl disable --now fprintd.service t2-touchid-adaptive-sync.service \
   t2-sep-transport.service 2>/dev/null || true
 for file in /etc/systemd/system/{fprintd,t2-touchid-adaptive-sync,t2-touchid-post-reboot,t2-biometric-ready,t2-credential-unlock,t2-keybag-load,t2-sep-transport}.service \
   /usr/local/sbin/{t2-aks-tool,t2-keybag-load,t2-pam-unlock,t2-credential-unlock,t2-biometric-ready,t2-sep-transport-load,t2-touchid-doctor,t2-touchid-inventory,t2-touchid-identities,t2-touchid-identify-finger,t2-touchid-manage,t2-touchid-baseline,t2-catacomb-fixture-check,t2-acm-preflight,t2-aks-observe-test,t2-acm-lifecycle-test,t2-acm-policy-preflight,t2-acm-authorize-test,t2-touchid-enroll-test,t2-touchid-enroll,t2-touchid-user-map,t2-touchid-user-broker-gate,t2-touchid-fprint-status,t2-touchid-fprint-enrollment-gate,t2-touchid-post-reboot,t2-fprint-enrollment-worker,t2-fprint-delete-worker} \
+  /etc/systemd/system/fprintd.service.d/05-account-home.conf \
   /etc/systemd/system/fprintd.service.d/10-native-enrollment.conf \
   /etc/systemd/system/fprintd.service.d/20-native-identity-management.conf \
   /etc/modprobe.d/t2-sep-transport.conf \

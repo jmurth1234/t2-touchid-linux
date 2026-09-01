@@ -18,7 +18,9 @@ RuntimeDirectory=t2-touchid/workers
 RuntimeDirectoryMode=0700
 
 ProtectSystem=strict
-ProtectHome=true
+# The installer binds only the configured account home back into this empty
+# namespace, read-only, so account-recreation evidence remains live.
+ProtectHome=tmpfs
 PrivateTmp=true
 NoNewPrivileges=true
 ProtectKernelTunables=true

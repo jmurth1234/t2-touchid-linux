@@ -1349,6 +1349,19 @@ class BackendRecoveryTests(unittest.IsolatedAsyncioTestCase):
             installer,
         )
 
+    def test_fprintd_sandbox_exposes_only_the_configured_home_binding(self):
+        root = MODULE_PATH.parents[1]
+        unit = (root / "systemd/system/fprintd.service").read_text(
+            encoding="utf-8"
+        )
+        installer = (root / "install.sh").read_text(encoding="utf-8")
+        uninstaller = (root / "uninstall.sh").read_text(encoding="utf-8")
+        self.assertIn("ProtectHome=tmpfs", unit)
+        self.assertNotIn("ProtectHome=true", unit)
+        self.assertIn("BindReadOnlyPaths=%s", installer)
+        self.assertIn("05-account-home.conf", installer)
+        self.assertIn("05-account-home.conf", uninstaller)
+
     async def test_adaptive_sync_dispatch_is_explicit_and_exact(self):
         backend = MODULE.T2Backend.__new__(MODULE.T2Backend)
         backend.auto_sync_adaptive = False

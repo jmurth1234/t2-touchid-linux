@@ -140,6 +140,17 @@ install -o root -g root -m 0700 "$source_dir/src/t2-credential-unlock.sh" /usr/l
 install -o root -g root -m 0700 "$source_dir/src/t2-biometric-ready.sh" /usr/local/sbin/t2-biometric-ready
 install -o root -g root -m 0700 "$source_dir/src/t2-sep-transport-load.sh" /usr/local/sbin/t2-sep-transport-load
 install -o root -g root -m 0644 "$source_dir/systemd/system/"*.service /etc/systemd/system/
+if [[ ! $target_home =~ ^/[A-Za-z0-9._/-]+$ ]] || \
+    [[ $target_home == *//* || $target_home == */../* || \
+       $target_home == */./* || $target_home == */.. || $target_home == */. ]] || \
+    [[ $(realpath -e -- "$target_home") != "$target_home" ]]; then
+  echo "The configured home path is unsafe for the fprintd sandbox." >&2
+  exit 2
+fi
+install -d -o root -g root -m 0755 /etc/systemd/system/fprintd.service.d
+printf '[Service]\nBindReadOnlyPaths=%s\n' "$target_home" \
+  >/etc/systemd/system/fprintd.service.d/05-account-home.conf
+chmod 0644 /etc/systemd/system/fprintd.service.d/05-account-home.conf
 install -d -o root -g root -m 0755 /etc/modprobe.d
 module_options='options t2_sep_transport register_ool=1'
 if [[ $acm_research == 1 ]]; then
