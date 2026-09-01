@@ -84,10 +84,12 @@ session collector and joined to a protected local-account generation. A normal
 user may use the existing unique same-UID active-session fallback. A
 setuid-root PAM client is accepted only with the exact four-UID shape
 `real=user; effective=saved=filesystem=root`; its real UID is pinned alongside
-the bus UID and start time. It must be directly attached to that claimed
-non-root user's exact active local physical login session and can never borrow
-an arbitrary session. Both the process credentials, session, and account
-generation are revalidated on every claim-scoped call.
+the bus UID and start time. Because sudo's PAM helper is not itself registered
+with logind, it may use the unique same-real-UID active-local-session fallback;
+it cannot select another UID or an ambiguous session. An all-root client still
+requires a direct pidfd-to-session binding and can never borrow an arbitrary
+session. The process credentials, session, and account generation are all
+revalidated on every claim-scoped call.
 Claims are serialized so a concurrent claim cannot pass while evidence
 collection is suspended. `NameOwnerChanged` cleanup cancels active
 verification, closes the pidfd, and releases the claim when that connection

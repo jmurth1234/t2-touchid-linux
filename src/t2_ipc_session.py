@@ -516,6 +516,10 @@ def collect_session(
             peer.subject.uid != selected_uid
             and peer.subject.uid != t2_linux_account.ROOT_UID
         )
+        or (
+            peer.subject.setuid_real_uid is not None
+            and peer.subject.setuid_real_uid != selected_uid
+        )
     ):
         raise IPCSessionError("claimed Linux UID is not bound to the peer")
     direct = backend.session_for_pidfd(peer.pidfd)
@@ -524,11 +528,18 @@ def collect_session(
     if direct is not None:
         selected = (direct,)
     else:
-        if peer.subject.uid == t2_linux_account.ROOT_UID:
+        if (
+            peer.subject.uid == t2_linux_account.ROOT_UID
+            and peer.subject.setuid_real_uid is None
+        ):
             raise IPCSessionError(
                 "root caller has no directly bound login session"
             )
-        binding = "uid-active-session"
+        binding = (
+            "setuid-real-uid-active-session"
+            if peer.subject.setuid_real_uid is not None
+            else "uid-active-session"
+        )
         selected = backend.active_sessions(selected_uid)
     acceptable: list[tuple[str, SessionDescription]] = []
     for session in selected:

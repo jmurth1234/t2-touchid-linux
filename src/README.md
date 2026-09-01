@@ -220,13 +220,14 @@ kernel pidfd, PID, and UID; and the claim joins that process to a protected
 local-account generation and active physical logind session. Every
 claim-scoped call revalidates all three layers. A root PAM client is accepted
 only when its process has either stable all-root credentials or the exact
-setuid-PAM shape `real=user; effective=saved=filesystem=root`, and its exact
-pidfd resolves directly to the claimed non-root user's session. The latter
-shape pins the originating real UID as part of the immutable process subject;
-any UID transition invalidates the claim. Root cannot use the same-UID
-fallback. `NameOwnerChanged` cancels active work, closes the pidfd, and
-releases the claim. The username remains presentation input, never authority
-by itself.
+setuid-PAM shape `real=user; effective=saved=filesystem=root`. The latter shape
+pins the originating real UID as part of the immutable process subject; any
+UID transition invalidates the claim. It may use the unique active-local-
+session fallback only for that pinned real UID because sudo's PAM helper is not
+itself registered with logind. An all-root process still requires a direct
+pidfd-to-session binding and cannot use that fallback. `NameOwnerChanged`
+cancels active work, closes the pidfd, and releases the claim. The username
+remains presentation input, never authority by itself.
 
 A claim may derive a fresh `AuthorizationSession` using an independently owned
 duplicate pidfd only when the D-Bus caller UID is the claimed UID and the

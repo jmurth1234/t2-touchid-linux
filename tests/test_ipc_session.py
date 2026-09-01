@@ -9,6 +9,7 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 
 SOURCE = Path(__file__).parents[1] / "src"
@@ -127,6 +128,37 @@ class IPCSessionTests(unittest.TestCase):
         with ipc.PinnedPeer.from_socket(self.left) as peer:
             result = ipc.collect_session(peer, backend)
         self.assertEqual(result.binding, "uid-active-session")
+
+    def test_setuid_root_pam_uses_only_its_real_uids_unique_session(self):
+        uid = os.getuid()
+        current = t2_polkit_grant.read_process_subject(os.getpid(), uid)
+        subject = t2_polkit_grant.ProcessSubject(
+            current.pid, 0, current.start_time_ticks, uid
+        )
+        peer = ipc.PinnedPeer(
+            os.pidfd_open(os.getpid()),
+            subject,
+            proc_root=t2_polkit_grant.PROC_ROOT,
+            allow_root=True,
+            allow_setuid_root=True,
+        )
+        backend = FakeBackend(direct=None, sessions=("session-1",))
+        try:
+            with mock.patch.object(peer, "verify", return_value=subject):
+                result = ipc.collect_session(
+                    peer, backend, expected_uid=uid
+                )
+                self.assertEqual(
+                    result.binding, "setuid-real-uid-active-session"
+                )
+                with self.assertRaisesRegex(
+                    ipc.IPCSessionError, "not bound"
+                ):
+                    ipc.collect_session(
+                        peer, backend, expected_uid=uid + 1
+                    )
+        finally:
+            peer.close()
 
     def test_stale_fallback_rows_are_ineligible_but_direct_errors_are_fatal(self):
         valid = ipc.SessionDescription(
