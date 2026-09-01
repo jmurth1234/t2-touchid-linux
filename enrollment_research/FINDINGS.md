@@ -3032,10 +3032,37 @@ logout/login and same-description session-replacement races. A live read-only
 check on the proven machine selected its active local Wayland session and
 excluded both a remote TTY and a stale logind row.
 
-This produces trustworthy caller/session and PolicyKit evidence inside one
-pidfd lifetime, but is still not a public service. The next missing persistent
-input is a live Linux account-generation assertion that can detect UID/account
-replacement without trusting a mutable username.
+The caller/session/PolicyKit join now also has a concrete account-generation
+producer. Traditional passwd/NSS accounts expose no immutable account UUID, so
+the supported `local-files-v1` profile is intentionally conservative. Starting
+from the kernel peer UID, it requires exactly one root-owned local passwd row,
+an exactly agreeing NSS record, one root-private usable shadow row, and the
+UID-owned home-directory object opened without following its final component.
+The generation commits to the entire passwd database bytes and filesystem
+epoch, the target passwd and shadow records, and the home device/inode. Shadow
+bytes exist only in a bounded wipeable buffer and are never emitted.
+A root-only read-only collection on the proven machine returned the redacted
+`local-files-v1` profile with both protected-password and home-object bindings
+present; no UID, account name, digest, or shadow field was printed.
+
+The IPC layer collects this evidence before and after PolicyKit while the pidfd
+remains open and requires exact equality. Account deletion/recreation, password
+or account edits, home replacement, and even an unrelated passwd-database
+rewrite invalidate the old mapping. That global invalidation is deliberate:
+without a continuously trustworthy account-manager journal, accepting a
+byte-identical final UID row after a database rewrite would falsely claim that
+an intervening delete/recreate was impossible. An administrator must explicitly
+re-attest the protected mapping. LDAP, systemd-homed, and other stores remain
+unsupported until they provide an equivalent stable assertion. This closes the
+live account-generation input but does not yet create a public broker or its
+provisioning/rebinding interface.
+
+The resulting account-generation digest is carried by the bounded PolicyKit
+grant and its downstream policy binding, not merely checked beside them. The
+policy resolver compares it with both the pinned caller evidence and the
+protected target mapping, and the activation boundary compares the downstream
+binding with that same selected mapping. A grant for one generation of a UID
+cannot therefore be detached and paired with another generation of that UID.
 
 The safest host-side activation is not to reuse `-501` for every Linux user.
 Each already-provisioned Apple user retains its Apple UID-derived alias

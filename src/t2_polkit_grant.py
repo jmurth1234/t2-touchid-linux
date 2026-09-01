@@ -182,6 +182,7 @@ def collect(
     *,
     caller_pid: int,
     peer_uid: int,
+    account_generation: str,
     target_linux_uid: int,
     action: str,
     mapping_generation: str,
@@ -213,6 +214,9 @@ def collect(
     mapping_generation = _checked_digest(
         mapping_generation, "mapping generation"
     )
+    account_generation = _checked_digest(
+        account_generation, "account generation"
+    )
     operation_id = _checked_uuid(operation_id, "operation ID")
     linux_boot_uuid = _checked_uuid(linux_boot_uuid, "Linux boot UUID")
     before = read_process_subject(
@@ -233,6 +237,9 @@ def collect(
         "--detail",
         "t2.mapping-generation",
         mapping_generation,
+        "--detail",
+        "t2.account-generation",
+        account_generation,
     ]
     if allow_user_interaction:
         command.append("--allow-user-interaction")
@@ -265,6 +272,7 @@ def collect(
         str(uuid.uuid4()),
         action,
         peer_uid,
+        account_generation,
         target_linux_uid,
         mapping_generation,
         operation_id,

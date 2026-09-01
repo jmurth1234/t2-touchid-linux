@@ -97,6 +97,10 @@ evidence, not intent.
 - [x] Add connected-Unix-peer collection with `SO_PEERPIDFD`, libsystemd pidfd
       session resolution, strict active/local/seat policy, stable fallback for
       user-manager apps, and post-PolicyKit session revalidation.
+- [x] Add a live local-files account-generation assertion over the exact
+      UID/passwd/shadow/database/home binding and revalidate it after PolicyKit.
+- [ ] Add explicit administrator provisioning/rebinding for protected account
+      generations; never auto-accept a changed account assertion.
 - [ ] Validate operation `0x06` and the read-only alias observer on hardware
       after loading the rebuilt pinned module at reboot.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor

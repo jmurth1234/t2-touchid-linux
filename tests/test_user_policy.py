@@ -73,6 +73,7 @@ def grant(values, action=None, **changes):
         "authorization_id": identifier(30),
         "action": action or operation_policy.action,
         "caller_linux_uid": 1000,
+        "linux_account_generation": "a" * 64,
         "target_linux_uid": values.target_linux_uid,
         "mapping_generation": mappings().generation,
         "operation_id": values.operation_id,
@@ -247,6 +248,7 @@ class UserPolicyTests(unittest.TestCase):
             "operation": {"operation_id": identifier(99)},
             "boot": {"linux_boot_uuid": identifier(98)},
             "mapping": {"mapping_generation": "f" * 64},
+            "account": {"linux_account_generation": "f" * 64},
             "target": {"target_linux_uid": 1001},
             "caller": {"caller_linux_uid": 1001},
         }

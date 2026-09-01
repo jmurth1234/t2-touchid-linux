@@ -79,10 +79,11 @@ delegation policy remain separate from the file parser.
 `verify`, `inventory`, `enroll`, `rename`, and `delete-one`. It accepts only an
 authenticated active self-session, resolves the target exclusively by numeric
 Linux UID through the protected mapping, and requires an operation-specific
-grant bound to caller, target, exact mapping bytes, operation UUID, Linux boot,
-and a maximum five-minute monotonic validity interval. Cross-user delegation
-is disabled, root has no implicit authority, mutation-disable policy is
-independent, and grants are not transitive between action classes. A locked or
+grant bound to caller, target, live account generation, exact mapping bytes,
+operation UUID, Linux boot, and a maximum five-minute monotonic validity
+interval. Cross-user delegation is disabled, root has no implicit authority,
+mutation-disable policy is independent, and grants are not transitive between
+action classes. A locked or
 absent target additionally requires a separately bound `activate-user` grant;
 lockout and quarantine can never use that route. The returned mapping and
 binding are internal while the report is identifier-free.
@@ -109,6 +110,18 @@ remain internal and are compared before and after PolicyKit, so logout/login or
 session replacement cannot reuse the decision. A live test on the proven
 machine selects its local Wayland user session while safely ignoring an
 unreadable stale logind row.
+
+`t2_linux_account.py` supplies the previously abstract caller account
+generation. It supports a strict local-files profile only: one numeric UID must
+have one root-owned local passwd row, NSS must resolve the same complete record,
+the matching root-private shadow row must remain usable, and the home path must
+open without following its final component to a UID-owned directory. The
+generation commits to the exact passwd database epoch and bytes, the target
+passwd/shadow records, and the home filesystem object. The IPC join collects it
+before and after PolicyKit. No username or digest comes from the request, and
+no shadow data appears in returned or redacted evidence. A passwd rewrite—even
+for another account—is deliberately fail-closed and requires administrator
+re-attestation; LDAP and systemd-homed are not silently approximated.
 
 `t2_user_readiness.py` is the next pure runtime boundary. Given a validated
 mapping plus independently collected Linux-account/keybag/Catacomb and live
@@ -147,7 +160,7 @@ only inside a private transient directory, and deletes it immediately.
 `t2_aks_transport.py` composes that observer with the existing load, bind, and
 unlock commands; password bytes traverse a pipe and command output must match
 the exact typed reply. These modules provide the concrete dependency boundary,
-but no public IPC request protocol, live account-generation collector,
+but no public IPC request protocol, account-binding/rebinding CLI,
 recovery CLI, or public activation command is present. Hardware validation of
 operation `0x06` requires installing
 the rebuilt pinned module and rebooting before this adapter can be enabled.

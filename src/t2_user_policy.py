@@ -54,7 +54,7 @@ class UserPolicyError(ValueError):
     """Raised when supplied authorization evidence is structurally invalid."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class CallerEvidence:
     linux_uid: int
     linux_account_generation: str
@@ -72,11 +72,12 @@ class OperationRequest:
     modification_allowed: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class PolicyGrant:
     authorization_id: str
     action: str
     caller_linux_uid: int
+    linux_account_generation: str
     target_linux_uid: int
     mapping_generation: str
     operation_id: str
@@ -89,6 +90,7 @@ class PolicyGrant:
 @dataclass(frozen=True, repr=False)
 class PolicyBinding:
     mapping_generation: str
+    linux_account_generation: str
     operation_id: str
     linux_boot_uuid: str
     caller_linux_uid: int
@@ -192,6 +194,7 @@ def _validate_grant(grant: PolicyGrant, request: OperationRequest) -> None:
     if not isinstance(grant.action, str) or not grant.action:
         raise UserPolicyError("policy action is invalid")
     _uid(grant.caller_linux_uid, "grant caller Linux UID")
+    _digest(grant.linux_account_generation, "grant account generation")
     _uid(grant.target_linux_uid, "grant target Linux UID")
     _digest(grant.mapping_generation, "grant mapping generation")
     _canonical_uuid(grant.operation_id, "grant operation ID")
@@ -219,6 +222,7 @@ def _grant_bound(
     return (
         grant.action == action
         and grant.caller_linux_uid == caller.linux_uid
+        and grant.linux_account_generation == caller.linux_account_generation
         and grant.target_linux_uid == request.target_linux_uid
         and grant.mapping_generation == mapping_generation
         and grant.operation_id == request.operation_id
@@ -263,6 +267,7 @@ def _binding(
 ) -> PolicyBinding:
     return PolicyBinding(
         mapping_set.generation,
+        caller.linux_account_generation,
         request.operation_id,
         request.linux_boot_uuid,
         caller.linux_uid,
@@ -445,6 +450,7 @@ def require_bound_authority(
         raise UserPolicyError("policy decision has no typed binding")
     try:
         _digest(binding.mapping_generation, "binding mapping generation")
+        _digest(binding.linux_account_generation, "binding account generation")
         _canonical_uuid(binding.operation_id, "binding operation ID")
         _canonical_uuid(binding.linux_boot_uuid, "binding Linux boot UUID")
         _uid(binding.caller_linux_uid, "binding caller Linux UID")
@@ -467,6 +473,8 @@ def require_bound_authority(
         or decision.policy_action != expected_policy.action
         or binding.capability != expected_policy.capability
         or binding.mapping_generation != mapping_set.generation
+        or binding.linux_account_generation
+        != selected.linux_account_generation
         or binding.linux_boot_uuid != linux_boot_uuid
         or binding.target_linux_uid != selected.linux_uid
         or binding.caller_linux_uid != selected.linux_uid

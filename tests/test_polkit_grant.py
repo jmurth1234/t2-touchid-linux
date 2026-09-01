@@ -61,6 +61,7 @@ class PolkitGrantTests(unittest.TestCase):
         values = {
             "caller_pid": self.pid,
             "peer_uid": self.uid,
+            "account_generation": "b" * 64,
             "target_linux_uid": self.uid,
             "action": "org.t2linux.touchid.enroll",
             "mapping_generation": "a" * 64,
@@ -102,6 +103,9 @@ class PolkitGrantTests(unittest.TestCase):
                 "--detail",
                 "t2.mapping-generation",
                 "a" * 64,
+                "--detail",
+                "t2.account-generation",
+                "b" * 64,
                 "--allow-user-interaction",
             ],
         )
@@ -176,6 +180,7 @@ class PolkitGrantTests(unittest.TestCase):
             {"grant_lifetime_ns": policy.MAX_POLICY_LIFETIME_NS + 1},
             {"timeout_seconds": 301},
             {"operation_id": "bad"},
+            {"account_generation": "bad"},
         )
         for changes in cases:
             with self.subTest(changes=changes):

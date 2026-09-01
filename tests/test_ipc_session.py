@@ -14,6 +14,7 @@ from pathlib import Path
 SOURCE = Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SOURCE))
 import t2_ipc_session as ipc
+import t2_linux_account as linux_account
 import t2_polkit_grant
 
 
@@ -178,13 +179,15 @@ class IPCSessionTests(unittest.TestCase):
         backend = FakeBackend()
         commands = []
 
+        def account_collector(uid):
+            return linux_account.AccountEvidence(uid, "a" * 64)
+
         def runner(command, timeout):
             commands.append((command, timeout))
             return subprocess.CompletedProcess(command, 0, b"", b"")
 
         result = ipc.collect_authorization(
             self.left,
-            account_generation="a" * 64,
             target_linux_uid=os.getuid(),
             action="org.t2linux.touchid.enroll",
             mapping_generation="b" * 64,
@@ -197,6 +200,7 @@ class IPCSessionTests(unittest.TestCase):
             clock=lambda: 1_000,
             grant_lifetime_ns=500,
             timeout_seconds=5,
+            account_collector=account_collector,
         )
         self.assertTrue(result.caller.active_local_session)
         self.assertTrue(result.policy.grant.authorized)
@@ -208,6 +212,9 @@ class IPCSessionTests(unittest.TestCase):
     def test_join_rejects_session_change_during_policy_interaction(self):
         backend = FakeBackend()
 
+        def account_collector(uid):
+            return linux_account.AccountEvidence(uid, "a" * 64)
+
         def runner(command, timeout):
             backend.descriptions["session-1"] = ipc.SessionDescription(
                 os.getuid(), True, False, "wayland", "user", "seat0", 2
@@ -217,7 +224,6 @@ class IPCSessionTests(unittest.TestCase):
         with self.assertRaises(ipc.IPCSessionError):
             ipc.collect_authorization(
                 self.left,
-                account_generation="a" * 64,
                 target_linux_uid=os.getuid(),
                 action="org.t2linux.touchid.enroll",
                 mapping_generation="b" * 64,
@@ -228,7 +234,66 @@ class IPCSessionTests(unittest.TestCase):
                 pkcheck=Path("/test/pkcheck"),
                 runner=runner,
                 clock=lambda: 1_000,
+                account_collector=account_collector,
             )
+
+    def test_join_rejects_account_change_during_policy_interaction(self):
+        backend = FakeBackend()
+        generations = iter(("a" * 64, "c" * 64))
+
+        def account_collector(uid):
+            return linux_account.AccountEvidence(uid, next(generations))
+
+        def runner(command, timeout):
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+        with self.assertRaisesRegex(ipc.IPCSessionError, "account changed"):
+            ipc.collect_authorization(
+                self.left,
+                target_linux_uid=os.getuid(),
+                action="org.t2linux.touchid.enroll",
+                mapping_generation="b" * 64,
+                operation_id=identifier(10),
+                linux_boot_uuid=identifier(11),
+                allow_user_interaction=False,
+                backend=backend,
+                pkcheck=Path("/test/pkcheck"),
+                runner=runner,
+                clock=lambda: 1_000,
+                account_collector=account_collector,
+            )
+
+    def test_join_rejects_malformed_account_evidence_before_policy(self):
+        backend = FakeBackend()
+
+        for evidence in (
+            object(),
+            linux_account.AccountEvidence(os.getuid() + 1, "a" * 64),
+            linux_account.AccountEvidence(os.getuid(), "bad"),
+            linux_account.AccountEvidence(
+                os.getuid(), "a" * 64, protected_password_record=False
+            ),
+        ):
+            with self.subTest(evidence=repr(evidence)):
+                with self.assertRaisesRegex(
+                    ipc.IPCSessionError, "invalid evidence"
+                ):
+                    ipc.collect_authorization(
+                        self.left,
+                        target_linux_uid=os.getuid(),
+                        action="org.t2linux.touchid.enroll",
+                        mapping_generation="b" * 64,
+                        operation_id=identifier(10),
+                        linux_boot_uuid=identifier(11),
+                        allow_user_interaction=False,
+                        backend=backend,
+                        pkcheck=Path("/test/pkcheck"),
+                        runner=lambda command, timeout: self.fail(
+                            "PolicyKit must not run"
+                        ),
+                        clock=lambda: 1_000,
+                        account_collector=lambda uid, value=evidence: value,
+                    )
 
 
 if __name__ == "__main__":

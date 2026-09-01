@@ -108,6 +108,9 @@ or an alternative sleep mode has been validated on the specific Mac model.
   adapter that creates bounded in-process grants for the policy resolver.
 - `src/t2_ipc_session.py`: `SO_PEERCRED`/`SO_PEERPIDFD` and libsystemd session
   collector that joins one live local session to the PolicyKit decision.
+- `src/t2_linux_account.py`: strict local-files account-generation collector
+  that detects UID/account/password/database replacement without accepting a
+  caller-supplied username or generation.
 - `src/t2_user_activation_{journal,operation,recovery}.py`: transport-free
   durable activation, execution, and read-only recovery core; no CLI exists.
 - `src/t2_aks_{state,observer,transport}.py`: strict operation-`0x19` state
@@ -321,9 +324,10 @@ Apple authority across Linux accounts and derives the special alias as
 The internal policy resolver now consumes that mapping together with
 authenticated-caller, active-session, fresh policy-grant, and readiness
 evidence. It permits only self-service, gives root no implicit bypass, binds a
-grant to the exact caller, target, mapping generation, operation UUID, Linux
-boot, action, and a bounded monotonic lifetime, and keeps verification,
-inventory, enrollment, and identity-management actions non-transitive. A
+grant to the exact caller, target, Linux account generation, mapping generation,
+operation UUID, Linux boot, action, and a bounded monotonic lifetime, and keeps
+verification, inventory, enrollment, and identity-management actions
+non-transitive. A
 separate `activate-user` grant is mandatory before a locked or absent alias may
 enter the keybag activation core. The activation journal then uses the same
 bound operation UUID.
@@ -338,8 +342,20 @@ session exists. Session ID/start time and process identity are checked again
 after PolicyKit returns. PID reuse, setuid subjects, session switching, remote
 or greeter sessions, unknown actions, cross-user targets, timeouts, and
 ambiguous exits never create an authorized grant. There is still no public
-multi-user broker; live account-generation collection, per-user relocking, and
+multi-user broker; per-user relocking, mapping provisioning/rebinding, and
 runtime/session orchestration remain incomplete.
+
+The same adapter now derives the caller's account generation itself rather than
+accepting an opaque digest from its future client. The deliberately conservative
+`local-files-v1` profile resolves the kernel UID to one exact root-owned
+`/etc/passwd` row, requires an agreeing NSS result and protected `/etc/shadow`
+row, and binds the passwd database epoch plus the UID-owned home-directory
+object. It collects the assertion again after PolicyKit and requires byte-exact
+evidence equality. Account recreation, password/account edits, home replacement,
+or any passwd-database rewrite therefore disables the old mapping until an
+administrator explicitly rebinds it. This profile intentionally does not claim
+support for LDAP, systemd-homed, or other account stores lacking an equivalent
+stable assertion.
 
 The accompanying pure readiness classifier already defines the fail-closed
 outcomes for that future runtime: absent aliases require activation and fresh

@@ -18,10 +18,12 @@ import signal
 import socket
 import struct
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+import t2_linux_account
 import t2_polkit_grant
 import t2_user_policy
 
@@ -97,12 +99,14 @@ class SessionEvidence:
 @dataclass(frozen=True, repr=False)
 class AuthorizationEvidence:
     caller: t2_user_policy.CallerEvidence
+    account: t2_linux_account.AccountEvidence
     session: SessionEvidence
     policy: t2_polkit_grant.PolkitGrantResult
 
     def redacted(self) -> dict[str, object]:
         return {
             "schema_version": 1,
+            "account": self.account.redacted(),
             "session": self.session.redacted(),
             "policy": self.policy.redacted(),
             "identifiers_redacted": True,
@@ -115,6 +119,29 @@ class SessionBackend(Protocol):
     def active_sessions(self, uid: int) -> tuple[str, ...]: ...
 
     def describe(self, session: str) -> SessionDescription: ...
+
+
+AccountCollector = Callable[[int], t2_linux_account.AccountEvidence]
+
+
+def _validated_account(
+    value: object, uid: int
+) -> t2_linux_account.AccountEvidence:
+    if (
+        not isinstance(value, t2_linux_account.AccountEvidence)
+        or value.linux_uid != uid
+        or value.source != "local-files-v1"
+        or value.protected_password_record is not True
+        or value.home_object_bound is not True
+    ):
+        raise IPCSessionError("Linux account collector returned invalid evidence")
+    try:
+        t2_user_policy._digest(value.generation, "caller account generation")
+    except t2_user_policy.UserPolicyError as error:
+        raise IPCSessionError(
+            "Linux account collector returned invalid evidence"
+        ) from error
+    return value
 
 
 class LibsystemdSessionBackend:
@@ -443,7 +470,6 @@ def collect_session(
 def collect_authorization(
     connection: socket.socket,
     *,
-    account_generation: str,
     target_linux_uid: int,
     action: str,
     mapping_generation: str,
@@ -457,15 +483,25 @@ def collect_authorization(
     clock: t2_polkit_grant.Clock = time.monotonic_ns,
     grant_lifetime_ns: int = t2_polkit_grant.DEFAULT_GRANT_LIFETIME_NS,
     timeout_seconds: int = 120,
+    account_collector: AccountCollector = t2_linux_account.collect,
 ) -> AuthorizationEvidence:
-    """Join one pinned IPC peer, stable active session, and PolicyKit result."""
+    """Join a pinned peer, local account/session, and PolicyKit result."""
 
     with PinnedPeer.from_socket(connection, proc_root=proc_root) as peer:
         first_session = collect_session(peer, backend)
-        caller = first_session.caller(account_generation, peer.subject.uid)
+        try:
+            first_account = _validated_account(
+                account_collector(peer.subject.uid), peer.subject.uid
+            )
+        except t2_linux_account.LinuxAccountError as error:
+            raise IPCSessionError("Linux account assertion failed") from error
+        caller = first_session.caller(
+            first_account.generation, peer.subject.uid
+        )
         result = t2_polkit_grant.collect(
             caller_pid=peer.subject.pid,
             peer_uid=peer.subject.uid,
+            account_generation=first_account.generation,
             target_linux_uid=target_linux_uid,
             action=action,
             mapping_generation=mapping_generation,
@@ -485,9 +521,19 @@ def collect_authorization(
             raise IPCSessionError(
                 "caller login session changed during authorization"
             )
+        try:
+            second_account = _validated_account(
+                account_collector(peer.subject.uid), peer.subject.uid
+            )
+        except t2_linux_account.LinuxAccountError as error:
+            raise IPCSessionError("Linux account revalidation failed") from error
+        if second_account != first_account:
+            raise IPCSessionError(
+                "Linux account changed during authorization"
+            )
         if (
             result.grant.caller_linux_uid != peer.subject.uid
             or result.grant.target_linux_uid != target_linux_uid
         ):
             raise IPCSessionError("PolicyKit grant is not bound to the IPC peer")
-        return AuthorizationEvidence(caller, first_session, result)
+        return AuthorizationEvidence(caller, first_account, first_session, result)
