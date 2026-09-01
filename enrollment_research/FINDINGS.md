@@ -3089,6 +3089,18 @@ grants are both required, the earlier expiry wins. A reconnect, timeout, or
 attempt to combine grants from different runtime generations therefore fails
 before touching AKS and cannot create an activation journal.
 
+The non-exposed broker transaction now preserves that binding mechanically.
+It opens one `SO_PEERPIDFD` authorization session and retains it across both
+PolicyKit actions, while simultaneously holding the protected mapping writer
+lock, global biometric operation lock, and one Bridge lease. Mapping bytes,
+account generation, keybag digest, complete live inventory/Catacomb snapshot,
+AKS alias evidence, peer process, and login session are revalidated before the
+synchronous consumer handoff. The target is derived exclusively from the peer
+UID. A denied operation does not prompt for activation, and no callback runs
+after mapping/live drift, reconnect, or expiry. This is the joined internal
+transaction boundary; it is not yet a public socket protocol or mutation
+consumer.
+
 The protected mapping administrator now has one concrete disabled-state writer.
 `t2-touchid-user-map bind-disabled` requires an explicit already-provisioned
 Apple UID/account UUID/bag UUID, explicit capabilities, the canonical private

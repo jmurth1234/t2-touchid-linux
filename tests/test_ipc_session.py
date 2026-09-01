@@ -213,6 +213,51 @@ class IPCSessionTests(unittest.TestCase):
         self.assertNotIn(identifier(10), rendered)
         self.assertNotIn(str(os.getuid()), rendered)
 
+    def test_authorization_session_pins_one_peer_across_multiple_grants(self):
+        backend = FakeBackend()
+        commands = []
+
+        def account_collector(uid):
+            return linux_account.AccountEvidence(uid, "a" * 64)
+
+        def runner(command, timeout):
+            commands.append((command, timeout))
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+        session = ipc.AuthorizationSession.from_socket(
+            self.left,
+            backend=backend,
+            account_collector=account_collector,
+        )
+        descriptor = session._peer.pidfd
+        with session:
+            for action in (
+                "org.t2linux.touchid.enroll",
+                "org.t2linux.touchid.activate-user",
+            ):
+                result = session.collect(
+                    target_linux_uid=os.getuid(),
+                    action=action,
+                    mapping_generation="b" * 64,
+                    operation_id=identifier(10),
+                    linux_boot_uuid=identifier(11),
+                    runtime_generation=identifier(12),
+                    allow_user_interaction=False,
+                    pkcheck=Path("/test/pkcheck"),
+                    runner=runner,
+                    clock=lambda: 1_000,
+                    grant_lifetime_ns=500,
+                    timeout_seconds=5,
+                )
+                self.assertTrue(result.policy.grant.authorized)
+                self.assertEqual(session._peer.pidfd, descriptor)
+                session.revalidate()
+        self.assertEqual(len(commands), 2)
+        with self.assertRaises(OSError):
+            fcntl.fcntl(descriptor, fcntl.F_GETFD)
+        with self.assertRaisesRegex(ipc.IPCSessionError, "closed"):
+            session.revalidate()
+
     def test_join_rejects_session_change_during_policy_interaction(self):
         backend = FakeBackend()
 

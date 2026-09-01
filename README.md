@@ -350,8 +350,12 @@ session exists. Session ID/start time and process identity are checked again
 after PolicyKit returns. PID reuse, setuid subjects, session switching, remote
 or greeter sessions, unknown actions, cross-user targets, timeouts, and
 ambiguous exits never create an authorized grant. There is still no public
-multi-user broker; per-user relocking and runtime/session orchestration remain
-incomplete.
+multi-user socket or request protocol. The internal `t2_user_broker.py`
+transaction now keeps one pinned peer, mapping writer lock, biometric operation
+lock, Bridge generation, stable live evidence, and both policy grants together
+through a synchronous consumer handoff. It derives the target from the kernel
+peer UID and never accepts an Apple identifier from the request. Public request
+framing, operation-specific consumers, and per-user relocking remain incomplete.
 
 The same adapter now derives the caller's account generation itself rather than
 accepting an opaque digest from its future client. The deliberately conservative

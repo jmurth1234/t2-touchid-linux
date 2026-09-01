@@ -260,6 +260,14 @@ class LiveUserReconciliationSession:
         self._generation: str | None = None
         self._first_snapshot_digest: str | None = None
 
+    @property
+    def runtime_generation(self) -> str:
+        if self._stack is None or self._generation is None:
+            raise LiveUserReconciliationError(
+                "live reconciliation session is not active"
+            )
+        return self._generation
+
     def __enter__(self) -> LiveUserReconciliationSession:
         if os.geteuid() != ROOT_UID or self._stack is not None:
             raise LiveUserReconciliationError(

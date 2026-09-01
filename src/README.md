@@ -114,6 +114,17 @@ session replacement cannot reuse the decision. A live test on the proven
 machine selects its local Wayland user session while safely ignoring an
 unreadable stale logind row.
 
+`t2_user_broker.py` joins those previously separate boundaries without exposing
+a service. One reusable `AuthorizationSession` keeps the peer pidfd, exact
+login session, and account evidence alive across distinct operation and
+activation grants. Under the protected mapping lock, the broker then holds one
+read-only live session and Bridge generation, performs three stable
+mapping/keybag/live checks around PolicyKit, consumes the shorter grant expiry,
+and invokes a synchronous internal consumer before releasing any lease. The
+target Linux UID comes only from the kernel peer; request data cannot select an
+Apple UID, alias, account UUID, bag UUID, or keybag path. A denied operation
+never requests activation authority or invokes the consumer.
+
 `t2_linux_account.py` supplies the previously abstract caller account
 generation. It supports a strict local-files profile only: one numeric UID must
 have one root-owned local passwd row, NSS must resolve the same complete record,

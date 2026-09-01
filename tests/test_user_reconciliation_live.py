@@ -169,8 +169,11 @@ class LiveUserReconciliationTests(unittest.TestCase):
     def test_inactive_reentered_or_generation_changed_session_fails(self):
         session = live_reconciliation.LiveUserReconciliationSession()
         with self.assertRaises(live_reconciliation.LiveUserReconciliationError):
+            _generation = session.runtime_generation
+        with self.assertRaises(live_reconciliation.LiveUserReconciliationError):
             session.collect(selected(), "a" * 64, "b" * 64)
         with session:
+            self.assertEqual(session.runtime_generation, identifier(10))
             with self.assertRaises(live_reconciliation.LiveUserReconciliationError):
                 session.__enter__()
             self.lease.connection_generation = identifier(12)
@@ -179,6 +182,8 @@ class LiveUserReconciliationTests(unittest.TestCase):
                 "generation changed",
             ):
                 session.collect(selected(), "a" * 64, "b" * 64)
+        with self.assertRaises(live_reconciliation.LiveUserReconciliationError):
+            _generation = session.runtime_generation
 
     def test_local_catacomb_change_or_malformed_host_binding_fails(self):
         changed = dict(self.components)

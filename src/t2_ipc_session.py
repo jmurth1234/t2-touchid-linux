@@ -488,21 +488,13 @@ def collect_authorization(
 ) -> AuthorizationEvidence:
     """Join a pinned peer, local account/session, and PolicyKit result."""
 
-    with PinnedPeer.from_socket(connection, proc_root=proc_root) as peer:
-        first_session = collect_session(peer, backend)
-        try:
-            first_account = _validated_account(
-                account_collector(peer.subject.uid), peer.subject.uid
-            )
-        except t2_linux_account.LinuxAccountError as error:
-            raise IPCSessionError("Linux account assertion failed") from error
-        caller = first_session.caller(
-            first_account.generation, peer.subject.uid
-        )
-        result = t2_polkit_grant.collect(
-            caller_pid=peer.subject.pid,
-            peer_uid=peer.subject.uid,
-            account_generation=first_account.generation,
+    with AuthorizationSession.from_socket(
+        connection,
+        backend=backend,
+        proc_root=proc_root,
+        account_collector=account_collector,
+    ) as session:
+        return session.collect(
             target_linux_uid=target_linux_uid,
             action=action,
             mapping_generation=mapping_generation,
@@ -510,32 +502,149 @@ def collect_authorization(
             linux_boot_uuid=linux_boot_uuid,
             runtime_generation=runtime_generation,
             allow_user_interaction=allow_user_interaction,
-            proc_root=proc_root,
             pkcheck=pkcheck,
             runner=runner,
             clock=clock,
             grant_lifetime_ns=grant_lifetime_ns,
             timeout_seconds=timeout_seconds,
         )
-        peer.verify()
-        second_session = collect_session(peer, backend)
-        if second_session != first_session:
+
+
+class AuthorizationSession:
+    """Hold one kernel-pinned peer and login/account assertion across grants."""
+
+    def __init__(
+        self,
+        peer: PinnedPeer,
+        backend: SessionBackend,
+        session: SessionEvidence,
+        account: t2_linux_account.AccountEvidence,
+        account_collector: AccountCollector,
+    ) -> None:
+        self._peer = peer
+        self._backend = backend
+        self._session = session
+        self._account = account
+        self._account_collector = account_collector
+        self._closed = False
+        self.caller = session.caller(account.generation, peer.subject.uid)
+
+    @classmethod
+    def from_socket(
+        cls,
+        connection: socket.socket,
+        *,
+        backend: SessionBackend | None = None,
+        proc_root: Path = t2_polkit_grant.PROC_ROOT,
+        account_collector: AccountCollector = t2_linux_account.collect,
+    ) -> "AuthorizationSession":
+        peer = PinnedPeer.from_socket(connection, proc_root=proc_root)
+        try:
+            selected_backend = backend or LibsystemdSessionBackend()
+            session = collect_session(peer, selected_backend)
+            try:
+                account = _validated_account(
+                    account_collector(peer.subject.uid), peer.subject.uid
+                )
+            except t2_linux_account.LinuxAccountError as error:
+                raise IPCSessionError("Linux account assertion failed") from error
+            return cls(
+                peer,
+                selected_backend,
+                session,
+                account,
+                account_collector,
+            )
+        except BaseException:
+            peer.close()
+            raise
+
+    @property
+    def account(self) -> t2_linux_account.AccountEvidence:
+        return self._account
+
+    @property
+    def session(self) -> SessionEvidence:
+        return self._session
+
+    def revalidate(self) -> None:
+        if self._closed:
+            raise IPCSessionError("authorization session is closed")
+        self._peer.verify()
+        current_session = collect_session(self._peer, self._backend)
+        if current_session != self._session:
             raise IPCSessionError(
                 "caller login session changed during authorization"
             )
         try:
-            second_account = _validated_account(
-                account_collector(peer.subject.uid), peer.subject.uid
+            current_account = _validated_account(
+                self._account_collector(self._peer.subject.uid),
+                self._peer.subject.uid,
             )
         except t2_linux_account.LinuxAccountError as error:
             raise IPCSessionError("Linux account revalidation failed") from error
-        if second_account != first_account:
-            raise IPCSessionError(
-                "Linux account changed during authorization"
-            )
+        if current_account != self._account:
+            raise IPCSessionError("Linux account changed during authorization")
+
+    def collect(
+        self,
+        *,
+        target_linux_uid: int,
+        action: str,
+        mapping_generation: str,
+        operation_id: str,
+        linux_boot_uuid: str,
+        runtime_generation: str,
+        allow_user_interaction: bool,
+        pkcheck: Path = t2_polkit_grant.PKCHECK,
+        runner: t2_polkit_grant.Runner = t2_polkit_grant._default_runner,
+        clock: t2_polkit_grant.Clock = time.monotonic_ns,
+        grant_lifetime_ns: int = t2_polkit_grant.DEFAULT_GRANT_LIFETIME_NS,
+        timeout_seconds: int = 120,
+    ) -> AuthorizationEvidence:
+        if self._closed:
+            raise IPCSessionError("authorization session is closed")
+        self._peer.verify()
+        result = t2_polkit_grant.collect(
+            caller_pid=self._peer.subject.pid,
+            peer_uid=self._peer.subject.uid,
+            account_generation=self._account.generation,
+            target_linux_uid=target_linux_uid,
+            action=action,
+            mapping_generation=mapping_generation,
+            operation_id=operation_id,
+            linux_boot_uuid=linux_boot_uuid,
+            runtime_generation=runtime_generation,
+            allow_user_interaction=allow_user_interaction,
+            proc_root=self._peer.proc_root,
+            pkcheck=pkcheck,
+            runner=runner,
+            clock=clock,
+            grant_lifetime_ns=grant_lifetime_ns,
+            timeout_seconds=timeout_seconds,
+        )
+        self.revalidate()
         if (
-            result.grant.caller_linux_uid != peer.subject.uid
+            result.grant.caller_linux_uid != self._peer.subject.uid
             or result.grant.target_linux_uid != target_linux_uid
         ):
             raise IPCSessionError("PolicyKit grant is not bound to the IPC peer")
-        return AuthorizationEvidence(caller, first_account, first_session, result)
+        return AuthorizationEvidence(
+            self.caller,
+            self._account,
+            self._session,
+            result,
+        )
+
+    def close(self) -> None:
+        if not self._closed:
+            self._peer.close()
+            self._closed = True
+
+    def __enter__(self) -> "AuthorizationSession":
+        if self._closed:
+            raise IPCSessionError("authorization session is closed")
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
