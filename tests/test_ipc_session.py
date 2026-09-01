@@ -193,6 +193,7 @@ class IPCSessionTests(unittest.TestCase):
             mapping_generation="b" * 64,
             operation_id=identifier(10),
             linux_boot_uuid=identifier(11),
+            runtime_generation=identifier(12),
             allow_user_interaction=False,
             backend=backend,
             pkcheck=Path("/test/pkcheck"),
@@ -204,6 +205,9 @@ class IPCSessionTests(unittest.TestCase):
         )
         self.assertTrue(result.caller.active_local_session)
         self.assertTrue(result.policy.grant.authorized)
+        self.assertEqual(
+            result.policy.grant.runtime_generation, identifier(12)
+        )
         self.assertEqual(len(commands), 1)
         rendered = str(result.redacted())
         self.assertNotIn(identifier(10), rendered)
@@ -229,6 +233,7 @@ class IPCSessionTests(unittest.TestCase):
                 mapping_generation="b" * 64,
                 operation_id=identifier(10),
                 linux_boot_uuid=identifier(11),
+                runtime_generation=identifier(12),
                 allow_user_interaction=False,
                 backend=backend,
                 pkcheck=Path("/test/pkcheck"),
@@ -255,6 +260,7 @@ class IPCSessionTests(unittest.TestCase):
                 mapping_generation="b" * 64,
                 operation_id=identifier(10),
                 linux_boot_uuid=identifier(11),
+                runtime_generation=identifier(12),
                 allow_user_interaction=False,
                 backend=backend,
                 pkcheck=Path("/test/pkcheck"),
@@ -285,6 +291,7 @@ class IPCSessionTests(unittest.TestCase):
                         mapping_generation="b" * 64,
                         operation_id=identifier(10),
                         linux_boot_uuid=identifier(11),
+                        runtime_generation=identifier(12),
                         allow_user_interaction=False,
                         backend=backend,
                         pkcheck=Path("/test/pkcheck"),

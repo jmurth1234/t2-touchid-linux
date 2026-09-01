@@ -80,13 +80,15 @@ delegation policy remain separate from the file parser.
 authenticated active self-session, resolves the target exclusively by numeric
 Linux UID through the protected mapping, and requires an operation-specific
 grant bound to caller, target, live account generation, exact mapping bytes,
-operation UUID, Linux boot, and a maximum five-minute monotonic validity
-interval. Cross-user delegation is disabled, root has no implicit authority,
-mutation-disable policy is independent, and grants are not transitive between
-action classes. A locked or
-absent target additionally requires a separately bound `activate-user` grant;
-lockout and quarantine can never use that route. The returned mapping and
-binding are internal while the report is identifier-free.
+operation UUID, Linux boot, exact Bridge connection generation, and a maximum
+five-minute monotonic validity interval. The downstream consumer rechecks both
+that generation and the shorter expiry when operation and activation grants
+are combined before its first AKS operation. Cross-user delegation is disabled,
+root has no implicit authority, mutation-disable policy is independent, and
+grants are not transitive between action classes. A locked or absent target
+additionally requires a separately bound `activate-user` grant; lockout and
+quarantine can never use that route. The returned mapping and binding are
+internal while the report is identifier-free.
 
 `t2_polkit_grant.py` is the concrete but non-exposed grant producer. A future
 IPC broker supplies a connected Unix socket to `t2_ipc_session.py`, which reads
@@ -98,8 +100,9 @@ reads after `pkcheck` returns. PID reuse, setuid transitions, unknown actions,
 cross-user targets, timeout, or an exit status outside the documented
 authorized/denied/no-agent/dismissed set fail without a grant. Successful and
 negative decisions receive a bounded in-process lifetime and exact operation,
-boot, target, and mapping bindings. `polkit/org.t2linux.touchid.policy` defines
-the five compiled action IDs without granting inactive or remote subjects.
+boot, runtime-generation, target, and mapping bindings.
+`polkit/org.t2linux.touchid.policy` defines the five compiled action IDs without
+granting inactive or remote subjects.
 
 The session layer holds the peer pidfd across the whole check and uses
 libsystemd's race-free `sd_pidfd_get_session` path first. A user-manager app

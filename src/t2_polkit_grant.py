@@ -188,6 +188,7 @@ def collect(
     mapping_generation: str,
     operation_id: str,
     linux_boot_uuid: str,
+    runtime_generation: str,
     allow_user_interaction: bool,
     proc_root: Path = PROC_ROOT,
     pkcheck: Path = PKCHECK,
@@ -219,6 +220,9 @@ def collect(
     )
     operation_id = _checked_uuid(operation_id, "operation ID")
     linux_boot_uuid = _checked_uuid(linux_boot_uuid, "Linux boot UUID")
+    runtime_generation = _checked_uuid(
+        runtime_generation, "runtime generation"
+    )
     before = read_process_subject(
         caller_pid, peer_uid, proc_root=proc_root
     )
@@ -240,6 +244,9 @@ def collect(
         "--detail",
         "t2.account-generation",
         account_generation,
+        "--detail",
+        "t2.runtime-generation",
+        runtime_generation,
     ]
     if allow_user_interaction:
         command.append("--allow-user-interaction")
@@ -277,6 +284,7 @@ def collect(
         mapping_generation,
         operation_id,
         linux_boot_uuid,
+        runtime_generation,
         issued,
         issued + grant_lifetime_ns,
         completed.returncode == 0,

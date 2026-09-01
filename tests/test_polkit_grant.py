@@ -67,6 +67,7 @@ class PolkitGrantTests(unittest.TestCase):
             "mapping_generation": "a" * 64,
             "operation_id": identifier(10),
             "linux_boot_uuid": identifier(11),
+            "runtime_generation": identifier(12),
             "allow_user_interaction": True,
             "proc_root": self.proc,
             "pkcheck": Path("/test/pkcheck"),
@@ -85,6 +86,7 @@ class PolkitGrantTests(unittest.TestCase):
         self.assertTrue(result.grant.authorized)
         self.assertEqual(result.grant.issued_monotonic_ns, 10_000)
         self.assertEqual(result.grant.expires_monotonic_ns, 15_000)
+        self.assertEqual(result.grant.runtime_generation, identifier(12))
         self.assertEqual(runner.timeout, 30)
         self.assertEqual(
             runner.command,
@@ -106,6 +108,9 @@ class PolkitGrantTests(unittest.TestCase):
                 "--detail",
                 "t2.account-generation",
                 "b" * 64,
+                "--detail",
+                "t2.runtime-generation",
+                identifier(12),
                 "--allow-user-interaction",
             ],
         )
@@ -180,6 +185,7 @@ class PolkitGrantTests(unittest.TestCase):
             {"grant_lifetime_ns": policy.MAX_POLICY_LIFETIME_NS + 1},
             {"timeout_seconds": 301},
             {"operation_id": "bad"},
+            {"runtime_generation": "bad"},
             {"account_generation": "bad"},
         )
         for changes in cases:

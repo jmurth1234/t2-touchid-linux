@@ -332,12 +332,13 @@ The internal policy resolver now consumes that mapping together with
 authenticated-caller, active-session, fresh policy-grant, and readiness
 evidence. It permits only self-service, gives root no implicit bypass, binds a
 grant to the exact caller, target, Linux account generation, mapping generation,
-operation UUID, Linux boot, action, and a bounded monotonic lifetime, and keeps
-verification, inventory, enrollment, and identity-management actions
-non-transitive. A
-separate `activate-user` grant is mandatory before a locked or absent alias may
-enter the keybag activation core. The activation journal then uses the same
-bound operation UUID.
+operation UUID, Linux boot, live Bridge connection generation, action, and a
+bounded monotonic lifetime, and keeps verification, inventory, enrollment, and
+identity-management actions non-transitive. A separate `activate-user` grant
+is mandatory before a locked or absent alias may enter the keybag activation
+core. Immediately before its first AKS operation, that core rejects a changed
+Bridge generation or an expired operation/activation grant; the activation
+journal then uses the same bound operation UUID.
 
 The non-exposed IPC/session adapter now obtains those inputs directly from a
 connected Unix socket using `SO_PEERCRED` and `SO_PEERPIDFD`. It keeps the peer

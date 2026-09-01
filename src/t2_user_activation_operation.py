@@ -9,6 +9,8 @@ command status never substitutes for alias, bag UUID, or lock-state read-back.
 from __future__ import annotations
 
 import inspect
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -163,12 +165,21 @@ def run(
     *,
     authorization: t2_user_policy.UserPolicyDecision,
     linux_boot_uuid: str,
+    clock: Callable[[], int] = time.monotonic_ns,
 ) -> UserActivationOperationResult:
     if password is not None and not isinstance(password, bytearray):
         raise UserActivationOperationError(
             "activation password must use wipeable storage"
         )
     try:
+        if not isinstance(transport.runtime_generation, str):
+            raise UserActivationOperationError("runtime generation is invalid")
+        try:
+            authority_time = clock()
+        except BaseException as error:
+            raise UserActivationOperationError(
+                "authorization consumption time is unavailable"
+            ) from error
         activation_authorized = (
             isinstance(authorization, t2_user_policy.UserPolicyDecision)
             and authorization.state == "activation-authorized"
@@ -180,6 +191,8 @@ def run(
                 selected,
                 capability,
                 linux_boot_uuid=linux_boot_uuid,
+                runtime_generation=transport.runtime_generation,
+                observed_monotonic_ns=authority_time,
                 activation=activation_authorized,
             )
         except t2_user_policy.UserPolicyError as error:
@@ -190,8 +203,6 @@ def run(
             raise UserActivationOperationError(
                 "activation password storage has an invalid size"
             )
-        if not isinstance(transport.runtime_generation, str):
-            raise UserActivationOperationError("runtime generation is invalid")
         mutation_performed = False
         try:
             before = _observe(transport, selected.special_bag_alias)

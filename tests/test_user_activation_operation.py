@@ -126,7 +126,13 @@ class UserActivationOperationTests(unittest.TestCase):
         operation_id = identifier(40)
         boot_id = identifier(21)
         request = policy.OperationRequest(
-            "verify", 1000, operation_id, boot_id, 2_000, True
+            "verify",
+            1000,
+            operation_id,
+            boot_id,
+            FakeTransport.runtime_generation,
+            2_000,
+            True,
         )
         caller = policy.CallerEvidence(1000, "a" * 64, True, True)
         operation_grant = policy.PolicyGrant(
@@ -138,6 +144,7 @@ class UserActivationOperationTests(unittest.TestCase):
             self.mapping_set.generation,
             operation_id,
             boot_id,
+            FakeTransport.runtime_generation,
             1_000,
             3_000,
             True,
@@ -153,6 +160,7 @@ class UserActivationOperationTests(unittest.TestCase):
                 self.mapping_set.generation,
                 operation_id,
                 boot_id,
+                FakeTransport.runtime_generation,
                 1_000,
                 3_000,
                 True,
@@ -167,7 +175,14 @@ class UserActivationOperationTests(unittest.TestCase):
             activation_grant,
         )
 
-    def invoke(self, transport, password=UNSET, authorization=None):
+    def invoke(
+        self,
+        transport,
+        password=UNSET,
+        authorization=None,
+        *,
+        authority_time=2_000,
+    ):
         password = bytearray(b"test-password") if password is UNSET else password
         if authorization is None:
             authorization = self.authorization(transport.initial_observation)
@@ -182,6 +197,7 @@ class UserActivationOperationTests(unittest.TestCase):
                 password,
                 authorization=authorization,
                 linux_boot_uuid=identifier(21),
+                clock=lambda: authority_time,
             )
             return result, password
         except BaseException as error:
@@ -220,6 +236,28 @@ class UserActivationOperationTests(unittest.TestCase):
         ):
             self.invoke(transport, authorization=object())
         self.assertEqual(transport.calls, [])
+        self.assertFalse(self.path.exists())
+
+    def test_activation_refuses_reconnected_runtime_or_expired_grant(self):
+        authorization = self.authorization(ABSENT)
+        reconnected = FakeTransport([ABSENT])
+        reconnected.runtime_generation = identifier(99)
+        with self.assertRaisesRegex(
+            operation.UserActivationOperationError, "policy authority"
+        ):
+            self.invoke(reconnected, authorization=authorization)
+        self.assertEqual(reconnected.calls, [])
+
+        expired = FakeTransport([ABSENT])
+        with self.assertRaisesRegex(
+            operation.UserActivationOperationError, "policy authority"
+        ):
+            self.invoke(
+                expired,
+                authorization=authorization,
+                authority_time=3_001,
+            )
+        self.assertEqual(expired.calls, [])
         self.assertFalse(self.path.exists())
 
     def test_ready_authority_cannot_be_reused_after_target_locks(self):
@@ -266,7 +304,9 @@ class UserActivationOperationTests(unittest.TestCase):
 
     def test_load_error_freezes_outcome_unknown_without_retry(self):
         transport = FakeTransport([ABSENT], load=OSError("transport"))
-        with self.assertRaisesRegex(operation.UserActivationOperationError, "reconciliation") as caught:
+        with self.assertRaisesRegex(
+            operation.UserActivationOperationError, "reconciliation"
+        ) as caught:
             self.invoke(transport)
         self.assertEqual(caught.exception.wiped_password, bytearray(13))
         self.assertEqual(
@@ -277,7 +317,9 @@ class UserActivationOperationTests(unittest.TestCase):
 
     def test_loaded_wrong_bag_stops_before_bind(self):
         transport = FakeTransport([ABSENT], loaded_bag_uuid=identifier(9))
-        with self.assertRaisesRegex(operation.UserActivationOperationError, "stopped") as caught:
+        with self.assertRaisesRegex(
+            operation.UserActivationOperationError, "stopped"
+        ) as caught:
             self.invoke(transport)
         self.assertEqual(caught.exception.wiped_password, bytearray(13))
         self.assertEqual(journal.read(self.path).phase, journal.UserActivationPhase.STOPPED)

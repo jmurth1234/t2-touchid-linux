@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Minimal fprintd-compatible D-Bus facade for the T2 matcher.
 
-This service deliberately supports verification only. Enrollment and deletion
-stay with macOS because the SEP owns the biometric templates. Authentication
-remains fail-closed and accepts only the UUID of an identity selected from the
-scoped macOS user identity list.
+This compatibility service deliberately supports verification only. Enrollment
+and identity management use separate explicitly gated, journaled commands.
+Authentication remains fail-closed and accepts only the UUID of an identity
+selected from the scoped Apple-user identity list.
 """
 
 import argparse

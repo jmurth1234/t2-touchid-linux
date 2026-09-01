@@ -88,9 +88,11 @@ evidence, not intent.
       a non-exposed adapter that pipes and never logs password bytes.
 - [x] Add a non-exposed self-service policy resolver that binds distinct
       verify/inventory/enroll/identity-management and activation decisions to
-      caller, target, mapping generation, operation, boot, and bounded time.
+      caller, target, mapping generation, operation, boot, exact Bridge runtime
+      generation, and bounded time.
 - [x] Require the exact policy binding in the activation core and reuse its
-      operation UUID in the durable activation journal.
+      operation UUID in the durable activation journal; reject reconnects and
+      expired grants before the first AKS observation or mutation.
 - [x] Add a race-resistant PolicyKit grant producer using the exact
       `PID,start-time,UID` subject, post-check PID-reuse detection, bounded
       grants, and installed distinct action definitions.

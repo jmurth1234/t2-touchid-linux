@@ -3080,6 +3080,15 @@ protected target mapping, and the activation boundary compares the downstream
 binding with that same selected mapping. A grant for one generation of a UID
 cannot therefore be detached and paired with another generation of that UID.
 
+The grant and binding now also carry the exact live Bridge connection
+generation. PolicyKit receives that generation as a typed request detail, and
+the activation consumer compares it with its concrete transport immediately
+before the first alias observation or AKS mutation. It also checks the current
+monotonic time against the binding's expiry; when operation and activation
+grants are both required, the earlier expiry wins. A reconnect, timeout, or
+attempt to combine grants from different runtime generations therefore fails
+before touching AKS and cannot create an activation journal.
+
 The protected mapping administrator now has one concrete disabled-state writer.
 `t2-touchid-user-map bind-disabled` requires an explicit already-provisioned
 Apple UID/account UUID/bag UUID, explicit capabilities, the canonical private

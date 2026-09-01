@@ -60,6 +60,7 @@ def request(operation="enroll", **changes):
         "target_linux_uid": 1000,
         "operation_id": identifier(20),
         "linux_boot_uuid": identifier(21),
+        "runtime_generation": identifier(22),
         "observed_monotonic_ns": 2_000,
         "modification_allowed": True,
     }
@@ -78,6 +79,7 @@ def grant(values, action=None, **changes):
         "mapping_generation": mappings().generation,
         "operation_id": values.operation_id,
         "linux_boot_uuid": values.linux_boot_uuid,
+        "runtime_generation": values.runtime_generation,
         "issued_monotonic_ns": 1_000,
         "expires_monotonic_ns": 3_000,
         "authorized": True,
@@ -248,6 +250,7 @@ class UserPolicyTests(unittest.TestCase):
         cases = {
             "operation": {"operation_id": identifier(99)},
             "boot": {"linux_boot_uuid": identifier(98)},
+            "runtime": {"runtime_generation": identifier(97)},
             "mapping": {"mapping_generation": "f" * 64},
             "account": {"linux_account_generation": "f" * 64},
             "target": {"target_linux_uid": 1001},
@@ -336,14 +339,48 @@ class UserPolicyTests(unittest.TestCase):
                 selected,
                 "enroll",
                 linux_boot_uuid=current.linux_boot_uuid,
+                runtime_generation=current.runtime_generation,
+                observed_monotonic_ns=2_000,
                 activation=False,
             ),
             current.operation_id,
         )
-        for capability, boot, activation in (
-            ("verify", current.linux_boot_uuid, False),
-            ("enroll", identifier(99), False),
-            ("enroll", current.linux_boot_uuid, True),
+        for capability, boot, runtime, observed, activation in (
+            (
+                "verify",
+                current.linux_boot_uuid,
+                current.runtime_generation,
+                2_000,
+                False,
+            ),
+            (
+                "enroll",
+                identifier(99),
+                current.runtime_generation,
+                2_000,
+                False,
+            ),
+            (
+                "enroll",
+                current.linux_boot_uuid,
+                identifier(98),
+                2_000,
+                False,
+            ),
+            (
+                "enroll",
+                current.linux_boot_uuid,
+                current.runtime_generation,
+                3_001,
+                False,
+            ),
+            (
+                "enroll",
+                current.linux_boot_uuid,
+                current.runtime_generation,
+                2_000,
+                True,
+            ),
         ):
             with self.subTest(capability=capability, activation=activation):
                 with self.assertRaises(policy.UserPolicyError):
@@ -353,8 +390,46 @@ class UserPolicyTests(unittest.TestCase):
                         selected,
                         capability,
                         linux_boot_uuid=boot,
+                        runtime_generation=runtime,
+                        observed_monotonic_ns=observed,
                         activation=activation,
                     )
+
+    def test_activation_binding_expires_with_the_shorter_grant(self):
+        current_mappings = mappings()
+        current = request("enroll")
+        operation_grant = grant(
+            current,
+            mapping_generation=current_mappings.generation,
+            expires_monotonic_ns=3_000,
+        )
+        activation_grant = grant(
+            current,
+            action=policy.ACTIVATE_ACTION,
+            mapping_generation=current_mappings.generation,
+            expires_monotonic_ns=2_500,
+        )
+        decision = policy.authorize(
+            current_mappings,
+            current,
+            caller(),
+            persistent(),
+            readiness.AliasEvidence(False, None, None, None, None),
+            operation_grant,
+            activation_grant,
+        )
+        selected = current_mappings.resolve(1000, "enroll")
+        with self.assertRaises(policy.UserPolicyError):
+            policy.require_bound_authority(
+                decision,
+                current_mappings,
+                selected,
+                "enroll",
+                linux_boot_uuid=current.linux_boot_uuid,
+                runtime_generation=current.runtime_generation,
+                observed_monotonic_ns=2_501,
+                activation=True,
+            )
 
     def test_malformed_request_caller_and_grant_are_rejected(self):
         current = request()
@@ -362,6 +437,7 @@ class UserPolicyTests(unittest.TestCase):
             request(operation="raw-sep"),
             request(target_linux_uid=True),
             request(operation_id="not-a-uuid"),
+            request(runtime_generation="not-a-uuid"),
             request(observed_monotonic_ns=True),
             request(modification_allowed=1),
         )

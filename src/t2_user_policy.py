@@ -68,6 +68,7 @@ class OperationRequest:
     target_linux_uid: int
     operation_id: str
     linux_boot_uuid: str
+    runtime_generation: str
     observed_monotonic_ns: int
     modification_allowed: bool
 
@@ -82,6 +83,7 @@ class PolicyGrant:
     mapping_generation: str
     operation_id: str
     linux_boot_uuid: str
+    runtime_generation: str
     issued_monotonic_ns: int
     expires_monotonic_ns: int
     authorized: bool
@@ -93,6 +95,8 @@ class PolicyBinding:
     linux_account_generation: str
     operation_id: str
     linux_boot_uuid: str
+    runtime_generation: str
+    expires_monotonic_ns: int
     caller_linux_uid: int
     target_linux_uid: int
     capability: str
@@ -181,6 +185,7 @@ def _validate_request(request: OperationRequest) -> OperationPolicy:
     _uid(request.target_linux_uid, "target Linux UID")
     _canonical_uuid(request.operation_id, "operation ID")
     _canonical_uuid(request.linux_boot_uuid, "Linux boot UUID")
+    _canonical_uuid(request.runtime_generation, "runtime generation")
     _monotonic(request.observed_monotonic_ns, "observation time")
     if type(request.modification_allowed) is not bool:
         raise UserPolicyError("modification policy must be Boolean")
@@ -199,6 +204,7 @@ def _validate_grant(grant: PolicyGrant, request: OperationRequest) -> None:
     _digest(grant.mapping_generation, "grant mapping generation")
     _canonical_uuid(grant.operation_id, "grant operation ID")
     _canonical_uuid(grant.linux_boot_uuid, "grant Linux boot UUID")
+    _canonical_uuid(grant.runtime_generation, "grant runtime generation")
     issued = _monotonic(grant.issued_monotonic_ns, "grant issue time")
     expires = _monotonic(grant.expires_monotonic_ns, "grant expiry time")
     if (
@@ -227,6 +233,7 @@ def _grant_bound(
         and grant.mapping_generation == mapping_generation
         and grant.operation_id == request.operation_id
         and grant.linux_boot_uuid == request.linux_boot_uuid
+        and grant.runtime_generation == request.runtime_generation
     )
 
 
@@ -270,6 +277,15 @@ def _binding(
         caller.linux_account_generation,
         request.operation_id,
         request.linux_boot_uuid,
+        request.runtime_generation,
+        (
+            min(
+                operation_grant.expires_monotonic_ns,
+                activation_grant.expires_monotonic_ns,
+            )
+            if activation_grant is not None
+            else operation_grant.expires_monotonic_ns
+        ),
         caller.linux_uid,
         request.target_linux_uid,
         policy.capability,
@@ -432,6 +448,8 @@ def require_bound_authority(
     capability: str,
     *,
     linux_boot_uuid: str,
+    runtime_generation: str,
+    observed_monotonic_ns: int,
     activation: bool,
 ) -> str:
     """Return the bound operation ID or reject a stale/reused decision."""
@@ -443,6 +461,10 @@ def require_bound_authority(
     ):
         raise UserPolicyError("policy target has the wrong type")
     _canonical_uuid(linux_boot_uuid, "Linux boot UUID")
+    _canonical_uuid(runtime_generation, "runtime generation")
+    observed_monotonic_ns = _monotonic(
+        observed_monotonic_ns, "authority consumption time"
+    )
     binding = decision.binding
     expected_state = "activation-authorized" if activation else "authorized"
     expected_policy = OPERATION_POLICIES.get(decision.operation)
@@ -453,6 +475,12 @@ def require_bound_authority(
         _digest(binding.linux_account_generation, "binding account generation")
         _canonical_uuid(binding.operation_id, "binding operation ID")
         _canonical_uuid(binding.linux_boot_uuid, "binding Linux boot UUID")
+        _canonical_uuid(binding.runtime_generation, "binding runtime generation")
+        expiry = _monotonic(
+            binding.expires_monotonic_ns, "binding expiry time"
+        )
+        if expiry == 0:
+            raise UserPolicyError("binding expiry time is invalid")
         _uid(binding.caller_linux_uid, "binding caller Linux UID")
         _uid(binding.target_linux_uid, "binding target Linux UID")
         _canonical_uuid(
@@ -476,6 +504,8 @@ def require_bound_authority(
         or binding.linux_account_generation
         != selected.linux_account_generation
         or binding.linux_boot_uuid != linux_boot_uuid
+        or binding.runtime_generation != runtime_generation
+        or observed_monotonic_ns > binding.expires_monotonic_ns
         or binding.target_linux_uid != selected.linux_uid
         or binding.caller_linux_uid != selected.linux_uid
         or binding.capability != capability
