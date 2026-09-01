@@ -167,6 +167,10 @@ evidence, not intent.
 - [x] Implement the async fprint enrollment lifecycle around a synchronous
       worker with ordered event-loop feedback and cooperative, journal-aware
       stop/release/task cancellation; attach no live consumer yet.
+- [x] Implement the final claim-scoped fprint facade adapter for canonical
+      `EnrollStart`, `EnrollStop`, status/property updates, mutual exclusion,
+      sender departure, release, and terminal grace expiry while leaving the
+      production daemon's enrollment client explicitly unset.
 - [x] Implement the internal authorized enrollment consumer on the exact
       broker-held Bridge generation, with a fresh pre-dispatch authority guard
       and immutable local Catacomb recovery anchor; keep it unreachable until

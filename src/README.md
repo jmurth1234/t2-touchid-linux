@@ -268,6 +268,13 @@ There is no enrollment or Catacomb-persistence dispatch in this process.
 D-Bus `EnrollStart` remains disabled pending installed negative controls and a
 live proof of this automatic path.
 
+The `FprintDevice` adapter is nevertheless complete and hardware-inert: an
+explicitly injected enrollment client receives the exact pinned caller and
+claim, while status, finger-present/needed properties, cancellation, release,
+sender departure, operation exclusion, and terminal grace expiry follow the
+standard fprint lifecycle. Production startup injects no client, so this code
+path cannot launch a worker until the remaining installed gates pass.
+
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;
 the identities runner is intrinsically non-modifying and cannot collect

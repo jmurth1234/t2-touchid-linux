@@ -203,6 +203,14 @@ or incomplete success become fail-closed errors. The facade also serves the
 complete historical property set through `Get` and `GetAll`; stage count stays
 `-1`, while finger-present/needed state is ready for the future worker stream.
 
+The D-Bus facade now has the tested final adapter around that stream. When an
+explicit client is supplied, canonical `EnrollStart` passes the exact pinned
+claim to it, updates the historical properties, emits ordered `EnrollStatus`,
+keeps verify/enroll mutually exclusive, and makes `EnrollStop`, `Release`,
+sender departure, and terminal grace expiry wait for worker reconciliation.
+Production startup deliberately supplies no enrollment client yet, so the
+installed method remains disabled and cannot launch the worker.
+
 `t2_fprint_enrollment_controller` now supplies that stream boundary without
 starting a real mutation. It runs the synchronous journaled worker in a
 separate thread, delivers each translated update back onto the D-Bus event loop

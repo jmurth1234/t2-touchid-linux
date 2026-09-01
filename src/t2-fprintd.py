@@ -25,6 +25,7 @@ from dbus_next.service import ServiceInterface, dbus_property, method, signal
 
 import t2_fprint_projection
 import t2_fprint_runtime
+import t2_fprint_enrollment_runtime
 import t2_dbus_identity
 import t2_fprint_claim
 from t2_dbus_sender import (
@@ -417,12 +418,14 @@ class FprintDevice(ServiceInterface):
         identity_bus,
         caller_collector=t2_dbus_identity.collect,
         claim_evidence_collector=t2_fprint_claim.collect,
+        enrollment_client=None,
     ) -> None:
         super().__init__("net.reactivated.Fprint.Device")
         self.backend = backend
         self.identity_bus = identity_bus
         self.caller_collector = caller_collector
         self.claim_evidence_collector = claim_evidence_collector
+        self.enrollment_client = enrollment_client
         self.claim_lock = asyncio.Lock()
         self.claimed_user: str | None = None
         self.claimed_sender: str | None = None
@@ -545,6 +548,7 @@ class FprintDevice(ServiceInterface):
     async def Release(self):
         self._require_claim_owner()
         await self._stop_verification(require_running=False)
+        await self._stop_enrollment(require_running=False)
         self._clear_claim()
 
     @method()
@@ -568,7 +572,10 @@ class FprintDevice(ServiceInterface):
     @method()
     def VerifyStart(self, finger_name: "s"):
         self._require_claim_owner()
-        if self.verify_task is not None:
+        if self.verify_task is not None or (
+            self.enrollment_client is not None
+            and getattr(self.enrollment_client, "task", None) is not None
+        ):
             raise DBusError(f"{FPRINT_ERROR}.AlreadyInUse", "verification is active")
         if finger_name != "any" and finger_name not in self.enrolled_fingers:
             raise DBusError(
@@ -626,7 +633,10 @@ class FprintDevice(ServiceInterface):
 
     async def _expire_unstarted_claim(self) -> None:
         await asyncio.sleep(UNSTARTED_CLAIM_SECONDS)
-        if self.verify_task is None:
+        if self.verify_task is None and (
+            self.enrollment_client is None
+            or getattr(self.enrollment_client, "task", None) is None
+        ):
             self._clear_claim()
         self.claim_expiry_task = None
 
@@ -635,6 +645,7 @@ class FprintDevice(ServiceInterface):
             if sender != self.claimed_sender:
                 return
             await self._stop_verification(require_running=False)
+            await self._stop_enrollment(require_running=False)
             self._clear_claim()
 
     async def _stop_verification(self, require_running: bool) -> None:
@@ -658,12 +669,104 @@ class FprintDevice(ServiceInterface):
     @method()
     def EnrollStart(self, finger_name: "s"):
         self._require_claim_owner()
-        raise DBusError(f"{FPRINT_ERROR}.Internal", "enroll in macOS")
+        client = self.enrollment_client
+        if client is None:
+            raise DBusError(
+                f"{FPRINT_ERROR}.Internal", "native enrollment is disabled"
+            )
+        if self.verify_task is not None or getattr(client, "task", None) is not None:
+            raise DBusError(
+                f"{FPRINT_ERROR}.AlreadyInUse", "a biometric operation is active"
+            )
+        if finger_name not in t2_fprint_projection.FINGER_NAME_SET:
+            raise DBusError(
+                f"{FPRINT_ERROR}.InvalidFingername",
+                "enrollment requires a canonical finger name",
+            )
+        if self.claim_expiry_task is not None:
+            self.claim_expiry_task.cancel()
+            self.claim_expiry_task = None
+        try:
+            client.start(
+                finger_name,
+                self.claimed_caller,
+                self.claimed_evidence,
+                self._enrollment_update,
+            )
+        except Exception as error:
+            self.finger_present = False
+            self.finger_needed = False
+            raise DBusError(
+                f"{FPRINT_ERROR}.Internal",
+                "native enrollment could not be started",
+            ) from error
 
     @method()
-    def EnrollStop(self):
+    async def EnrollStop(self):
         self._require_claim_owner()
-        raise DBusError(f"{FPRINT_ERROR}.NoActionInProgress", "enroll is disabled")
+        await self._stop_enrollment(require_running=True)
+
+    def _enrollment_update(self, update: object) -> None:
+        if not isinstance(
+            update, t2_fprint_enrollment_runtime.EnrollmentUpdate
+        ):
+            raise RuntimeError("enrollment worker emitted malformed state")
+        self.finger_present = update.finger_present
+        self.finger_needed = update.finger_needed
+        if update.status is not None:
+            self.EnrollStatus(update.status, update.done)
+        if update.done:
+            client = self.enrollment_client
+            task = getattr(client, "task", None) if client is not None else None
+            if task is None:
+                raise RuntimeError("terminal enrollment has no retained task")
+            self.claim_expiry_task = asyncio.create_task(
+                self._expire_stale_enrollment_claim(task)
+            )
+
+    async def _expire_stale_enrollment_claim(self, completed_task) -> None:
+        try:
+            await asyncio.sleep(COMPLETED_CLAIM_SECONDS)
+            client = self.enrollment_client
+            if client is not None and getattr(client, "task", None) is completed_task:
+                try:
+                    await client.stop()
+                except Exception:
+                    pass
+                finally:
+                    self.finger_present = False
+                    self.finger_needed = False
+                    self._clear_claim()
+        finally:
+            self.claim_expiry_task = None
+
+    async def _stop_enrollment(self, require_running: bool) -> None:
+        expiry_task = self.claim_expiry_task
+        if expiry_task is not None:
+            expiry_task.cancel()
+            self.claim_expiry_task = None
+        client = self.enrollment_client
+        task = getattr(client, "task", None) if client is not None else None
+        if task is None:
+            if require_running:
+                raise DBusError(
+                    f"{FPRINT_ERROR}.NoActionInProgress",
+                    "enrollment is not active",
+                )
+            self.finger_present = False
+            self.finger_needed = False
+            return
+        try:
+            await client.stop()
+        except Exception as error:
+            if require_running:
+                raise DBusError(
+                    f"{FPRINT_ERROR}.Internal",
+                    "native enrollment did not stop cleanly",
+                ) from error
+        finally:
+            self.finger_present = False
+            self.finger_needed = False
 
     @method()
     def DeleteEnrolledFingers(self, username: "s"):

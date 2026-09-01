@@ -66,6 +66,35 @@ class FakeClaimEvidence(MODULE.t2_fprint_claim.ClaimEvidence):
         self.revalidate_count += 1
 
 
+class FakeEnrollmentClient:
+    def __init__(self):
+        self.task = None
+        self.on_update = None
+        self.start_arguments = None
+        self.stop_count = 0
+        self.release = asyncio.Event()
+
+    def start(self, finger_name, caller, evidence, on_update):
+        self.start_arguments = (finger_name, caller, evidence)
+        self.on_update = on_update
+        self.task = asyncio.create_task(self.release.wait())
+        return self.task
+
+    def emit(self, update):
+        self.on_update(update)
+
+    async def stop(self):
+        self.stop_count += 1
+        task = self.task
+        self.release.set()
+        if task is not None:
+            await task
+        self.task = None
+        return MODULE.t2_fprint_enrollment_runtime.EnrollmentUpdate(
+            "enroll-failed", True, False, False
+        )
+
+
 async def fake_caller_collector(_bus, sender):
     return FakePinnedCaller(sender)
 
@@ -74,12 +103,13 @@ def fake_claim_evidence_collector(_caller, _username):
     return FakeClaimEvidence()
 
 
-def make_device(backend=None):
+def make_device(backend=None, enrollment_client=None):
     return MODULE.FprintDevice(
         backend or FakeBackend(),
         object(),
         fake_caller_collector,
         fake_claim_evidence_collector,
+        enrollment_client,
     )
 
 
@@ -369,6 +399,96 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(device.claimed_user)
         self.assertIsNone(device.verify_task)
+
+    async def test_unattached_enrollment_remains_disabled(self):
+        device = make_device()
+        await claim(device)
+        with self.assertRaises(MODULE.DBusError) as raised:
+            device.EnrollStart("left-thumb")
+        self.assertTrue(raised.exception.type.endswith(".Internal"))
+        self.assertFalse(device.finger_present)
+        self.assertFalse(device.finger_needed)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_attached_enrollment_streams_state_and_is_stoppable(self):
+        client = FakeEnrollmentClient()
+        device = make_device(enrollment_client=client)
+        emitted = []
+        device.EnrollStatus = lambda status, done: emitted.append(
+            (status, done)
+        )
+        await claim(device)
+        caller = device.claimed_caller
+        evidence = device.claimed_evidence
+        device.EnrollStart("left-thumb")
+        self.assertEqual(
+            client.start_arguments, ("left-thumb", caller, evidence)
+        )
+        client.emit(
+            MODULE.t2_fprint_enrollment_runtime.EnrollmentUpdate(
+                None, False, False, True
+            )
+        )
+        self.assertTrue(device.finger_needed)
+        client.emit(
+            MODULE.t2_fprint_enrollment_runtime.EnrollmentUpdate(
+                "enroll-stage-passed", False, True, False
+            )
+        )
+        client.emit(
+            MODULE.t2_fprint_enrollment_runtime.EnrollmentUpdate(
+                "enroll-completed", True, False, False
+            )
+        )
+        self.assertEqual(
+            emitted,
+            [
+                ("enroll-stage-passed", False),
+                ("enroll-completed", True),
+            ],
+        )
+        await MODULE.FprintDevice.EnrollStop.__wrapped__(device)
+        self.assertEqual(client.stop_count, 1)
+        self.assertIsNone(client.task)
+        self.assertFalse(device.finger_present)
+        self.assertFalse(device.finger_needed)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_enrollment_is_caller_bound_and_mutually_exclusive(self):
+        client = FakeEnrollmentClient()
+        device = make_device(enrollment_client=client)
+        await claim(device)
+        with self.assertRaises(MODULE.DBusError) as raised:
+            device.EnrollStart("any")
+        self.assertTrue(raised.exception.type.endswith(".InvalidFingername"))
+        device.EnrollStart("right-thumb")
+        with self.assertRaises(MODULE.DBusError) as raised:
+            device.VerifyStart("any")
+        self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
+        await device.sender_departed(":1.100")
+        self.assertEqual(client.stop_count, 1)
+        self.assertIsNone(device.claimed_user)
+
+    async def test_terminal_enrollment_claim_expires_after_client_grace(self):
+        old_timeout = MODULE.COMPLETED_CLAIM_SECONDS
+        MODULE.COMPLETED_CLAIM_SECONDS = 0.001
+        try:
+            client = FakeEnrollmentClient()
+            device = make_device(enrollment_client=client)
+            device.EnrollStatus = lambda _status, _done: None
+            await claim(device)
+            device.EnrollStart("left-thumb")
+            client.emit(
+                MODULE.t2_fprint_enrollment_runtime.EnrollmentUpdate(
+                    "enroll-completed", True, False, False
+                )
+            )
+            await asyncio.sleep(0.01)
+            self.assertEqual(client.stop_count, 1)
+            self.assertIsNone(device.claimed_user)
+            self.assertIsNone(client.task)
+        finally:
+            MODULE.COMPLETED_CLAIM_SECONDS = old_timeout
 
 
 class VerdictTests(unittest.TestCase):
