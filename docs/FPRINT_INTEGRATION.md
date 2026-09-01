@@ -102,8 +102,10 @@ revalidation and bounded PolicyKit collector. `t2_fprint_broker` can hand that
 session to the existing joined broker through a mutually exclusive,
 pre-created authorization path. It permits only `enroll` and
 `identity-management`, forces modification policy on, and closes the derived
-session even if the broker fails before entering it. No D-Bus mutation method
-or T2 mutation consumer is connected to this adapter yet.
+session even if the broker fails before entering it. The resulting authority
+now carries a fail-closed pre-dispatch guard which repeats caller, mapping,
+keybag, runtime-generation, and grant-expiry checks immediately before a SEP
+enrollment start. No D-Bus mutation method is connected to this adapter yet.
 
 ## Mutation worker boundary
 
@@ -126,6 +128,26 @@ The D-Bus facade only translates typed progress/results. Closing the client or
 calling `EnrollStop` sends a typed cancellation request; it never kills and
 blindly retries the worker. An interrupted or transport-ambiguous operation is
 journaled as outcome-unknown and reconciled read-only before any new mutation.
+
+The internal T2 consumer side is now implemented but deliberately unattached.
+`t2_recovery_anchor` writes an operation-scoped, immutable, root-private tar
+archive of the validated committed Linux-local Catacomb before any mutation;
+the existing version-1 baseline journal records this genuine backup, so no
+legacy `backup_references` field is repurposed. Publication is exclusive,
+fsynced, single-link, idempotent only for byte-identical state, and followed by
+a second store read. `LiveUserReconciliationSession` releases enrollment
+material only after the broker's repeated stable reconciliation, retains the
+same operation lock and Bridge lease, and requires the anchored account/keybag
+to equal the protected mapping.
+
+`t2_fprint_enrollment_consumer` then composes that exact lease and anchor with
+the existing ACM coordinator, journal, persistence finalizer, cancellation
+predicate, feedback stream, Linux boot, operation ID, and mapping generation.
+It accepts only an `operate`-stage, self-service, canonical-name enrollment
+authority and passes the broker's fresh pre-dispatch guard directly to E1.
+What remains is the short-lived systemd credential worker and its bounded
+socket protocol; until that exists, neither this consumer nor `EnrollStart` is
+reachable from D-Bus.
 
 ## Enrollment status translation
 
@@ -207,11 +229,12 @@ Native mutation remains disabled until all of these are demonstrated:
 
 ## Next implementation order
 
-1. Finish the protected per-user mapping and read-only broker exposure gates.
-2. Bind each mutating call to a bounded PolicyKit grant derived from the
-   pidfd/session/account claim.
-3. Define a typed streaming mutation protocol and short-lived credentialed
-   worker; prove authorization negatives before wiring T2 mutation.
-4. Adapt journaled enrollment with cancellation and automatic E4 recovery.
+1. Define the bounded protocol and short-lived systemd credential worker which
+   invokes the implemented same-generation enrollment consumer.
+2. Prove mapping-disabled, wrong-caller, expired-grant, and wrong-generation
+   negatives before connecting `EnrollStart`.
+3. Attach the existing lifecycle/status stream and add automatic E4 recovery.
+4. Validate canonical enrollment, fresh listing, targeted verification, and
+   reboot survival through standard fprint clients.
 5. Adapt single named deletion and its survivor controls.
 6. Add batch deletion only after a separate atomic/recoverable design.

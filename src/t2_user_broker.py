@@ -86,6 +86,9 @@ class BrokerAuthority:
     linux_boot_uuid: str
     runtime_generation: str
     stage: str
+    dispatch_allowed: Callable[[], bool] = field(
+        default=lambda: False, repr=False, compare=False
+    )
 
 
 @dataclass(frozen=True, repr=False)
@@ -438,6 +441,30 @@ def run_self_service(
                     raise UserBrokerError(
                         "broker authority expired or changed before handoff"
                     ) from error
+
+                def dispatch_allowed() -> bool:
+                    try:
+                        authorization.revalidate()
+                        _stable_mapping(directory, name, mapping_set)
+                        _keybag(selected, keybag_reader)
+                        if live.runtime_generation != runtime_generation:
+                            return False
+                        current_operation_id = (
+                            t2_user_policy.require_bound_authority(
+                                decision,
+                                mapping_set,
+                                selected,
+                                policy.capability,
+                                linux_boot_uuid=linux_boot_uuid,
+                                runtime_generation=runtime_generation,
+                                observed_monotonic_ns=_monotonic(clock),
+                                activation=activation,
+                            )
+                        )
+                        return current_operation_id == authorized_operation_id
+                    except BaseException:
+                        return False
+
                 authority = BrokerAuthority(
                     mapping_set,
                     selected,
@@ -448,6 +475,7 @@ def run_self_service(
                     linux_boot_uuid,
                     runtime_generation,
                     "activate" if activation else "operate",
+                    dispatch_allowed,
                 )
                 try:
                     value = consumer(authority, live)

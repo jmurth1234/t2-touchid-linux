@@ -167,6 +167,10 @@ evidence, not intent.
 - [x] Implement the async fprint enrollment lifecycle around a synchronous
       worker with ordered event-loop feedback and cooperative, journal-aware
       stop/release/task cancellation; attach no live consumer yet.
+- [x] Implement the internal authorized enrollment consumer on the exact
+      broker-held Bridge generation, with a fresh pre-dispatch authority guard
+      and immutable local Catacomb recovery anchor; keep it unreachable until
+      the credential-scoped worker protocol exists.
 - [x] Publish the caller-bound, credential-scoped, cancellable native fprint
       mutation design and delivery gates before exposing any mutation method.
 - [x] Bind each fprint claim and every claim-scoped method to the exact
@@ -174,8 +178,11 @@ evidence, not intent.
 - [x] Bind the claimed D-Bus sender to a kernel pidfd plus stable active-session
       and protected local-account-generation evidence, revalidated on every
       claim-scoped call; root PAM callers require a direct target-user session.
-- [ ] Bind mutating calls to the protected mapping and one bounded PolicyKit
-      grant derived from that exact claim before mutation.
+- [x] Bind the internal mutation handoff to the protected mapping and one
+      bounded PolicyKit grant derived from the exact claim, and revalidate it
+      immediately before enrollment dispatch.
+- [ ] Implement the short-lived systemd encrypted-credential worker and
+      bounded local protocol before exposing any fprint mutation method.
 - [ ] Support mapped Linux users through the same caller/session/PolicyKit and
       protected Apple-user authority model, including negative cross-user tests.
 - [ ] Validate the complete fprint client experience—list, enroll, verify,

@@ -16,6 +16,7 @@ sys.path.insert(0, str(SOURCE))
 import t2_user_mapping as mapping
 import t2_user_readiness as readiness
 import t2_user_reconciliation_live as live_reconciliation
+import t2_recovery_anchor as recovery_anchor
 
 
 def identifier(number: int) -> str:
@@ -202,6 +203,67 @@ class LiveUserReconciliationTests(unittest.TestCase):
             "no current",
         ):
             session.public_identity_inventory(selected())
+
+    def test_enrollment_material_retains_exact_lease_and_private_anchor(self):
+        enrollment = replace(
+            selected(), capabilities=frozenset({"verify", "enroll"}), enabled=True
+        )
+        anchor = recovery_anchor.RecoveryAnchor(
+            Path("/private/anchor.tar"),
+            "recovery-anchors/anchor.tar",
+            "d" * 64,
+            {
+                "archive_sha256": "d" * 64,
+                "account_uuid": identifier(1),
+                "bag_uuid": identifier(2),
+            },
+        )
+        session = live_reconciliation.LiveUserReconciliationSession()
+        with mock.patch.object(
+            live_reconciliation.t2_recovery_anchor,
+            "materialize",
+            return_value=anchor,
+        ) as materialize, session:
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "current reconciled",
+            ):
+                session.prepare_enrollment_material(enrollment, identifier(30))
+            session.collect(enrollment, "a" * 64, "b" * 64)
+            material = session.prepare_enrollment_material(
+                enrollment, identifier(30)
+            )
+            self.assertIs(material.lease, self.lease)
+            self.assertIs(material.anchor, anchor)
+            self.assertEqual(material.connection_generation, identifier(10))
+            self.assertNotIn(identifier(1), repr(material))
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "already prepared",
+            ):
+                session.prepare_enrollment_material(enrollment, identifier(30))
+        materialize.assert_called_once()
+
+    def test_enrollment_material_rejects_wrong_or_disabled_mapping(self):
+        enrollment = replace(
+            selected(), capabilities=frozenset({"verify", "enroll"}), enabled=True
+        )
+        session = live_reconciliation.LiveUserReconciliationSession()
+        with session:
+            session.collect(enrollment, "a" * 64, "b" * 64)
+            wrong = replace(enrollment, apple_uid=502)
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "current reconciled",
+            ):
+                session.prepare_enrollment_material(wrong, identifier(30))
+            disabled = replace(enrollment, enabled=False)
+            session._inventory_selected = disabled
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "does not permit",
+            ):
+                session.prepare_enrollment_material(disabled, identifier(30))
 
     def test_inactive_reentered_or_generation_changed_session_fails(self):
         session = live_reconciliation.LiveUserReconciliationSession()

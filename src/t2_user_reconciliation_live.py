@@ -11,6 +11,7 @@ import re
 import stat
 import uuid
 from contextlib import ExitStack
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
 
@@ -20,6 +21,7 @@ import t2_bridge_inventory
 import t2_catacomb_codec
 import t2_catacomb_store
 import t2_identity_inventory
+import t2_recovery_anchor
 import t2_user_mapping
 import t2_user_readiness
 
@@ -27,6 +29,7 @@ import t2_user_readiness
 CONFIG = Path("/etc/t2-touchid.conf")
 PORT_CACHE = Path("/var/lib/t2-touchid/biometric-port")
 STORE_ROOT = Path("/var/lib/t2-touchid/catacomb")
+RECOVERY_ANCHOR_ROOT = Path("/var/lib/t2-touchid/recovery-anchors")
 OPERATION_LOCK = Path("/run/t2-touchid/operation.lock")
 MAX_CONFIG_SIZE = 1024 * 1024
 ROOT_UID = 0
@@ -34,6 +37,23 @@ ROOT_UID = 0
 
 class LiveUserReconciliationError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, repr=False)
+class EnrollmentMaterial:
+    """Private same-generation inputs for one authorized enrollment consumer."""
+
+    lease: t2_bridge_connection.BridgeConnectionLease = field(repr=False)
+    anchor: t2_recovery_anchor.RecoveryAnchor = field(repr=False)
+    apple_uid: int
+    connection_generation: str
+    catacomb_root: Path = field(repr=False)
+
+    def __repr__(self) -> str:
+        return (
+            "EnrollmentMaterial(apple_uid=<redacted>, connection_generation="
+            f"{self.connection_generation!r}, recovery_anchor=True, private=True)"
+        )
 
 
 def _same_file(before: os.stat_result, after: os.stat_result) -> bool:
@@ -261,10 +281,16 @@ class LiveUserReconciliationSession:
         self._first_snapshot_digest: str | None = None
         self._inventory_selected: t2_user_mapping.UserMapping | None = None
         self._public_inventory_packet: bytes | None = None
+        self._enrollment_prepared = False
 
     @property
     def runtime_generation(self) -> str:
-        if self._stack is None or self._generation is None:
+        if (
+            self._stack is None
+            or self._lease is None
+            or self._generation is None
+            or self._lease.connection_generation != self._generation
+        ):
             raise LiveUserReconciliationError(
                 "live reconciliation session is not active"
             )
@@ -304,6 +330,7 @@ class LiveUserReconciliationSession:
             self._first_snapshot_digest = None
             self._inventory_selected = None
             self._public_inventory_packet = None
+            self._enrollment_prepared = False
             self._stack = stack
             return self
         except BaseException:
@@ -314,6 +341,7 @@ class LiveUserReconciliationSession:
             self._first_snapshot_digest = None
             self._inventory_selected = None
             self._public_inventory_packet = None
+            self._enrollment_prepared = False
             raise
 
     def __exit__(
@@ -330,6 +358,7 @@ class LiveUserReconciliationSession:
         self._first_snapshot_digest = None
         self._inventory_selected = None
         self._public_inventory_packet = None
+        self._enrollment_prepared = False
         if stack is not None:
             stack.close()
         return False
@@ -369,6 +398,70 @@ class LiveUserReconciliationSession:
                 "cached identity inventory is not canonical"
             )
         return value
+
+    def prepare_enrollment_material(
+        self,
+        selected: t2_user_mapping.UserMapping,
+        operation_id: str,
+    ) -> EnrollmentMaterial:
+        """Anchor E0 host state and retain the broker's exact Bridge lease."""
+
+        if (
+            self._stack is None
+            or self._lease is None
+            or self._generation is None
+            or self._first_snapshot_digest is None
+            or self._inventory_selected != selected
+            or self._public_inventory_packet is None
+            or self._lease.connection_generation != self._generation
+        ):
+            raise LiveUserReconciliationError(
+                "enrollment material requires current reconciled evidence"
+            )
+        if self._enrollment_prepared:
+            raise LiveUserReconciliationError(
+                "enrollment material was already prepared"
+            )
+        if (
+            not isinstance(selected, t2_user_mapping.UserMapping)
+            or not selected.permits("enroll")
+        ):
+            raise LiveUserReconciliationError(
+                "selected mapping does not permit enrollment"
+            )
+        try:
+            store = t2_catacomb_store.CatacombStore(
+                STORE_ROOT, selected.apple_uid
+            )
+            anchor = t2_recovery_anchor.materialize(
+                store, RECOVERY_ANCHOR_ROOT, operation_id
+            )
+        except (
+            t2_catacomb_store.CatacombStoreError,
+            t2_recovery_anchor.RecoveryAnchorError,
+        ) as error:
+            raise LiveUserReconciliationError(
+                "pre-enrollment recovery anchoring failed"
+            ) from error
+        if (
+            anchor.host_inventory.get("account_uuid") != selected.account_uuid
+            or anchor.host_inventory.get("bag_uuid") != selected.bag_uuid
+        ):
+            raise LiveUserReconciliationError(
+                "recovery anchor account binding changed"
+            )
+        if self._lease.connection_generation != self._generation:
+            raise LiveUserReconciliationError(
+                "Bridge generation changed during recovery anchoring"
+            )
+        self._enrollment_prepared = True
+        return EnrollmentMaterial(
+            self._lease,
+            anchor,
+            selected.apple_uid,
+            self._generation,
+            STORE_ROOT,
+        )
 
     def collect(
         self,

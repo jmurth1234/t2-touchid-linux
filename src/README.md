@@ -207,8 +207,10 @@ verification-only; they cannot become self-service mutation callers. This
 bridge is internal. `t2_fprint_broker.py` passes the derived session into the
 existing joined broker through an exclusive non-socket authorization source,
 allows only enrollment or identity management, forces mutation policy on, and
-closes the session on every exit. No fprint D-Bus mutation method or T2
-mutation consumer consumes it yet.
+closes the session on every exit. Its authority includes a fail-closed closure
+that repeats caller, protected mapping, keybag digest, runtime generation, and
+grant-expiry checks immediately before a mutation dispatch. No fprint D-Bus
+mutation method consumes it yet.
 
 `t2_fprint_enrollment_runtime.py` is the pure status boundary for that future
 consumer. It translates accepted increasing progress and retry guidance only
@@ -222,7 +224,21 @@ D-Bus event loop and sends translated updates back to that loop in order. Its
 stop/release path is cooperative: it sets the existing cancellation predicate
 and waits for the journaled worker result. Even task cancellation cannot kill
 the worker thread or trigger command replay. This controller is hardware-free
-until an authorized mutation consumer is attached.
+until the credential worker and D-Bus handoff are attached.
+
+`t2_recovery_anchor.py` materializes a genuine immutable pre-mutation tar from
+the already-validated Linux-local Catacomb. It publishes by exclusive hard
+link, fsyncs the private directory, validates the archive through the baseline
+parser, rereads the store, and never overwrites a different operation anchor.
+`LiveUserReconciliationSession.prepare_enrollment_material` exposes that
+anchor and the exact broker-held Bridge lease only after repeated stable
+reconciliation and an unchanged protected account/keybag binding.
+
+`t2_fprint_enrollment_consumer.py` composes those inputs with the existing ACM
+coordinator, journal, built-in finalizer, canonical finger label, feedback,
+and cooperative cancellation. It remains hardware-inert because the
+short-lived encrypted-credential worker and D-Bus `EnrollStart` handoff are
+not connected yet.
 
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;

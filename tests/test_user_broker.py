@@ -230,6 +230,7 @@ class UserBrokerTests(unittest.TestCase):
             self.assertEqual(authority.stage, "operate")
             self.assertEqual(authority.selected.linux_uid, self.uid)
             self.assertEqual(authority.runtime_generation, identifier(20))
+            self.assertTrue(authority.dispatch_allowed())
             lock = os.open(self.root / ".users.json.lock", os.O_RDWR)
             try:
                 with self.assertRaises(BlockingIOError):
