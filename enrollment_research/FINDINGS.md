@@ -6010,6 +6010,24 @@ static prose refinement is not progress toward the remaining unknowns.
 | Survive suspend during enrollment | RemoteXPC transport is known not to recover | Not feasible transparently; cancel before suspend and reconcile after reconnect |
 | Atomic enrollment/deletion rollback | Apple confirms earlier SEP components before final host-file commit, masks enrollment save failure, and may delete all host Catacombs on error 269; exact host recovery discards `prepare/` but rolls `commit/` forward per file | Not available; compensate with per-component journaling, backups, read-back, and explicit degraded states |
 
+### Live dual-boot Catacomb boundary
+
+After Linux had independently verified the original macOS-enrolled identity
+and a second identity enrolled entirely from Linux, the machine booted macOS.
+The Linux-only identity did not appear in macOS Touch ID settings. On the next
+Linux boot, stable repeated SEP inventory contained only the original identity,
+while the Linux-local Catacomb still contained both. Per-user and global SEP
+views agreed and all transport, keybag, Bridge, and journal diagnostics were
+healthy. This demonstrates that macOS did not import the Linux host record and
+instead reconciled SEP to its separate one-identity host Catacomb.
+
+Linux now treats this as an externally observed deletion, not transport damage
+or an adaptive-template save. The recovery accepts only one exact local-only
+record, backs up every local component, atomically prunes that record, repeats
+stable live inventory, and proves local/live survivor equality. It issues no
+SEP biometric or Catacomb command. Cross-OS persistence remains unsupported
+until macOS host-Catacomb synchronization has its own safe transaction model.
+
 The project therefore remains two milestones. Existing, already-provisioned
 Apple/SEP user management is technically credible after a read-only inventory
 and transaction/recovery layer. Linux-native user provisioning is a separate

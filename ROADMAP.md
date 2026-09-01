@@ -141,6 +141,14 @@ evidence, not intent.
 - [x] Verify after reboot that the pre-existing and Linux-enrolled fingerprints
       independently match while fprintd truthfully exposes one compatibility
       alias for the configured Apple user.
+- [x] Reproduce the cross-OS boundary: a macOS boot did not import the
+      Linux-only identity into macOS's host Catacomb and removed it from SEP,
+      leaving the Linux-local two-record Catacomb safely unreconciled.
+- [x] Add a journaled, fully backed-up host-only reconciliation for exactly one
+      identity already absent from stable per-user/global SEP state; it sends
+      no SEP mutation command and preserves all survivor metadata.
+- [ ] Design and validate cross-OS host-Catacomb synchronization before
+      claiming that a Linux-enrolled identity survives a subsequent macOS boot.
 - [ ] Perform the first live single-identity deletion and post-reboot survivor
       verification on the proven machine.
 - [x] Replace the verification-only fprintd compatibility alias with truthful

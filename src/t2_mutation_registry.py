@@ -11,6 +11,7 @@ from pathlib import Path
 
 import t2_catacomb_sync_journal
 import t2_enrollment_journal
+import t2_external_delete_reconcile
 import t2_identity_delete_journal
 import t2_identity_rename_journal
 import t2_mutation_journal
@@ -116,6 +117,23 @@ def _catacomb_sync_entry(records) -> MutationEntry:
     )
 
 
+def _external_delete_entry(records) -> MutationEntry:
+    try:
+        history = t2_external_delete_reconcile.validate_history(records)
+    except t2_external_delete_reconcile.ExternalDeleteReconcileError as error:
+        raise MutationRegistryError(
+            "external-delete reconciliation journal is invalid"
+        ) from error
+    complete = history.phase in {
+        t2_external_delete_reconcile.ExternalDeletePhase.BASELINE,
+        t2_external_delete_reconcile.ExternalDeletePhase.RECONCILED,
+        t2_external_delete_reconcile.ExternalDeletePhase.ABORTED,
+    }
+    return MutationEntry(
+        "reconcile-external-delete", history.phase.value, not complete, False
+    )
+
+
 def scan(root: Path) -> tuple[MutationEntry, ...]:
     if not isinstance(root, Path):
         raise MutationRegistryError("mutation journal root is not a path")
@@ -143,6 +161,8 @@ def scan(root: Path) -> tuple[MutationEntry, ...]:
             result.append(_delete_entry(records))
         elif kind == "sync-user-catacomb":
             result.append(_catacomb_sync_entry(records))
+        elif kind == "reconcile-external-delete":
+            result.append(_external_delete_entry(records))
         elif kind in {"delete-batch", "recovery"}:
             # No typed completion state exists yet, so these are conservatively
             # owned by their future broker and always block another mutation.

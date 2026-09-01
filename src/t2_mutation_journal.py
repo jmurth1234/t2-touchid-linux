@@ -27,6 +27,7 @@ ALLOWED_KINDS = {
     "delete-batch",
     "recovery",
     "sync-user-catacomb",
+    "reconcile-external-delete",
 }
 FORBIDDEN_KEY_PARTS = ("password", "passcode", "credential", "secret", "auth_token")
 SAFE_SECURITY_METADATA_SUFFIXES = ("_verified", "_digest", "_hash", "_present")

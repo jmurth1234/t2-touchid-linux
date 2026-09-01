@@ -88,7 +88,8 @@ install -d -o root -g root -m 0755 "$target_dir" "$target_dir/src" /usr/local/li
 install -d -o root -g root -m 0755 /usr/share/polkit-1/actions
 install -d -o root -g root -m 0700 \
   /var/lib/t2-touchid /var/lib/t2-touchid/users \
-  /var/lib/t2-touchid/mutations /var/lib/t2-touchid/recovery-anchors
+  /var/lib/t2-touchid/mutations /var/lib/t2-touchid/recovery-anchors \
+  /var/lib/t2-touchid/external-reconciliation-backups
 install -d -o root -g root -m 0700 /run/t2-touchid/workers
 install -o root -g root -m 0755 "$source_dir/src/"*.py "$target_dir/src/"
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-doctor.py" /usr/local/sbin/t2-touchid-doctor

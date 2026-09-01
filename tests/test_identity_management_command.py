@@ -74,6 +74,26 @@ class IdentityManagementCommandTests(unittest.TestCase):
         self.assertFalse(result["rename_recovery_candidate"])
         self.assertFalse(result["delete_recovery_candidate"])
 
+    def test_status_counts_pending_external_reconciliation(self):
+        entries = (
+            SimpleNamespace(
+                kind="reconcile-external-delete",
+                phase="external-delete-outcome-unknown",
+                blocks_new_mutation=True,
+                post_reboot_pending=False,
+            ),
+        )
+        with mock.patch.object(
+            MODULE.t2_mutation_registry, "scan", return_value=entries
+        ):
+            result = MODULE.status()
+        self.assertEqual(result["external_reconciliation_pending_count"], 1)
+        self.assertEqual(
+            result["external_reconciliation_pending_phases"],
+            {"external-delete-outcome-unknown": 1},
+        )
+        self.assertTrue(result["new_mutation_blocked"])
+
     def test_current_host_uses_immutable_backup_only_as_metadata_anchor(self):
         with tempfile.TemporaryDirectory() as directory:
             backup = Path(directory) / ("a" * 64 + ".tar.gz")
@@ -145,6 +165,18 @@ class IdentityManagementCommandTests(unittest.TestCase):
                 MODULE.IdentityManagementError, "earlier biometric mutation"
             ):
                 MODULE.run_delete({}, slot=1)
+
+    def test_external_reconciliation_refuses_while_any_mutation_blocks(self):
+        with mock.patch.object(
+            MODULE, "require_mapping_capability"
+        ) as capability, mock.patch.object(
+            MODULE.t2_mutation_registry, "blocks_new_mutation", return_value=True
+        ):
+            with self.assertRaisesRegex(
+                MODULE.IdentityManagementError, "earlier biometric mutation"
+            ):
+                MODULE.run_external_delete_reconciliation({})
+        capability.assert_called_once_with({}, "identity-management")
 
     def test_delete_broker_dispatches_once_then_persists_survivors(self):
         generation = "00000000-0000-0000-0000-000000000111"

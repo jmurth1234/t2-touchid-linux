@@ -39,6 +39,7 @@ import t2_catacomb_store
 import t2_catacomb_sync_journal
 import t2_enrollment_finalizer
 import t2_enrollment_persistence_journal
+import t2_external_delete_reconcile
 import t2_fprint_projection
 import t2_identity_delete
 import t2_identity_delete_bridge
@@ -66,6 +67,7 @@ STATE_ROOT = Path("/var/lib/t2-touchid")
 BACKUP_ROOT = STATE_ROOT / "backups"
 STORE_ROOT = STATE_ROOT / "catacomb"
 MUTATION_ROOT = STATE_ROOT / "mutations"
+EXTERNAL_BACKUP_ROOT = STATE_ROOT / "external-reconciliation-backups"
 OPERATION_LOCK = Path("/run/t2-touchid/operation.lock")
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 SYSTEMD_INHIBIT = Path("/usr/bin/systemd-inhibit")
@@ -405,14 +407,39 @@ def delete_journals() -> list[tuple[Path, object]]:
     return found
 
 
+def external_delete_journals() -> list[tuple[Path, object]]:
+    _private_root_owned(MUTATION_ROOT, directory=True)
+    found = []
+    for entry in sorted(MUTATION_ROOT.iterdir(), key=lambda value: value.name):
+        if not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl",
+            entry.name,
+        ) or not t2_mutation_journal.secure_regular_file(entry):
+            raise IdentityManagementError("mutation journal directory is unsafe")
+        records = t2_mutation_journal.read(entry)
+        evidence = records[0].get("evidence") if records else None
+        if isinstance(evidence, dict) and evidence.get("operation_kind") == (
+            "reconcile-external-delete"
+        ):
+            found.append(
+                (
+                    entry,
+                    t2_external_delete_reconcile.validate_history(records),
+                )
+            )
+    return found
+
+
 def status() -> dict[str, object]:
     entries = t2_mutation_registry.scan(MUTATION_ROOT)
     rename_phases: dict[str, int] = {}
     delete_phases: dict[str, int] = {}
     sync_phases: dict[str, int] = {}
+    external_phases: dict[str, int] = {}
     rename_pending = 0
     delete_pending = 0
     sync_pending = 0
+    external_pending = 0
     rename_post_reboot = 0
     delete_post_reboot = 0
     for entry in entries:
@@ -427,6 +454,14 @@ def status() -> dict[str, object]:
         elif entry.kind == "sync-user-catacomb" and entry.blocks_new_mutation:
             sync_phases[entry.phase] = sync_phases.get(entry.phase, 0) + 1
             sync_pending += 1
+        elif (
+            entry.kind == "reconcile-external-delete"
+            and entry.blocks_new_mutation
+        ):
+            external_phases[entry.phase] = (
+                external_phases.get(entry.phase, 0) + 1
+            )
+            external_pending += 1
     return {
         "schema_version": 1,
         "status_only": True,
@@ -436,18 +471,24 @@ def status() -> dict[str, object]:
         "delete_pending_phases": dict(sorted(delete_phases.items())),
         "catacomb_sync_pending_count": sync_pending,
         "catacomb_sync_pending_phases": dict(sorted(sync_phases.items())),
+        "external_reconciliation_pending_count": external_pending,
+        "external_reconciliation_pending_phases": dict(
+            sorted(external_phases.items())
+        ),
         "post_reboot_pending_count": rename_post_reboot + delete_post_reboot,
         "rename_recovery_candidate": (
             rename_pending == 1
             and rename_post_reboot == 0
             and delete_pending == 0
             and sync_pending == 0
+            and external_pending == 0
         ),
         "delete_recovery_candidate": (
             delete_pending == 1
             and delete_post_reboot == 0
             and rename_pending == 0
             and sync_pending == 0
+            and external_pending == 0
         ),
         "new_mutation_blocked": any(item.blocks_new_mutation for item in entries),
         "identifiers_redacted": True,
@@ -1011,6 +1052,373 @@ def run_user_catacomb_sync(
         "catacomb_sync_performed": True,
         "catacomb_sync_recovery_performed": recovery_entry is not None,
         "identity_count": len(local.identities),
+        "identifiers_redacted": True,
+    }
+
+
+def _external_plan_from_history(
+    history: t2_external_delete_reconcile.ExternalDeleteHistory,
+    archive: bytes,
+) -> t2_external_delete_reconcile.ExternalDeletePlan:
+    baseline = history.baseline
+    return t2_external_delete_reconcile.ExternalDeletePlan(
+        baseline["apple_uid"],
+        baseline["stale_identity_uuid"],
+        baseline["stale_entity"],
+        baseline["stale_name_sha256"],
+        baseline["local_identity_count"],
+        baseline["live_identity_count"],
+        baseline["local_snapshot_sha256"],
+        baseline["live_snapshot_sha256"],
+        baseline["survivor_snapshot_sha256"],
+        archive,
+    )
+
+
+def _external_reconciliation_readback(
+    configuration: dict[str, object],
+    *,
+    lease: t2_bridge_connection.BridgeConnectionLease,
+    store: t2_catacomb_store.CatacombStore,
+    history: t2_external_delete_reconcile.ExternalDeleteHistory,
+) -> None:
+    if history.intent is None:
+        raise IdentityManagementError("external reconciliation has no host intent")
+    components = store.read_committed_components()
+    user_name = f'user_{configuration["apple_uid"]:08x}.cat'
+    if (
+        hashlib.sha256(components[user_name]).hexdigest()
+        != history.intent["staged_user_sha256"]
+        or _component_snapshot(
+            components,
+            tuple(sorted(set(components) - {user_name})),
+        )
+        != history.baseline["other_components_snapshot_sha256"]
+    ):
+        raise IdentityManagementError(
+            "external reconciliation changed an unexpected local component"
+        )
+    local = t2_catacomb_codec.decode_user_catacomb(
+        components[user_name], configuration["apple_uid"]
+    )
+    live = t2_bridge_inventory.collect_stable_private_inventory(
+        lease, configuration["apple_uid"]
+    )
+    plan = _external_plan_from_history(history, components[user_name])
+    t2_external_delete_reconcile.verify(plan, local, live)
+
+
+def run_external_delete_reconciliation(
+    configuration: dict[str, object],
+) -> dict[str, object]:
+    """Prune one local-only identity after an external SEP deletion."""
+
+    require_mapping_capability(configuration, "identity-management")
+    if t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
+        raise IdentityManagementError(
+            "an earlier biometric mutation is unfinished or awaits verification"
+        )
+    if os.path.lexists(STORE_ROOT / "prepare") or os.path.lexists(
+        STORE_ROOT / "commit"
+    ):
+        raise IdentityManagementError("a local Catacomb transaction needs recovery")
+    _private_root_owned(EXTERNAL_BACKUP_ROOT, directory=True)
+    keybag_runtime(configuration["special_bag"])
+    store, _host, local, _backup = current_host_and_local(configuration)
+    components = store.read_committed_components()
+    user_name = f'user_{configuration["apple_uid"]:08x}.cat'
+    operation_id = str(uuid.uuid4())
+    journal_path = MUTATION_ROOT / f"{operation_id}.jsonl"
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"], configuration["interface"], _port(), timeout=60
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        plan = t2_external_delete_reconcile.plan(local, live)
+        backup = t2_external_delete_reconcile.create_backup(
+            EXTERNAL_BACKUP_ROOT, operation_id, components
+        )
+        history = t2_external_delete_reconcile.create_journal(
+            journal_path,
+            operation_id,
+            {
+                "operation_kind": "reconcile-external-delete",
+                "apple_uid": configuration["apple_uid"],
+                "linux_boot_uuid": BOOT_ID.read_text(encoding="ascii").strip(),
+                "connection_generation": lease.connection_generation,
+                "mapping_generation": configuration["mapping_generation"],
+                "local_identity_count": plan.local_identity_count,
+                "live_identity_count": plan.live_identity_count,
+                "stale_identity_uuid": plan.stale_identity_uuid,
+                "stale_entity": plan.stale_entity,
+                "stale_name_sha256": plan.stale_name_sha256,
+                "local_snapshot_sha256": plan.local_snapshot_sha256,
+                "live_snapshot_sha256": plan.live_snapshot_sha256,
+                "survivor_snapshot_sha256": plan.survivor_snapshot_sha256,
+                "before_user_sha256": hashlib.sha256(
+                    components[user_name]
+                ).hexdigest(),
+                "other_components_snapshot_sha256": _component_snapshot(
+                    components,
+                    tuple(sorted(set(components) - {user_name})),
+                ),
+                "backup_reference": backup.reference,
+                "backup_snapshot_sha256": backup.snapshot_sha256,
+                "sep_mutation_performed": False,
+            },
+        )
+        staged_hash = hashlib.sha256(plan.archive).hexdigest()
+        history = t2_external_delete_reconcile.append_checked(
+            journal_path,
+            operation_id,
+            "EXTERNAL_DELETE_INTENT",
+            {
+                "connection_generation": lease.connection_generation,
+                "staged_user_sha256": staged_hash,
+                "survivor_snapshot_sha256": plan.survivor_snapshot_sha256,
+                "identity_count": plan.live_identity_count,
+                "sep_mutation_performed": False,
+            },
+        )
+        stage = "host-stage"
+        try:
+            store.begin_stage({user_name})
+            observed_hash = store.stage_component(
+                user_name, plan.archive, {user_name}
+            )
+            if observed_hash != staged_hash:
+                raise IdentityManagementError(
+                    "staged external reconciliation changed content"
+                )
+            stage = "host-commit"
+            store.cross_commit_boundary({user_name: staged_hash})
+        except BaseException as error:
+            try:
+                t2_external_delete_reconcile.append_checked(
+                    journal_path,
+                    operation_id,
+                    "EXTERNAL_DELETE_OUTCOME_UNKNOWN",
+                    {
+                        "stage": stage,
+                        "host_commit_possible": os.path.lexists(
+                            STORE_ROOT / "commit"
+                        ),
+                        "sep_mutation_performed": False,
+                    },
+                )
+            except BaseException:
+                pass
+            raise IdentityManagementError(
+                "external reconciliation local commit needs recovery"
+            ) from error
+        history = t2_external_delete_reconcile.append_checked(
+            journal_path,
+            operation_id,
+            "EXTERNAL_DELETE_HOST_COMMITTED",
+            {
+                "staged_user_sha256": staged_hash,
+                "recovery_action": "direct",
+                "sep_mutation_performed": False,
+            },
+        )
+        try:
+            _external_reconciliation_readback(
+                configuration, lease=lease, store=store, history=history
+            )
+        except BaseException as error:
+            try:
+                t2_external_delete_reconcile.append_checked(
+                    journal_path,
+                    operation_id,
+                    "EXTERNAL_DELETE_OUTCOME_UNKNOWN",
+                    {
+                        "stage": "readback",
+                        "host_commit_possible": True,
+                        "sep_mutation_performed": False,
+                    },
+                )
+            except BaseException:
+                pass
+            raise IdentityManagementError(
+                "external reconciliation read-back needs recovery"
+            ) from error
+        final = t2_external_delete_reconcile.append_checked(
+            journal_path,
+            operation_id,
+            "EXTERNAL_DELETE_RECONCILED",
+            {
+                "connection_generation": lease.connection_generation,
+                "staged_user_sha256": staged_hash,
+                "identity_count": plan.live_identity_count,
+                "local_live_equal": True,
+                "target_absent": True,
+                "other_components_unchanged": True,
+                "sep_mutation_performed": False,
+            },
+        )
+    if final.phase is not (
+        t2_external_delete_reconcile.ExternalDeletePhase.RECONCILED
+    ):
+        raise IdentityManagementError("external reconciliation did not complete")
+    return {
+        "schema_version": 1,
+        "external_deletion_reconciled": True,
+        "removed_local_only_identity_count": 1,
+        "identity_count": plan.live_identity_count,
+        "backup_created": True,
+        "local_catacomb_mutated": True,
+        "sep_mutation_performed": False,
+        "identifiers_redacted": True,
+    }
+
+
+def run_external_delete_recovery(
+    configuration: dict[str, object],
+) -> dict[str, object]:
+    """Recover exactly one interrupted host-only reconciliation forward or back."""
+
+    require_mapping_capability(configuration, "identity-management")
+    candidates = [
+        item
+        for item in external_delete_journals()
+        if item[1].phase
+        not in {
+            t2_external_delete_reconcile.ExternalDeletePhase.BASELINE,
+            t2_external_delete_reconcile.ExternalDeletePhase.RECONCILED,
+            t2_external_delete_reconcile.ExternalDeletePhase.ABORTED,
+        }
+    ]
+    if len(candidates) != 1:
+        raise IdentityManagementError(
+            "external reconciliation recovery requires exactly one pending journal"
+        )
+    journal_path, history = candidates[0]
+    if (
+        history.baseline["apple_uid"] != configuration["apple_uid"]
+        or history.baseline["mapping_generation"]
+        != configuration["mapping_generation"]
+        or history.intent is None
+    ):
+        raise IdentityManagementError(
+            "external reconciliation recovery binding changed"
+        )
+    keybag_runtime(configuration["special_bag"])
+    store = t2_catacomb_store.CatacombStore(
+        STORE_ROOT, configuration["apple_uid"]
+    )
+    user_name = f'user_{configuration["apple_uid"]:08x}.cat'
+    expected = {user_name: history.intent["staged_user_sha256"]}
+    prepare_exists = os.path.lexists(STORE_ROOT / "prepare")
+    commit_exists = os.path.lexists(STORE_ROOT / "commit")
+    if prepare_exists and commit_exists:
+        raise IdentityManagementError("both Catacomb transaction states are present")
+    if prepare_exists and history.phase is (
+        t2_external_delete_reconcile.ExternalDeletePhase.HOST_COMMITTED
+    ):
+        raise IdentityManagementError(
+            "committed external reconciliation has an unexpected prepare state"
+        )
+    if prepare_exists:
+        store.discard_prepare(set(expected), expected)
+        t2_external_delete_reconcile.append_checked(
+            journal_path,
+            history.operation_id,
+            "EXTERNAL_DELETE_ABORTED",
+            {
+                "reason": "prepare-discarded",
+                "host_commit_possible": False,
+                "sep_mutation_performed": False,
+            },
+        )
+        return {
+            "schema_version": 1,
+            "external_reconciliation_recovery_performed": True,
+            "recovery_action": "prepare-discarded",
+            "local_catacomb_mutated": False,
+            "sep_mutation_performed": False,
+            "identifiers_redacted": True,
+        }
+    recovery_action = "direct"
+    if commit_exists:
+        if store.recover(expected) != "commit-rolled-forward":
+            raise IdentityManagementError(
+                "external reconciliation commit did not roll forward"
+            )
+        recovery_action = "commit-rolled-forward"
+    components = store.read_committed_components()
+    current_user_hash = hashlib.sha256(components[user_name]).hexdigest()
+    if current_user_hash == history.baseline["before_user_sha256"]:
+        if history.phase is (
+            t2_external_delete_reconcile.ExternalDeletePhase.HOST_COMMITTED
+        ):
+            raise IdentityManagementError(
+                "external reconciliation journal says committed but old host remains"
+            )
+        t2_external_delete_reconcile.append_checked(
+            journal_path,
+            history.operation_id,
+            "EXTERNAL_DELETE_ABORTED",
+            {
+                "reason": "before-host-stage",
+                "host_commit_possible": False,
+                "sep_mutation_performed": False,
+            },
+        )
+        return {
+            "schema_version": 1,
+            "external_reconciliation_recovery_performed": True,
+            "recovery_action": "no-local-commit",
+            "local_catacomb_mutated": False,
+            "sep_mutation_performed": False,
+            "identifiers_redacted": True,
+        }
+    if current_user_hash != history.intent["staged_user_sha256"]:
+        raise IdentityManagementError(
+            "external reconciliation host component differs from its journal"
+        )
+    if history.phase is not (
+        t2_external_delete_reconcile.ExternalDeletePhase.HOST_COMMITTED
+    ):
+        history = t2_external_delete_reconcile.append_checked(
+            journal_path,
+            history.operation_id,
+            "EXTERNAL_DELETE_HOST_COMMITTED",
+            {
+                "staged_user_sha256": history.intent["staged_user_sha256"],
+                "recovery_action": recovery_action,
+                "sep_mutation_performed": False,
+            },
+        )
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"], configuration["interface"], _port(), timeout=60
+    ) as lease:
+        _external_reconciliation_readback(
+            configuration, lease=lease, store=store, history=history
+        )
+        final = t2_external_delete_reconcile.append_checked(
+            journal_path,
+            history.operation_id,
+            "EXTERNAL_DELETE_RECONCILED",
+            {
+                "connection_generation": lease.connection_generation,
+                "staged_user_sha256": history.intent["staged_user_sha256"],
+                "identity_count": history.baseline["live_identity_count"],
+                "local_live_equal": True,
+                "target_absent": True,
+                "other_components_unchanged": True,
+                "sep_mutation_performed": False,
+            },
+        )
+    return {
+        "schema_version": 1,
+        "external_reconciliation_recovery_performed": True,
+        "external_deletion_reconciled": final.phase
+        is t2_external_delete_reconcile.ExternalDeletePhase.RECONCILED,
+        "recovery_action": recovery_action,
+        "identity_count": history.baseline["live_identity_count"],
+        "local_catacomb_mutated": True,
+        "sep_mutation_performed": False,
         "identifiers_redacted": True,
     }
 
@@ -1743,6 +2151,24 @@ def main() -> int:
     recover_sync.add_argument(
         "--acknowledge-local-catacomb-persistence", action="store_true"
     )
+    external_delete = subparsers.add_parser(
+        "reconcile-external-deletion",
+        help="remove one local record already absent from stable SEP inventory",
+    )
+    external_delete.add_argument(
+        "--acknowledge-external-fingerprint-removal", action="store_true"
+    )
+    external_delete.add_argument(
+        "--acknowledge-local-catacomb-reconciliation", action="store_true"
+    )
+    recover_external = subparsers.add_parser(
+        "recover-external-deletion",
+        help="recover one interrupted external-deletion reconciliation",
+    )
+    recover_external.add_argument(
+        "--acknowledge-interrupted-external-reconciliation",
+        action="store_true",
+    )
     subparsers.add_parser(
         "verify-post-reboot", help="verify a reconciled rename after reboot"
     )
@@ -1786,6 +2212,15 @@ def main() -> int:
         and args.acknowledge_local_catacomb_persistence
     ):
         parser.error("all adaptive Catacomb recovery acknowledgements are required")
+    if args.command == "reconcile-external-deletion" and not (
+        args.acknowledge_external_fingerprint_removal
+        and args.acknowledge_local_catacomb_reconciliation
+    ):
+        parser.error("both external reconciliation acknowledgements are required")
+    if args.command == "recover-external-deletion" and not (
+        args.acknowledge_interrupted_external_reconciliation
+    ):
+        parser.error("external reconciliation recovery acknowledgement is required")
     if args.command == "recover" and not (
         args.acknowledge_interrupted_rename_recovery
     ):
@@ -1832,6 +2267,12 @@ def main() -> int:
             elif args.command == "recover-catacomb-sync":
                 with sleep_inhibitor():
                     result = run_user_catacomb_sync(configuration, recovery=True)
+            elif args.command == "reconcile-external-deletion":
+                with sleep_inhibitor():
+                    result = run_external_delete_reconciliation(configuration)
+            elif args.command == "recover-external-deletion":
+                with sleep_inhibitor():
+                    result = run_external_delete_recovery(configuration)
             elif args.command == "delete":
                 with sleep_inhibitor():
                     result = run_delete(configuration, slot=args.slot)
@@ -1856,6 +2297,7 @@ def main() -> int:
         t2_catacomb_local.LocalCatacombError,
         t2_catacomb_store.CatacombStoreError,
         t2_enrollment_finalizer.EnrollmentFinalizerError,
+        t2_external_delete_reconcile.ExternalDeleteReconcileError,
         t2_identity_delete.IdentityDeleteError,
         t2_identity_delete_bridge.IdentityDeleteBridgeError,
         t2_identity_delete_journal.IdentityDeleteJournalError,

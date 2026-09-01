@@ -22,6 +22,7 @@ Read [Before you start](#before-you-start) before installing anything.
 - [Enrollment (experimental)](#enrollment-experimental)
 - [Identity management (experimental)](#identity-management-experimental)
 - [Single-identity deletion (experimental)](#single-identity-deletion-experimental)
+- [Cross-OS reconciliation](#cross-os-reconciliation)
 - [Security properties](#security-properties)
 - [Limitations](#limitations)
 - [Reporting compatibility](#reporting-compatibility)
@@ -42,7 +43,7 @@ below, and nowhere else.
 | Fingerprint verification through `fprintd` and PAM | Yes, installed and enabled | Yes, including negative controls and password fallback |
 | Keybag unlock (manual, PAM hook, or encrypted credential) | Yes, installed | Yes, including cold boot |
 | Diagnostics and identity inventory | Yes, installed | Yes |
-| Enrollment from Linux (`t2-touchid-enroll`) | Yes, separate root-only CLI | Yes, one identity enrolled and re-proven after reboot |
+| Enrollment from Linux (`t2-touchid-enroll`) | Yes, separate root-only CLI | Yes, one identity enrolled and re-proven after Linux reboot; a later macOS boot removed it |
 | Label rename (`t2-touchid-manage rename-fprint`) | Yes, separate root-only CLI | Yes |
 | Adaptive Catacomb persistence | Yes, opt-in (`T2_TOUCHID_AUTO_SYNC_ADAPTIVE=1`) | Partly; the journaled path is installed but has no dedicated live control |
 | Single-identity deletion (`t2-touchid-manage delete`) | Yes, behind explicit acknowledgements | No; the first live hardware test has not been performed |
@@ -67,6 +68,11 @@ Linux-enrolled right thumb were reconciled and assigned the canonical
 `verify-match` through an explicit `fprintd-verify -f any "$USER"` request,
 while an unenrolled finger returns `verify-no-match`; named requests also
 select only their corresponding identity.
+
+That Linux-only thumb did not appear in macOS Touch ID settings. After macOS
+booted, the next Linux boot found one stable SEP identity but two records in
+the Linux-local Catacomb. fprintd correctly failed closed. This cross-OS
+boundary and its host-only recovery are documented below.
 
 ## Prerequisites
 
@@ -727,6 +733,43 @@ blocked.
 Delete-all, last-identity deletion, whole-user removal, and cross-user
 administration remain disabled.
 
+## Cross-OS reconciliation
+
+macOS and this project currently use separate host Catacombs. On the proven
+dual-boot machine, macOS did not import a fingerprint enrolled only from Linux;
+instead, its next boot reconciled SEP back to the identity present in macOS's
+host Catacomb. Linux then retained one stale local-only record and refused to
+expose an inventory.
+
+Do not run adaptive Catacomb sync while the identity sets disagree. Repair only
+the exact one-record external-deletion shape with:
+
+```sh
+sudo t2-touchid-manage reconcile-external-deletion \
+  --acknowledge-external-fingerprint-removal \
+  --acknowledge-local-catacomb-reconciliation
+sudo systemctl restart fprintd.service
+```
+
+The command requires clean, stable, equal per-user/global SEP views; SEP must
+be an exact one-identity subset of the Linux archive. It creates a root-only
+backup of every local component, atomically removes only the unique local-only
+record, repeats the live inventory, and proves the survivor set. It sends no
+SEP enrollment, deletion, or Catacomb command.
+
+If interrupted, inspect and recover its journal rather than replaying it:
+
+```sh
+sudo t2-touchid-manage status
+sudo t2-touchid-manage recover-external-deletion \
+  --acknowledge-interrupted-external-reconciliation
+```
+
+Backups remain under
+`/var/lib/t2-touchid/external-reconciliation-backups/`. This restores Linux
+consistency only. Making Linux enrollment visible to and durable across macOS
+requires a separate macOS host-Catacomb synchronization design.
+
 ## Security properties
 
 - Matching is scoped to the configured macOS user ID and the identity records
@@ -750,6 +793,8 @@ See [`SECURITY.md`](SECURITY.md) for reporting and threat-model notes.
   unloaded; reboot before replacing it.
 - The macOS-derived keybag must remain private and must be unlocked with the
   macOS login password after every reboot. The password is never stored.
+- Linux-only enrollments currently do not survive a macOS boot because macOS's
+  separate host Catacomb does not contain them.
 - Suspend/resume is not reliable; see below.
 - Multi-user operation is not supported. Only the single configured Apple user
   can authenticate.

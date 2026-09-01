@@ -9,8 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import t2_identity_rename_journal as rename_journal
 import t2_identity_delete_journal as delete_journal
+import t2_external_delete_reconcile as external_reconcile
 import t2_mutation_journal as mutation
 import t2_mutation_registry as registry
+from tests.test_external_delete_reconcile import baseline_evidence as external_baseline
 from tests.test_mutation_journal import baseline
 
 
@@ -126,6 +128,47 @@ class MutationRegistryTests(unittest.TestCase):
             entry = registry.scan(root)[0]
             self.assertEqual(entry.phase, "unrouted")
             self.assertTrue(entry.blocks_new_mutation)
+
+    def test_routes_external_delete_reconciliation_until_terminal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            path = root / "00000000-0000-0000-0000-000000000075.jsonl"
+            operation_id = "00000000-0000-0000-0000-000000000075"
+            external_reconcile.create_journal(
+                path, operation_id, external_baseline()
+            )
+            self.assertFalse(registry.scan(root)[0].blocks_new_mutation)
+
+            external_reconcile.append_checked(
+                path,
+                operation_id,
+                "EXTERNAL_DELETE_INTENT",
+                {
+                    "connection_generation": external_baseline()[
+                        "connection_generation"
+                    ],
+                    "staged_user_sha256": "9" * 64,
+                    "survivor_snapshot_sha256": "5" * 64,
+                    "identity_count": 1,
+                    "sep_mutation_performed": False,
+                },
+            )
+            entry = registry.scan(root)[0]
+            self.assertEqual(entry.kind, "reconcile-external-delete")
+            self.assertTrue(entry.blocks_new_mutation)
+
+            external_reconcile.append_checked(
+                path,
+                operation_id,
+                "EXTERNAL_DELETE_ABORTED",
+                {
+                    "reason": "before-host-stage",
+                    "host_commit_possible": False,
+                    "sep_mutation_performed": False,
+                },
+            )
+            self.assertFalse(registry.scan(root)[0].blocks_new_mutation)
 
     def test_rejects_unexpected_entry(self):
         with tempfile.TemporaryDirectory() as directory:

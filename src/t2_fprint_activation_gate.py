@@ -54,6 +54,8 @@ MANAGEMENT_STATUS_KEYS = frozenset(
         "rename_pending_phases",
         "delete_pending_count",
         "delete_pending_phases",
+        "external_reconciliation_pending_count",
+        "external_reconciliation_pending_phases",
         "post_reboot_pending_count",
         "rename_recovery_candidate",
         "delete_recovery_candidate",
@@ -150,6 +152,8 @@ def _management_clear(value: object) -> bool:
         and value.get("rename_pending_phases") == {}
         and value.get("delete_pending_count") == 0
         and value.get("delete_pending_phases") == {}
+        and value.get("external_reconciliation_pending_count") == 0
+        and value.get("external_reconciliation_pending_phases") == {}
         and value.get("post_reboot_pending_count") == 0
         and value.get("rename_recovery_candidate") is False
         and value.get("delete_recovery_candidate") is False

@@ -51,6 +51,8 @@ def management_status():
         "rename_pending_phases": {},
         "delete_pending_count": 0,
         "delete_pending_phases": {},
+        "external_reconciliation_pending_count": 0,
+        "external_reconciliation_pending_phases": {},
         "post_reboot_pending_count": 0,
         "rename_recovery_candidate": False,
         "delete_recovery_candidate": False,
