@@ -5850,6 +5850,16 @@ the rebuilt live module, stable read-only AKS alias observation, and an enabled
 protected mapping before permitting even the staged negative service test.
 Passing the gate does not install the candidate broker socket.
 
+The fprint API itself provides exactly ten anatomical finger names and reserves
+`any` for verification. A truthful per-identity facade therefore cannot expose
+arbitrary Catacomb labels such as `Finger 1`, guess anatomy, silently deduplicate
+labels, or return a partial list. The new pure projection accepts only a complete
+reconciled inventory in which every identity has one unique canonical fprint
+name; all other states retain the compatibility boundary and require explicit
+label migration. Even canonical finger names are presentation metadata, never
+identity authority: a later operation must resolve the name back to a private
+UUID under a fresh lock and stable inventory before matching or mutation.
+
 The installed `t2-touchid-identities` read-only management inventory now joins
 the strict committed user Catacomb to a fresh stable SEP double-read under the
 exclusive operation lock. It requires exact equality among local, per-user,

@@ -146,6 +146,14 @@ bounded Catacomb-valid labels. It requests neither modification nor activation
 authority and returns no Apple UID, UUID, alias, entity number, or keybag data.
 It remains an internal composition with no installed listener or client.
 
+`t2_fprint_projection.py` defines the presentation boundary needed to replace
+the current fprintd compatibility alias. It accepts only the exact reconciled
+public inventory and projects it onto fprint's ten standard finger names only
+when every T2 identity has one unique canonical name. Legacy labels, unknown
+labels, or duplicates produce no partial list and require explicit migration.
+Finger names remain presentation metadata; future verify/delete brokers must
+resolve them to private identity authority again under a fresh operation lock.
+
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;
 the identities runner is intrinsically non-modifying and cannot collect

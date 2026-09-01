@@ -135,6 +135,9 @@ evidence, not intent.
       verification on the proven machine.
 - [ ] Replace the verification-only fprintd compatibility alias with truthful
       per-identity listing derived from fresh reconciled T2 inventory.
+- [x] Define a fail-closed identifier-free projection onto fprint's ten standard
+      finger names; incomplete, duplicate, or legacy labels require migration
+      and never produce a misleading partial per-finger list.
 - [ ] Implement fprintd-native enrollment and deletion through the journaled,
       explicit-target Linux mutation brokers; never treat a D-Bus finger label
       as biometric authority.
