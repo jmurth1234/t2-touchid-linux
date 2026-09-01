@@ -158,6 +158,15 @@ or incomplete success become fail-closed errors. The facade also serves the
 complete historical property set through `Get` and `GetAll`; stage count stays
 `-1`, while finger-present/needed state is ready for the future worker stream.
 
+`t2_fprint_enrollment_controller` now supplies that stream boundary without
+starting a real mutation. It runs the synchronous journaled worker in a
+separate thread, delivers each translated update back onto the D-Bus event loop
+in order, and retains the completed transaction until `EnrollStop`. Stop,
+release, and even accidental asyncio task cancellation set the worker's
+cooperative cancel predicate and wait for its reconciled terminal result; they
+never kill the worker thread or replay a command. Worker, feedback, or result
+failures terminate as `enroll-unknown-error`.
+
 After an immediate E3 success, the existing E4 post-reboot proof still must be
 completed. A boot-time read-only reconciler should finish that proof
 automatically and audibly/visibly report failure; ordinary users should not

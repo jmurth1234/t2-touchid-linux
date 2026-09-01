@@ -217,6 +217,13 @@ emit `enroll-completed` until the coordinator proves policy, persistence, and
 reconciliation. The facade now exposes fprint's complete historical property
 set via both `Get` and `GetAll`; the unproven stage count remains `-1`.
 
+`t2_fprint_enrollment_controller.py` keeps one synchronous worker off the
+D-Bus event loop and sends translated updates back to that loop in order. Its
+stop/release path is cooperative: it sets the existing cancellation predicate
+and waits for the journaled worker result. Even task cancellation cannot kill
+the worker thread or trigger command replay. This controller is hardware-free
+until an authorized mutation consumer is attached.
+
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;
 the identities runner is intrinsically non-modifying and cannot collect

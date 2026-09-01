@@ -164,6 +164,9 @@ evidence, not intent.
 - [x] Implement a pure, documented fprint enrollment-status/property boundary
       with monotonic progress, quality guidance, and reconciliation-gated
       completion; retain an undefined stage count until hardware proves one.
+- [x] Implement the async fprint enrollment lifecycle around a synchronous
+      worker with ordered event-loop feedback and cooperative, journal-aware
+      stop/release/task cancellation; attach no live consumer yet.
 - [x] Publish the caller-bound, credential-scoped, cancellable native fprint
       mutation design and delivery gates before exposing any mutation method.
 - [x] Bind each fprint claim and every claim-scoped method to the exact

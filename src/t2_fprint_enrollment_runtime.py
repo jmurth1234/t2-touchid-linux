@@ -38,6 +38,13 @@ class EnrollmentRuntime:
             self.finger_needed,
         )
 
+    def initial(self) -> EnrollmentUpdate:
+        if self.finished or self.last_progress != -1:
+            raise FprintEnrollmentRuntimeError(
+                "initial enrollment state is no longer available"
+            )
+        return self._update()
+
     def accept(self, transition: object) -> EnrollmentUpdate:
         if self.finished:
             raise FprintEnrollmentRuntimeError(
