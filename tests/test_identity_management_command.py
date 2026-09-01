@@ -361,10 +361,11 @@ class IdentityManagementCommandTests(unittest.TestCase):
         self.assertTrue(result["identifiers_redacted"])
 
     def test_fprint_rename_requires_canonical_name(self):
-        with self.assertRaisesRegex(
-            MODULE.IdentityManagementError, "canonical anatomical"
-        ):
-            MODULE.require_fprint_name("Linux enrolled finger")
+        for invalid in ("Linux enrolled finger", None, [], True):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                MODULE.IdentityManagementError, "canonical anatomical"
+            ):
+                MODULE.require_fprint_name(invalid)
         self.assertEqual(
             MODULE.require_fprint_name("right-index-finger"),
             "right-index-finger",

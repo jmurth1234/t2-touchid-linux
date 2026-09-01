@@ -509,7 +509,10 @@ def run_rename(
 
 
 def require_fprint_name(name: object) -> str:
-    if name not in t2_fprint_projection.FINGER_NAME_SET:
+    if (
+        not isinstance(name, str)
+        or name not in t2_fprint_projection.FINGER_NAME_SET
+    ):
         raise IdentityManagementError(
             "fprint migration requires one canonical anatomical finger name"
         )
