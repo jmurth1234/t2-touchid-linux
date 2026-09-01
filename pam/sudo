@@ -1,7 +1,7 @@
 #%PAM-1.0
 # SPDX-License-Identifier: GPL-2.0-only
 auth      [success=2 default=ignore] pam_exec.so quiet /usr/bin/omarchy-hw-laptop-closed
-auth      optional   pam_exec.so quiet /usr/local/sbin/t2-pam-fingerprint-prompt
+auth      optional   pam_exec.so quiet stdout /usr/local/sbin/t2-pam-fingerprint-prompt
 auth      sufficient pam_fprintd.so
 auth      include      system-auth
 account   include      system-auth

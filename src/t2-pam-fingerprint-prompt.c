@@ -21,13 +21,16 @@ int main(void)
      * processing in this privileged helper.
      */
     tty_fd = open("/dev/tty", O_WRONLY | O_NOCTTY | O_CLOEXEC);
-    if (tty_fd < 0)
-        return 0;
-    if (fstat(tty_fd, &tty_state) != 0 || !S_ISCHR(tty_state.st_mode) ||
-        !isatty(tty_fd)) {
+    if (tty_fd >= 0 &&
+        (fstat(tty_fd, &tty_state) != 0 || !S_ISCHR(tty_state.st_mode) ||
+         !isatty(tty_fd))) {
         close(tty_fd);
-        return 0;
+        tty_fd = -1;
     }
+    /* pam_exec's ``stdout`` option supplies sudo's terminal here when its
+     * detached PAM subprocess has no controlling /dev/tty. */
+    if (tty_fd < 0)
+        tty_fd = STDOUT_FILENO;
     while (offset < sizeof(message) - 1) {
         ssize_t written = write(tty_fd, message + offset,
                                 sizeof(message) - 1 - offset);
@@ -40,6 +43,7 @@ int main(void)
             continue;
         break;
     }
-    close(tty_fd);
+    if (tty_fd != STDOUT_FILENO)
+        close(tty_fd);
     return 0;
 }
