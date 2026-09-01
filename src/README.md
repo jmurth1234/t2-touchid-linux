@@ -153,6 +153,9 @@ when every T2 identity has one unique canonical name. Legacy labels, unknown
 labels, or duplicates produce no partial list and require explicit migration.
 Finger names remain presentation metadata; future verify/delete brokers must
 resolve them to private identity authority again under a fresh operation lock.
+The installed, no-argument `t2-touchid-fprint-status` command feeds it only the
+existing root-only fresh reconciled identity collector and prints the redacted
+projection. It is diagnostic-only and cannot rename, enroll, or delete.
 
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;

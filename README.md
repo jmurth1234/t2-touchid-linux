@@ -271,6 +271,17 @@ labels; UUIDs, entities, Catacomb identifiers, and biometric data remain
 redacted. A slot number is valid only for that reconciled invocation and is the
 selector used by identity management commands.
 
+Check whether every reconciled identity currently has one unique canonical
+fprint finger name, without changing labels or exposing identifiers:
+
+```sh
+sudo t2-touchid-fprint-status
+```
+
+`complete: false` keeps the compatibility alias in place. It means one or more
+labels need an explicit anatomical assignment before truthful per-finger fprint
+listing can replace that alias; the command never guesses or mutates a label.
+
 ### Experimental Linux enrollment
 
 The stable command frontend exposes the proven journaled enrollment broker

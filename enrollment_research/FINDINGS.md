@@ -5867,6 +5867,9 @@ name; all other states retain the compatibility boundary and require explicit
 label migration. Even canonical finger names are presentation metadata, never
 identity authority: a later operation must resolve the name back to a private
 UUID under a fresh lock and stable inventory before matching or mutation.
+The installed no-argument fprint status diagnostic now runs that projection on
+the same fresh reconciled collector. It reports only standard finger names and
+counts; it cannot assign a label or perform a biometric operation.
 
 The installed `t2-touchid-identities` read-only management inventory now joins
 the strict committed user Catacomb to a fresh stable SEP double-read under the

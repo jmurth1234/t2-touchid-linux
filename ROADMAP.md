@@ -141,6 +141,8 @@ evidence, not intent.
 - [x] Define a fail-closed identifier-free projection onto fprint's ten standard
       finger names; incomplete, duplicate, or legacy labels require migration
       and never produce a misleading partial per-finger list.
+- [x] Add a read-only installed fprint migration-status command backed by the
+      fresh reconciled identity collector, with no label guessing or mutation.
 - [ ] Implement fprintd-native enrollment and deletion through the journaled,
       explicit-target Linux mutation brokers; never treat a D-Bus finger label
       as biometric authority.
