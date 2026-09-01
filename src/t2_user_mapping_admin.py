@@ -319,7 +319,7 @@ def _collect_account(
     if (
         not isinstance(evidence, t2_linux_account.AccountEvidence)
         or evidence.linux_uid != uid
-        or evidence.source != "local-files-v1"
+        or evidence.source != "local-files-v2"
         or evidence.protected_password_record is not True
         or evidence.home_object_bound is not True
     ):

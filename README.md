@@ -491,10 +491,11 @@ and negative-caller gates all pass.
 
 The same adapter now derives the caller's account generation itself rather than
 accepting an opaque digest from its future client. The deliberately conservative
-`local-files-v1` profile resolves the kernel UID to one exact root-owned
+`local-files-v2` profile resolves the kernel UID to one exact root-owned
 `/etc/passwd` row, requires an agreeing NSS result and protected `/etc/shadow`
-row, and binds the passwd database epoch plus the UID-owned home-directory
-device/inode/mount/birth-time object. It collects the assertion again after
+row, and binds the passwd database epoch plus the UID-owned home-directory's
+filesystem ID, inode, and birth-time object. It deliberately excludes the
+boot-local statx mount ID. It collects the assertion again after
 PolicyKit and requires byte-exact evidence equality. Account recreation,
 password/account edits, home replacement,
 or any passwd-database rewrite therefore disables the old mapping until an

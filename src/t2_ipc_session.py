@@ -130,7 +130,7 @@ def validate_account(
     if (
         not isinstance(value, t2_linux_account.AccountEvidence)
         or value.linux_uid != uid
-        or value.source != "local-files-v1"
+        or value.source != "local-files-v2"
         or value.protected_password_record is not True
         or value.home_object_bound is not True
     ):

@@ -84,8 +84,8 @@ class LocalAccountTests(unittest.TestCase):
         self.assertEqual(
             first.redacted(),
             {
-                "schema_version": 1,
-                "source": "local-files-v1",
+                "schema_version": 2,
+                "source": "local-files-v2",
                 "protected_password_record": True,
                 "home_object_bound": True,
                 "identifiers_redacted": True,
@@ -117,6 +117,16 @@ class LocalAccountTests(unittest.TestCase):
             os.chown(self.home, self.uid, self.gid)
         after = self.collect().generation
         self.assertNotEqual(before, after)
+
+    def test_home_filesystem_identity_changes_generation(self):
+        passwd = account._passwd_snapshot(self.passwd, self.uid)
+        shadow = account._shadow_record_digest(self.shadow, passwd.name)
+        first = account._HomeIdentity(11, 22, 33, 44)
+        second = account._HomeIdentity(12, 22, 33, 44)
+        self.assertNotEqual(
+            account._generation(self.uid, passwd, shadow, first),
+            account._generation(self.uid, passwd, shadow, second),
+        )
 
     def test_duplicate_uid_and_nss_disagreement_fail_closed(self):
         self._write_passwd(

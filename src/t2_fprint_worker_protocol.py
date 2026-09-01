@@ -222,7 +222,7 @@ def _validate_request(request: StartRequest) -> None:
         or not 1 <= caller.start_time_ticks < 1 << 64
         or request.finger_name not in t2_fprint_projection.FINGER_NAME_SET
         or account.linux_uid != caller.uid
-        or account.source != "local-files-v1"
+        or account.source != "local-files-v2"
         or account.protected_password_record is not True
         or account.home_object_bound is not True
         or session.binding not in {"pidfd-session", "uid-active-session"}

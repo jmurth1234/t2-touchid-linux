@@ -7,8 +7,10 @@ numeric UID to the exact local passwd record, the protected shadow record, the
 root-owned passwd database epoch, and the home-directory filesystem object.
 Deleting and recreating an account, changing its password/account record, or
 replacing the passwd database changes the resulting generation. Home binding
-uses statx birth time and mount identity as well as device/inode so immediate
-inode reuse cannot impersonate the old directory.
+uses statx birth time and inode plus the filesystem ID returned by ``fstatvfs``
+so immediate inode reuse cannot impersonate the old directory.  Linux statx
+mount IDs are intentionally excluded because they are allocated at mount time
+and can change across an otherwise identical reboot.
 
 The shadow record is hashed while held in a wipeable buffer.  It is never
 returned, logged, or included in redacted output.
@@ -29,7 +31,7 @@ from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ROOT_UID = 0
 UINT32_MAX = (1 << 32) - 1
 MAX_ACCOUNT_FILE = 4 * 1024 * 1024
@@ -41,7 +43,6 @@ LENGTH = struct.Struct(">Q")
 AT_EMPTY_PATH = 0x1000
 STATX_BASIC_STATS = 0x000007FF
 STATX_BTIME = 0x00000800
-STATX_MNT_ID = 0x00001000
 STATX_BUFFER_SIZE = 256
 
 
@@ -66,7 +67,7 @@ Resolver = Callable[[int], PasswdRecord]
 class AccountEvidence:
     linux_uid: int
     generation: str
-    source: str = "local-files-v1"
+    source: str = "local-files-v2"
     protected_password_record: bool = True
     home_object_bound: bool = True
 
@@ -103,9 +104,8 @@ class _PasswdSnapshot:
 
 @dataclass(frozen=True, repr=False)
 class _HomeIdentity:
-    device: int
+    filesystem_id: int
     inode: int
-    mount_id: int
     birth_time_sec: int
     birth_time_nsec: int
 
@@ -332,7 +332,7 @@ def _statx_home_identity(
         descriptor,
         b"",
         AT_EMPTY_PATH,
-        STATX_BASIC_STATS | STATX_BTIME | STATX_MNT_ID,
+        STATX_BASIC_STATS | STATX_BTIME,
         ctypes.byref(output),
     )
     if result != 0:
@@ -345,8 +345,13 @@ def _statx_home_identity(
     birth_sec, birth_nsec = struct.unpack_from("=qI", raw, 80)
     device_major = struct.unpack_from("=I", raw, 136)[0]
     device_minor = struct.unpack_from("=I", raw, 140)[0]
-    mount_id = struct.unpack_from("=Q", raw, 144)[0]
-    required = STATX_BASIC_STATS | STATX_BTIME | STATX_MNT_ID
+    required = STATX_BASIC_STATS | STATX_BTIME
+    try:
+        filesystem_id = os.fstatvfs(descriptor).f_fsid
+    except (AttributeError, OSError) as error:
+        raise LinuxAccountError(
+            "stable home filesystem identity is unavailable"
+        ) from error
     if (
         mask & required != required
         or statx_uid != info.st_uid
@@ -354,15 +359,15 @@ def _statx_home_identity(
         or inode != info.st_ino
         or device_major != os.major(info.st_dev)
         or device_minor != os.minor(info.st_dev)
-        or mount_id <= 0
+        or type(filesystem_id) is not int
+        or filesystem_id == 0
         or birth_sec <= 0
         or not 0 <= birth_nsec < 1_000_000_000
     ):
         raise LinuxAccountError("kernel statx account binding is incomplete")
     return _HomeIdentity(
-        int(info.st_dev),
+        filesystem_id,
         int(info.st_ino),
-        mount_id,
         birth_sec,
         birth_nsec,
     )
@@ -443,9 +448,8 @@ def _generation(
         (b"passwd-digest", passwd.database_digest),
         (b"record-digest", passwd.record_digest),
         (b"shadow-record-digest", shadow_digest),
-        (b"home-device", str(home.device).encode("ascii")),
+        (b"home-filesystem-id", str(home.filesystem_id).encode("ascii")),
         (b"home-inode", str(home.inode).encode("ascii")),
-        (b"home-mount-id", str(home.mount_id).encode("ascii")),
         (b"home-birth-sec", str(home.birth_time_sec).encode("ascii")),
         (b"home-birth-nsec", str(home.birth_time_nsec).encode("ascii")),
     )
