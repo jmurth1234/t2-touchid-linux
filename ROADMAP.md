@@ -161,6 +161,12 @@ evidence, not intent.
 - [ ] Implement fprintd-native enrollment and deletion through the journaled,
       explicit-target Linux mutation brokers; never treat a D-Bus finger label
       as biometric authority.
+- [x] Publish the caller-bound, credential-scoped, cancellable native fprint
+      mutation design and delivery gates before exposing any mutation method.
+- [x] Bind each fprint claim and every claim-scoped method to the exact
+      system-bus unique sender, and release/cancel it when that sender exits.
+- [ ] Bind the claimed D-Bus sender to stable process, session, Linux account,
+      protected mapping, and bounded PolicyKit evidence before mutation.
 - [ ] Support mapped Linux users through the same caller/session/PolicyKit and
       protected Apple-user authority model, including negative cross-user tests.
 - [ ] Validate the complete fprint client experience—list, enroll, verify,

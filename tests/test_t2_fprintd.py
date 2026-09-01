@@ -16,6 +16,7 @@ SPEC = importlib.util.spec_from_file_location("t2_fprintd", MODULE_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
+MODULE.current_dbus_sender = lambda: ":1.100"
 
 
 class FakeBackend:
@@ -89,6 +90,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         device = MODULE.FprintDevice(backend)
         emitted = []
         device.VerifyFingerSelected = lambda name: emitted.append(("finger", name))
+        device.VerifyFingerMatched = lambda name: emitted.append(("matched", name))
         device.VerifyStatus = lambda result, done: emitted.append(
             ("status", result, done)
         )
@@ -99,9 +101,20 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             emitted,
             [
                 ("finger", "left-thumb"),
+                ("matched", "left-thumb"),
                 ("status", "verify-match", True),
             ],
         )
+
+    async def test_empty_listing_uses_upstream_no_prints_error(self):
+        backend = FakeBackend()
+        backend.list_fingers = AsyncMock(return_value=())
+        device = MODULE.FprintDevice(backend)
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await MODULE.FprintDevice.ListEnrolledFingers.__wrapped__(
+                device, MODULE.LINUX_USER
+            )
+        self.assertTrue(raised.exception.type.endswith(".NoEnrolledPrints"))
 
     async def test_terminal_verdict_remains_stoppable(self):
         backend = FakeBackend()
@@ -127,6 +140,21 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             device.Claim(MODULE.LINUX_USER)
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
         await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_claim_is_bound_to_exact_dbus_sender(self):
+        device = MODULE.FprintDevice(FakeBackend())
+        device.Claim(MODULE.LINUX_USER)
+        old = MODULE.current_dbus_sender
+        MODULE.current_dbus_sender = lambda: ":1.101"
+        try:
+            with self.assertRaises(MODULE.DBusError) as raised:
+                device.VerifyStart("any")
+            self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
+            await device.sender_departed(":1.100")
+            self.assertIsNone(device.claimed_user)
+            self.assertIsNone(device.claimed_sender)
+        finally:
+            MODULE.current_dbus_sender = old
 
     async def test_unstarted_claim_expires(self):
         old_timeout = MODULE.UNSTARTED_CLAIM_SECONDS

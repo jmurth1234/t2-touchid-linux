@@ -12,6 +12,9 @@ deletion is implemented behind explicit acknowledgements but has not yet had
 its first live hardware test; macOS remains the recovery environment.
 
 See [`ROADMAP.md`](ROADMAP.md) for the evidence-based reliability checklist.
+The [proper fprint integration design](docs/FPRINT_INTEGRATION.md) records the
+caller, authorization, cancellation, recovery, and standard D-Bus lifecycle
+required before native enrollment or deletion can be exposed.
 The separate [enrollment research](enrollment_research/README.md) publishes the
 current protocol findings and evidence-collection helpers. The fprintd service
 does not expose enrollment or deletion; experimental mutation commands use

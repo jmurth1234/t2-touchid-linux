@@ -189,6 +189,13 @@ canonical list, routes names through the single-identity gate, and resolves an
 `any` success to the exact canonical `VerifyFingerSelected` name. Both paths
 require their pre-match gate and post-match unchanged-state attestation.
 
+`t2_dbus_sender.py` closes the first caller-ownership gap in the fprint facade.
+Its pinned dbus-next dispatch wrapper places the immutable system-bus unique
+sender in task-local context before sync or async service methods run. A device
+claim records that sender; all claim-scoped methods require the exact same
+connection, and a `NameOwnerChanged` departure cancels active work and releases
+the claim. The username remains presentation input, never claim authority.
+
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;
 the identities runner is intrinsically non-modifying and cannot collect
