@@ -5850,6 +5850,14 @@ the rebuilt live module, stable read-only AKS alias observation, and an enabled
 protected mapping before permitting even the staged negative service test.
 Passing the gate does not install the candidate broker socket.
 
+The staged negative client is likewise fixed and non-installed. It issues only
+the identifier-free inventory request and treats a peer close as a distinct
+typed outcome rather than conflating it with malformed or truncated packets.
+Success requires either that clean no-response close or an exact inactive/
+unmapped denial with no consumer invocation, inventory, activation authority,
+or mutation. Any other response is a failed negative test. This prepares the
+required live denial experiment without exposing the candidate socket early.
+
 The fprint API itself provides exactly ten anatomical finger names and reserves
 `any` for verification. A truthful per-identity facade therefore cannot expose
 arbitrary Catacomb labels such as `Finger 1`, guess anatomy, silently deduplicate

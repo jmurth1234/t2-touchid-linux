@@ -12,6 +12,10 @@ class UserBrokerClientError(RuntimeError):
     pass
 
 
+class UserBrokerClientPeerClosed(UserBrokerClientError):
+    pass
+
+
 def exchange(
     connection: socket.socket,
     request: t2_user_broker_protocol.BrokerRequest,
@@ -24,6 +28,10 @@ def exchange(
     try:
         t2_user_broker_protocol.send_request(connection, request)
         response = t2_user_broker_protocol.receive_response(connection)
+    except t2_user_broker_protocol.UserBrokerPeerClosed as error:
+        raise UserBrokerClientPeerClosed(
+            "broker closed without returning authority"
+        ) from error
     except t2_user_broker_protocol.UserBrokerProtocolError as error:
         raise UserBrokerClientError("broker exchange failed") from error
     if request.command == t2_user_broker_protocol.PREFLIGHT_COMMAND:

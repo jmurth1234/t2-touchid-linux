@@ -116,6 +116,9 @@ evidence, not intent.
       fixed read-only entry point without installing or enabling them.
 - [x] Add one redacted non-mutating broker-exposure diagnostic that keeps the
       reconciled T2 identity count distinct from fprintd's compatibility alias.
+- [x] Add a non-installed fixed negative-test client and strict classifier that
+      distinguish clean no-response denial from malformed traffic and reject
+      any inventory, consumer handoff, or activation authority.
 - [x] Add a live local-files account-generation assertion over the exact
       UID/passwd/shadow/database/home binding and revalidate it after PolicyKit.
 - [x] Add atomic administrator creation/rebinding for protected account

@@ -171,6 +171,14 @@ the exact requested operation and permits only the inventory response for an
 `identities/inventory` request. It offers no retry or command fallback and is
 not exposed as a command.
 
+`t2_user_broker_negative.py` and the non-installed research negative client
+define the first live exposure test without weakening that protocol. A clean
+seqpacket peer close is now typed separately from malformed/truncated traffic.
+The classifier accepts only that no-response close or the two exact unmapped/
+inactive denial states with no consumer, inventory, activation authority, or
+mutation. The fixed client has no arguments or caller-selected socket path and
+is excluded from installation until the combined exposure gate passes.
+
 `t2_user_broker_socket_activation.py` is a non-installed one-connection process
 adapter for a future systemd `Accept=yes` unit. It calls
 `sd_listen_fds_with_names(1)`, inheriting systemd's PID/PIDFD activation checks,

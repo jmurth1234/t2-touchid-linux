@@ -94,6 +94,12 @@ class UserBrokerProtocolError(ValueError):
     pass
 
 
+class UserBrokerPeerClosed(UserBrokerProtocolError):
+    """The peer closed a valid seqpacket connection without a packet."""
+
+    pass
+
+
 @dataclass(frozen=True)
 class BrokerRequest:
     command: str
@@ -518,6 +524,8 @@ def receive_request(connection: socket.socket) -> BrokerRequest:
         raise UserBrokerProtocolError(
             "broker request is truncated or contains ancillary data"
         )
+    if not data:
+        raise UserBrokerPeerClosed("broker peer closed before a request")
     return decode_request(data)
 
 
@@ -562,4 +570,6 @@ def receive_response(
         raise UserBrokerProtocolError(
             "broker response is truncated or contains ancillary data"
         )
+    if not data:
+        raise UserBrokerPeerClosed("broker peer closed without a response")
     return decode_response(data)

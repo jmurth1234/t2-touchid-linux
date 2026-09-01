@@ -393,6 +393,20 @@ class UserBrokerProtocolTests(unittest.TestCase):
             os.close(descriptor)
             os.close(write_descriptor)
 
+    def test_clean_peer_close_is_distinct_from_malformed_or_truncated_data(self):
+        for receiver in (
+            protocol.receive_request,
+            protocol.receive_response,
+        ):
+            with self.subTest(receiver=receiver.__name__):
+                left, right = socket.socketpair(
+                    socket.AF_UNIX, socket.SOCK_SEQPACKET
+                )
+                self.addCleanup(left.close)
+                right.close()
+                with self.assertRaises(protocol.UserBrokerPeerClosed):
+                    receiver(left)
+
 
 if __name__ == "__main__":
     unittest.main()

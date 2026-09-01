@@ -37,5 +37,15 @@ sudo t2-touchid-user-broker-gate \
 Exit status zero means only that gate 5 may be staged. This command does not
 copy, start, or enable either unit in this directory.
 
+`t2-touchid-user-broker-negative-client.py` is the fixed no-argument client for
+gate 5. It is also excluded from the installer. When the units are deliberately
+staged, run this client as the chosen unmapped or inactive account. It sends
+only `identities/inventory` to the fixed candidate socket and accepts either an
+exact `caller-session-denied`/`mapping-or-capability-denied` response containing
+no inventory or authority, or a clean peer close without a response. Malformed,
+truncated, cross-command, activation-bearing, inventory-bearing, unavailable-
+socket, and other denial states fail the test. A passing client result does not
+install or authorize the positive mapped-user path.
+
 After those gates pass, the units still require a reviewed installer, rollback
 path, socket-path client, and live failure-injection tests before enablement.

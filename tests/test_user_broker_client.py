@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import socket
 import sys
+import threading
 import unittest
 from pathlib import Path
 
@@ -118,6 +119,27 @@ class UserBrokerClientTests(unittest.TestCase):
             client.exchange(
                 left, protocol.BrokerRequest("identities", "enroll")
             )
+
+    def test_clean_peer_close_has_a_distinct_fail_closed_result(self):
+        left, right = self.sockets()
+        received = []
+
+        def close_after_request():
+            received.append(protocol.receive_request(right))
+            right.close()
+
+        server = threading.Thread(target=close_after_request)
+        server.start()
+        with self.assertRaises(client.UserBrokerClientPeerClosed):
+            client.exchange(
+                left, protocol.BrokerRequest("identities", "inventory")
+            )
+        server.join(timeout=2)
+        self.assertFalse(server.is_alive())
+        self.assertEqual(
+            received,
+            [protocol.BrokerRequest("identities", "inventory")],
+        )
 
 
 if __name__ == "__main__":
