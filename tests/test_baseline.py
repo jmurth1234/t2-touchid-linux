@@ -125,6 +125,19 @@ class BaselineTests(unittest.TestCase):
             t2_mutation_journal.validate_baseline(baseline)
             self.assertEqual(baseline["identity_records"][0]["uuid"], IDENTITY_UUID)
 
+            credential_free = t2_baseline.build_baseline(
+                host=host,
+                live=live_inventory(),
+                caller_linux_uid=1000,
+                target_linux_uid=1000,
+                linux_boot_uuid="00000000-0000-0000-0000-000000000021",
+                mapping_generation="b" * 64,
+                backup_reference="backup-1",
+                password_fallback_verified=False,
+            )
+            t2_mutation_journal.validate_baseline(credential_free)
+            self.assertFalse(credential_free["password_fallback_verified"])
+
     def test_rejects_live_host_identity_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "capture.tar.gz"

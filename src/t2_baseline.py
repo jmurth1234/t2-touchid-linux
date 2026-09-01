@@ -227,8 +227,8 @@ def build_baseline(
         raise BaselineError("live identity capacity is invalid")
     if live.get("biometric_protocol_version") != 2:
         raise BaselineError("baseline requires biometric protocol version 2")
-    if not password_fallback_verified:
-        raise BaselineError("password fallback has not been verified")
+    if type(password_fallback_verified) is not bool:
+        raise BaselineError("password fallback attestation is not Boolean")
     return {
         "baseline_version": 1,
         "caller_linux_uid": caller_linux_uid,
@@ -255,5 +255,5 @@ def build_baseline(
             {"reference": backup_reference, "sha256": host["archive_sha256"]}
         ],
         "double_collection_equal": True,
-        "password_fallback_verified": True,
+        "password_fallback_verified": password_fallback_verified,
     }

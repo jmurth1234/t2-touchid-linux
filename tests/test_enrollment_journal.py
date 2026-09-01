@@ -36,6 +36,25 @@ class EnrollmentJournalTests(unittest.TestCase):
             path, operation_id, "ENROLL_START_OBSERVED", {"status": 0}
         )
 
+    def test_typed_reader_rejects_false_password_fallback_attestation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "operation.jsonl"
+            operation_id = str(uuid.uuid4())
+            value = baseline()
+            value["password_fallback_verified"] = False
+            journal.append(
+                path,
+                operation_id,
+                "BASELINE_RECONCILED",
+                {"operation_kind": "enroll", "baseline": value},
+                exclusive=True,
+            )
+            with self.assertRaisesRegex(
+                enrollment.EnrollmentJournalError,
+                "enrollment password fallback",
+            ):
+                enrollment.read(path)
+
     def test_pre_dispatch_abort_is_terminal_and_records_no_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
             path, operation_id = self.create(directory)

@@ -68,7 +68,6 @@ def serve_once(
         def consume(authority, live):
             deletion = deletion_consumer_factory(
                 request.finger_name,
-                True,
             )
             return deletion(authority, live)
 

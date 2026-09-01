@@ -174,6 +174,9 @@ evidence, not intent.
       pidfd-bearing protocol, lock-held exact-name resolver, immutable recovery
       anchor, shared persistence tail, and reconciliation-only completion;
       keep it unattached to the installed daemon pending live controls.
+- [x] Make credential-free deletion journal its actual false password-fallback
+      attestation while retaining a strict true requirement for every
+      enrollment journal.
 - [x] Add a separate default-off deletion process flag and an uninstalled
       combined enrollment/deletion systemd candidate; keep the normal service
       free of both mutation flags.

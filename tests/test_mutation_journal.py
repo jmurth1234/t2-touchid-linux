@@ -68,6 +68,17 @@ class MutationJournalTests(unittest.TestCase):
             self.assertTrue(journal.secure_regular_file(path))
             self.assertEqual(journal.read(path), records)
 
+    def test_credential_free_delete_records_false_without_weakening_enroll(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            value = baseline()
+            value["password_fallback_verified"] = False
+            journal.create(root / "delete.jsonl", "delete-one", value)
+            with self.assertRaisesRegex(
+                journal.JournalError, "enrollment password fallback"
+            ):
+                journal.create(root / "enroll.jsonl", "enroll", value)
+
     def test_detects_tampering(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "journal.jsonl"

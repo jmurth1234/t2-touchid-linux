@@ -133,8 +133,8 @@ def validate_baseline(baseline: Any) -> None:
         raise JournalError("baseline policy decision is not authorized")
     if baseline["double_collection_equal"] is not True:
         raise JournalError("baseline was not reproduced by a second collection")
-    if baseline["password_fallback_verified"] is not True:
-        raise JournalError("password fallback is not verified")
+    if type(baseline["password_fallback_verified"]) is not bool:
+        raise JournalError("password fallback attestation is not Boolean")
     require_sha256(baseline["mapping_generation"], "mapping_generation")
 
     identities = baseline["identity_records"]
@@ -332,6 +332,8 @@ def create(
     if path.exists():
         raise JournalError("refusing to replace an existing journal")
     validate_baseline(baseline)
+    if kind == "enroll" and baseline["password_fallback_verified"] is not True:
+        raise JournalError("enrollment password fallback is not verified")
     operation_id = operation_id or str(uuid.uuid4())
     record = append(
         path,

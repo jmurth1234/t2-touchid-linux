@@ -35,7 +35,6 @@ class FprintDeletionConsumerError(RuntimeError):
 @dataclass(frozen=True, repr=False)
 class DeletionConsumer:
     finger_name: str
-    password_fallback_verified: bool
     mutation_root: Path = field(default=MUTATION_ROOT, repr=False)
     mutation_blocked: Callable[[Path], bool] = field(
         default=t2_mutation_registry.blocks_new_mutation, repr=False
@@ -61,10 +60,6 @@ class DeletionConsumer:
         if self.finger_name not in t2_fprint_projection.FINGER_NAME_SET:
             raise FprintDeletionConsumerError(
                 "deletion consumer requires a canonical finger name"
-            )
-        if self.password_fallback_verified is not True:
-            raise FprintDeletionConsumerError(
-                "password fallback must be independently verified"
             )
         if not isinstance(self.mutation_root, Path) or any(
             not callable(value)
@@ -219,7 +214,10 @@ class DeletionConsumer:
                 linux_boot_uuid=authority.linux_boot_uuid,
                 mapping_generation=authority.mapping_set.generation,
                 backup_reference=material.anchor.reference,
-                password_fallback_verified=self.password_fallback_verified,
+                # This credential-free worker never verifies or consumes the
+                # macOS password. Record that fact instead of manufacturing an
+                # enrollment-only fallback attestation.
+                password_fallback_verified=False,
             )
             if not authority.dispatch_allowed():
                 raise FprintDeletionConsumerError(

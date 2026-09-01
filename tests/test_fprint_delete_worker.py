@@ -78,9 +78,8 @@ class FprintDeleteWorkerTests(unittest.TestCase):
             return authorization
 
         class Deletion:
-            def __init__(self, finger_name, fallback):
+            def __init__(self, finger_name):
                 observed["finger_name"] = finger_name
-                observed["fallback"] = fallback
 
             def __call__(self, _authority, _live):
                 return expected
@@ -109,7 +108,6 @@ class FprintDeleteWorkerTests(unittest.TestCase):
         self.assertEqual(observed["operation"], "delete-one")
         self.assertTrue(observed["modification_allowed"])
         self.assertFalse(observed["collect_activation_authority"])
-        self.assertTrue(observed["fallback"])
         self.assertTrue(authorization.closed)
 
     def test_authorization_failure_emits_only_generic_failure(self):
@@ -138,7 +136,7 @@ class FprintDeleteWorkerTests(unittest.TestCase):
             return authorization
 
         class Deletion:
-            def __init__(self, _finger_name, _fallback):
+            def __init__(self, _finger_name):
                 pass
 
             def __call__(self, _authority, _live):

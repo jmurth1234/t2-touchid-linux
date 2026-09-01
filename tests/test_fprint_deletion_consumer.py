@@ -242,7 +242,6 @@ class FprintDeletionConsumerTests(unittest.TestCase):
     def make_consumer(self, **overrides):
         arguments = {
             "finger_name": "left-thumb",
-            "password_fallback_verified": True,
             "mutation_root": self.root,
             "mutation_blocked": lambda _root: False,
             "store_factory": lambda _root, _uid: self.store,
@@ -275,6 +274,7 @@ class FprintDeletionConsumerTests(unittest.TestCase):
         )
         self.assertIs(history.phase, delete_journal.IdentityDeletePhase.INTENT)
         self.assertEqual(history.target_name_sha256, mock.ANY)
+        self.assertFalse(history.baseline["password_fallback_verified"])
 
     def test_rejects_blocked_incomplete_absent_or_final_inventory(self):
         blocked = self.make_consumer(mutation_blocked=lambda _root: True)
@@ -342,12 +342,9 @@ class FprintDeletionConsumerTests(unittest.TestCase):
         ):
             self.make_consumer(mutation_root=second_root)(other, self.live)
 
-    def test_constructor_rejects_unsafe_or_unattested_inputs(self):
-        for name, fallback in (("any", True), ("left-thumb", False)):
-            with self.subTest(name=name), self.assertRaises(
-                consumer.FprintDeletionConsumerError
-            ):
-                consumer.DeletionConsumer(name, fallback)
+    def test_constructor_rejects_noncanonical_name(self):
+        with self.assertRaises(consumer.FprintDeletionConsumerError):
+            consumer.DeletionConsumer("any")
 
 
 if __name__ == "__main__":

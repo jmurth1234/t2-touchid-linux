@@ -113,6 +113,10 @@ def validate_history(records: list[dict[str, Any]]) -> EnrollmentHistory:
         journal.validate_baseline(baseline)
     except journal.JournalError as error:
         raise EnrollmentJournalError(str(error)) from error
+    if baseline["password_fallback_verified"] is not True:
+        raise EnrollmentJournalError(
+            "enrollment password fallback is not verified"
+        )
     operation_id = first.get("operation_id")
     _uuid(operation_id, "operation_id")
     phase = EnrollmentPhase.BASELINE
