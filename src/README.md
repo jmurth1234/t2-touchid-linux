@@ -271,8 +271,18 @@ password buffers are wiped and tool output is suppressed. `t2_fprint_worker`
 reconstructs the pinned authorization session, requires an enabled host-
 encrypted-credential mapping, and runs the real broker/consumer while a
 dedicated listener converts cancellation or peer loss into cooperative
-reconciliation. `t2_fprint_worker_client.py` supplies the unattached async
-facade lifecycle and waits for a terminal update.
+reconciliation. `t2_fprint_worker_client.py` supplies the async facade lifecycle
+behind the daemon's explicit default-off research flag and waits for a terminal
+update.
+
+`t2_fprint_deletion_runtime.py` is the typed success boundary for future
+single-name deletion. The source fprint facade accepts an injected deletion
+client only after the exact claim, operation exclusivity, fresh complete
+projection, named enrollment, and survivor-count checks pass. It waits through
+release or peer loss and accepts success only when the exact canonical name is
+reported as mutated, reconciled, and awaiting post-reboot proof. No installed
+client or activation flag reaches this path, and both bulk-delete methods stay
+fail-closed.
 
 `t2_post_reboot_reconciler.py` supplies automatic enrollment E4 plus completed
 rename and single-delete proof without loading the encrypted password

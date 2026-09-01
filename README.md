@@ -106,7 +106,9 @@ or an alternative sleep mode has been validated on the specific Mac model.
 - `src/t2_bridge_connection.py`: exclusive generation-pinned Bridge owner used
   by the no-CLI enrollment research coordinator.
 - `src/t2-fprintd.py`: verification facade with a default-off native enrollment
-  activation boundary.
+  activation boundary and an unattached single-name deletion adapter.
+- `src/t2_fprint_deletion_runtime.py`: exact reconciled-completion contract for
+  that future journaled deletion client.
 - `src/t2_user_mapping.py`: non-exposed, fail-closed schema for mapping Linux
   accounts to already-provisioned Apple users and explicit capabilities.
 - `src/t2_user_readiness.py`: pure classifier for per-user binding, alias, and

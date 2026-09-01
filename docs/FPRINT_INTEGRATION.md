@@ -105,7 +105,9 @@ pre-created authorization path. It permits only `enroll` and
 session even if the broker fails before entering it. The resulting authority
 now carries a fail-closed pre-dispatch guard which repeats caller, mapping,
 keybag, runtime-generation, and grant-expiry checks immediately before a SEP
-enrollment start. No D-Bus mutation method is connected to this adapter yet.
+enrollment start. Source `EnrollStart` now reaches this adapter only through an
+explicit worker client; the installed service still constructs no mutation
+client unless the separate research activation flag is deliberately staged.
 
 ## Mutation worker boundary
 
@@ -129,7 +131,8 @@ calling `EnrollStop` sends a typed cancellation request; it never kills and
 blindly retries the worker. An interrupted or transport-ambiguous operation is
 journaled as outcome-unknown and reconciled read-only before any new mutation.
 
-The internal T2 consumer side is now implemented but deliberately unattached.
+The internal T2 consumer side is now implemented and attached only to the
+default-off source enrollment path.
 `t2_recovery_anchor` writes an operation-scoped, immutable, root-private tar
 archive of the validated committed Linux-local Catacomb before any mutation;
 the existing version-1 baseline journal records this genuine backup, so no
@@ -151,7 +154,8 @@ canonical projection and proves the requested finger name is absent before it
 creates a recovery anchor, ACM context, journal, or enrollment command. The
 facade's earlier projection check is therefore feedback, not trusted mutation
 authority.
-The short-lived worker boundary is now implemented but still unattached.
+The short-lived worker boundary is now implemented and attached only when the
+daemon receives its explicit research enrollment flag.
 `t2_fprint_worker_launcher` creates one root-private operation socket and
 starts a hardened transient service with `LoadCredentialEncrypted`; its argv
 contains only the random socket path. `t2_fprint_worker_protocol` transfers
@@ -179,8 +183,8 @@ terminal proof:
 `E4_POST_REBOOT_VERIFIED`, `RENAME_POST_REBOOT_VERIFIED`, or
 `DELETE_POST_REBOOT_VERIFIED`. It has no password credential and no
 enrollment, rename, delete, or persistence command path.
-`EnrollStart` remains disabled until this path and the worker negatives are
-proven on the installed machine.
+Installed `EnrollStart` remains disabled until this path and the worker
+negatives are proven on the machine.
 
 ## Enrollment status translation
 
@@ -262,10 +266,20 @@ installed automatic path is proven.
 
 ## Deletion policy
 
-Implement `DeleteEnrolledFinger` first. Resolve its canonical name to one
-private UUID only after a fresh complete projection and invoke the existing
-journaled single-target delete broker. A label is presentation metadata; the
-journal records the resolved private authority before command `0x0d`.
+The source facade now stages `DeleteEnrolledFinger` behind an injected client
+that the installed daemon never supplies. It binds the synchronous method to
+the exact claim owner, rejects `any`, requires a fresh complete projection and
+an enrolled canonical name, refuses the final remaining identity, and keeps
+verification/enrollment/deletion mutually exclusive. Release or D-Bus peer
+loss waits for deletion reconciliation; it never cancels and replays an
+ambiguous command. Success requires an exact typed result proving the named
+mutation reconciled locally and still awaits its different-boot proof.
+
+The missing deletion worker must independently resolve that presentation name
+to one private UUID under its own fresh operation lock, invoke the existing
+journaled single-target broker, and return the typed completion only after
+same-generation reconciliation. A label is never biometric authority; the
+journal records the resolved private target before command `0x0d`.
 
 Do not implement bulk deletion as a loop over the single-delete API. A crash
 would create a partially deleted set with unclear client semantics. Keep

@@ -4,9 +4,10 @@
 
 Verification is always available after the ordinary readiness gates. Native
 enrollment has a separately gated worker path and remains disabled unless the
-daemon receives its explicit research activation flag. Identity management
-remains in separate journaled commands. Authentication stays fail-closed and
-accepts only an identity selected from the scoped Apple-user identity list.
+daemon receives its explicit research activation flag. Single-name deletion
+has an injected-client boundary but no installed client; bulk deletion remains
+disabled. Authentication stays fail-closed and accepts only an identity
+selected from the scoped Apple-user identity list.
 """
 
 import argparse
@@ -27,6 +28,7 @@ from dbus_next.service import ServiceInterface, dbus_property, method, signal
 import t2_fprint_projection
 import t2_fprint_runtime
 import t2_fprint_enrollment_runtime
+import t2_fprint_deletion_runtime
 import t2_fprint_worker_client
 import t2_dbus_identity
 import t2_fprint_claim
@@ -421,6 +423,7 @@ class FprintDevice(ServiceInterface):
         caller_collector=t2_dbus_identity.collect,
         claim_evidence_collector=t2_fprint_claim.collect,
         enrollment_client=None,
+        deletion_client=None,
     ) -> None:
         super().__init__("net.reactivated.Fprint.Device")
         self.backend = backend
@@ -428,12 +431,14 @@ class FprintDevice(ServiceInterface):
         self.caller_collector = caller_collector
         self.claim_evidence_collector = claim_evidence_collector
         self.enrollment_client = enrollment_client
+        self.deletion_client = deletion_client
         self.claim_lock = asyncio.Lock()
         self.claimed_user: str | None = None
         self.claimed_sender: str | None = None
         self.claimed_caller: t2_dbus_identity.PinnedDBusCaller | None = None
         self.claimed_evidence: t2_fprint_claim.ClaimEvidence | None = None
         self.verify_task: asyncio.Task | None = None
+        self.delete_task: asyncio.Task | None = None
         self.claim_expiry_task: asyncio.Task | None = None
         self.enrolled_fingers: tuple[str, ...] = (ENROLLED_FINGER,)
         self.finger_present = False
@@ -551,6 +556,7 @@ class FprintDevice(ServiceInterface):
         self._require_claim_owner()
         await self._stop_verification(require_running=False)
         await self._stop_enrollment(require_running=False)
+        await self._wait_deletion(require_running=False)
         self._clear_claim()
 
     @method()
@@ -574,9 +580,13 @@ class FprintDevice(ServiceInterface):
     @method()
     def VerifyStart(self, finger_name: "s"):
         self._require_claim_owner()
-        if self.verify_task is not None or (
-            self.enrollment_client is not None
-            and getattr(self.enrollment_client, "task", None) is not None
+        if (
+            self.verify_task is not None
+            or (
+                self.enrollment_client is not None
+                and getattr(self.enrollment_client, "task", None) is not None
+            )
+            or self.delete_task is not None
         ):
             raise DBusError(f"{FPRINT_ERROR}.AlreadyInUse", "verification is active")
         if finger_name != "any" and finger_name not in self.enrolled_fingers:
@@ -635,9 +645,13 @@ class FprintDevice(ServiceInterface):
 
     async def _expire_unstarted_claim(self) -> None:
         await asyncio.sleep(UNSTARTED_CLAIM_SECONDS)
-        if self.verify_task is None and (
-            self.enrollment_client is None
-            or getattr(self.enrollment_client, "task", None) is None
+        if (
+            self.verify_task is None
+            and (
+                self.enrollment_client is None
+                or getattr(self.enrollment_client, "task", None) is None
+            )
+            and self.delete_task is None
         ):
             self._clear_claim()
         self.claim_expiry_task = None
@@ -648,6 +662,7 @@ class FprintDevice(ServiceInterface):
                 return
             await self._stop_verification(require_running=False)
             await self._stop_enrollment(require_running=False)
+            await self._wait_deletion(require_running=False)
             self._clear_claim()
 
     async def _stop_verification(self, require_running: bool) -> None:
@@ -669,13 +684,14 @@ class FprintDevice(ServiceInterface):
         self.verify_task = None
 
     def _arm_unstarted_claim_expiry(self) -> None:
-        """Restore bounded claim lifetime after enrollment fails to start."""
+        """Restore bounded claim lifetime after a mutation call returns."""
 
         client = self.enrollment_client
         if (
             self.claimed_user is not None
             and self.claim_expiry_task is None
             and self.verify_task is None
+            and self.delete_task is None
             and (
                 client is None
                 or getattr(client, "task", None) is None
@@ -693,7 +709,11 @@ class FprintDevice(ServiceInterface):
             raise DBusError(
                 f"{FPRINT_ERROR}.Internal", "native enrollment is disabled"
             )
-        if self.verify_task is not None or getattr(client, "task", None) is not None:
+        if (
+            self.verify_task is not None
+            or getattr(client, "task", None) is not None
+            or self.delete_task is not None
+        ):
             raise DBusError(
                 f"{FPRINT_ERROR}.AlreadyInUse", "a biometric operation is active"
             )
@@ -716,6 +736,7 @@ class FprintDevice(ServiceInterface):
             if (
                 self.verify_task is not None
                 or getattr(client, "task", None) is not None
+                or self.delete_task is not None
             ):
                 raise DBusError(
                     f"{FPRINT_ERROR}.AlreadyInUse",
@@ -820,6 +841,23 @@ class FprintDevice(ServiceInterface):
             self.finger_present = False
             self.finger_needed = False
 
+    async def _wait_deletion(self, require_running: bool) -> None:
+        task = self.delete_task
+        if task is None:
+            if require_running:
+                raise DBusError(
+                    f"{FPRINT_ERROR}.NoActionInProgress",
+                    "deletion is not active",
+                )
+            return
+        if task is asyncio.current_task():
+            raise RuntimeError("deletion task cannot wait for itself")
+        await asyncio.gather(asyncio.shield(task), return_exceptions=True)
+        expiry_task = self.claim_expiry_task
+        if expiry_task is not None:
+            expiry_task.cancel()
+            self.claim_expiry_task = None
+
     @method()
     def DeleteEnrolledFingers(self, username: "s"):
         raise DBusError(f"{FPRINT_ERROR}.PermissionDenied", "delete in macOS")
@@ -830,9 +868,104 @@ class FprintDevice(ServiceInterface):
         raise DBusError(f"{FPRINT_ERROR}.PermissionDenied", "delete in macOS")
 
     @method()
-    def DeleteEnrolledFinger(self, finger_name: "s"):
+    async def DeleteEnrolledFinger(self, finger_name: "s"):
         self._require_claim_owner()
-        raise DBusError(f"{FPRINT_ERROR}.PermissionDenied", "delete in macOS")
+        client = self.deletion_client
+        if client is None:
+            raise DBusError(
+                f"{FPRINT_ERROR}.PermissionDenied",
+                "native single-finger deletion is disabled",
+            )
+        if finger_name not in t2_fprint_projection.FINGER_NAME_SET:
+            raise DBusError(
+                f"{FPRINT_ERROR}.InvalidFingername",
+                "deletion requires a canonical finger name",
+            )
+        if (
+            self.verify_task is not None
+            or (
+                self.enrollment_client is not None
+                and getattr(self.enrollment_client, "task", None) is not None
+            )
+            or self.delete_task is not None
+        ):
+            raise DBusError(
+                f"{FPRINT_ERROR}.AlreadyInUse",
+                "a biometric operation is active",
+            )
+        if self.claim_expiry_task is not None:
+            self.claim_expiry_task.cancel()
+            self.claim_expiry_task = None
+        current_task = asyncio.current_task()
+        if current_task is None:
+            raise DBusError(
+                f"{FPRINT_ERROR}.PrintsNotDeleted",
+                "deletion task identity is unavailable",
+            )
+        self.delete_task = current_task
+        try:
+            async with self.backend.operation_lock:
+                view = await self.backend.runtime_projection()
+            self._require_claim_owner()
+            if self.delete_task is not current_task:
+                raise RuntimeError("deletion task binding changed")
+            if self.verify_task is not None or (
+                self.enrollment_client is not None
+                and getattr(self.enrollment_client, "task", None) is not None
+            ):
+                raise DBusError(
+                    f"{FPRINT_ERROR}.AlreadyInUse",
+                    "a biometric operation is active",
+                )
+            if not isinstance(view, t2_fprint_runtime.RuntimeProjection):
+                raise RuntimeError("fprint projection returned an invalid result")
+            if not view.complete:
+                raise DBusError(
+                    f"{FPRINT_ERROR}.PrintsNotDeleted",
+                    "existing fingerprint labels require migration",
+                )
+            if finger_name not in view.finger_names:
+                raise DBusError(
+                    f"{FPRINT_ERROR}.NoEnrolledPrints",
+                    "finger is not enrolled",
+                )
+            if view.reconciled_identity_count <= 1:
+                raise DBusError(
+                    f"{FPRINT_ERROR}.PrintsNotDeleted",
+                    "the final fingerprint identity cannot be deleted",
+                )
+            operation = asyncio.create_task(
+                client.delete(
+                    finger_name,
+                    self.claimed_caller,
+                    self.claimed_evidence,
+                )
+            )
+            try:
+                result = await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                # Once the injected client has accepted the request, caller
+                # cancellation cannot kill or replay a possibly dispatched
+                # delete. Wait for its journaled reconciliation boundary.
+                await asyncio.gather(operation, return_exceptions=True)
+                raise
+            if (
+                type(result)
+                is not t2_fprint_deletion_runtime.DeletionCompletion
+                or result.finger_name != finger_name
+            ):
+                raise RuntimeError("deletion client returned an invalid result")
+        except DBusError:
+            raise
+        except Exception as error:
+            raise DBusError(
+                f"{FPRINT_ERROR}.PrintsNotDeleted",
+                "single-finger deletion did not reconcile",
+            ) from error
+        finally:
+            if self.delete_task is current_task:
+                self.delete_task = None
+            self._arm_unstarted_claim_expiry()
 
     @signal()
     def VerifyFingerSelected(self, finger_name: "s") -> "s":

@@ -107,6 +107,24 @@ class FakeEnrollmentClient:
         )
 
 
+class FakeDeletionClient:
+    def __init__(self):
+        self.arguments = None
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.block = False
+        self.result = MODULE.t2_fprint_deletion_runtime.DeletionCompletion(
+            "left-thumb", True, True, True, True
+        )
+
+    async def delete(self, finger_name, caller, evidence):
+        self.arguments = (finger_name, caller, evidence)
+        self.entered.set()
+        if self.block:
+            await self.release.wait()
+        return self.result
+
+
 async def fake_caller_collector(_bus, sender):
     return FakePinnedCaller(sender)
 
@@ -115,13 +133,14 @@ def fake_claim_evidence_collector(_caller, _username):
     return FakeClaimEvidence()
 
 
-def make_device(backend=None, enrollment_client=None):
+def make_device(backend=None, enrollment_client=None, deletion_client=None):
     return MODULE.FprintDevice(
         backend or FakeBackend(),
         object(),
         fake_caller_collector,
         fake_claim_evidence_collector,
         enrollment_client,
+        deletion_client,
     )
 
 
@@ -133,6 +152,12 @@ async def claim(device, username=None):
 
 async def enroll_start(device, finger_name):
     await MODULE.FprintDevice.EnrollStart.__wrapped__(device, finger_name)
+
+
+async def delete_finger(device, finger_name):
+    await MODULE.FprintDevice.DeleteEnrolledFinger.__wrapped__(
+        device, finger_name
+    )
 
 
 class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
@@ -582,7 +607,10 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_enrollment_is_caller_bound_and_mutually_exclusive(self):
         client = FakeEnrollmentClient()
-        device = make_device(enrollment_client=client)
+        device = make_device(
+            enrollment_client=client,
+            deletion_client=FakeDeletionClient(),
+        )
         await claim(device)
         with self.assertRaises(MODULE.DBusError) as raised:
             await enroll_start(device, "any")
@@ -590,6 +618,9 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await enroll_start(device, "right-thumb")
         with self.assertRaises(MODULE.DBusError) as raised:
             device.VerifyStart("any")
+        self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await delete_finger(device, "right-thumb")
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
         await device.sender_departed(":1.100")
         self.assertEqual(client.stop_count, 1)
@@ -615,6 +646,206 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(client.task)
         finally:
             MODULE.COMPLETED_CLAIM_SECONDS = old_timeout
+
+    async def test_single_deletion_remains_unattached_by_default(self):
+        device = make_device()
+        await claim(device)
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await delete_finger(device, "left-thumb")
+        self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_attached_single_deletion_requires_fresh_exact_name(self):
+        backend = FakeBackend()
+        backend.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
+            ("left-thumb", "right-index-finger"),
+            2,
+            True,
+            MODULE.ENROLLED_FINGER,
+        )
+        client = FakeDeletionClient()
+        device = make_device(backend, deletion_client=client)
+        await claim(device)
+        caller = device.claimed_caller
+        evidence = device.claimed_evidence
+
+        await delete_finger(device, "left-thumb")
+
+        self.assertEqual(client.arguments, ("left-thumb", caller, evidence))
+        self.assertIsNone(device.delete_task)
+        self.assertIsNotNone(device.claim_expiry_task)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_single_deletion_rejects_invalid_absent_and_last_name(self):
+        cases = (
+            (
+                MODULE.t2_fprint_runtime.RuntimeProjection(
+                    ("left-thumb", "right-index-finger"),
+                    2,
+                    True,
+                    MODULE.ENROLLED_FINGER,
+                ),
+                "any",
+                ".InvalidFingername",
+            ),
+            (
+                MODULE.t2_fprint_runtime.RuntimeProjection(
+                    ("left-thumb", "right-index-finger"),
+                    2,
+                    True,
+                    MODULE.ENROLLED_FINGER,
+                ),
+                "right-thumb",
+                ".NoEnrolledPrints",
+            ),
+            (
+                MODULE.t2_fprint_runtime.RuntimeProjection(
+                    ("left-thumb",), 1, True, MODULE.ENROLLED_FINGER
+                ),
+                "left-thumb",
+                ".PrintsNotDeleted",
+            ),
+            (
+                MODULE.t2_fprint_runtime.RuntimeProjection(
+                    (), 2, False, MODULE.ENROLLED_FINGER
+                ),
+                "left-thumb",
+                ".PrintsNotDeleted",
+            ),
+        )
+        for view, finger_name, error_name in cases:
+            backend = FakeBackend()
+            backend.projection = view
+            client = FakeDeletionClient()
+            device = make_device(backend, deletion_client=client)
+            await claim(device)
+            with self.subTest(finger_name=finger_name), self.assertRaises(
+                MODULE.DBusError
+            ) as raised:
+                await delete_finger(device, finger_name)
+            self.assertTrue(raised.exception.type.endswith(error_name))
+            self.assertIsNone(client.arguments)
+            await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_single_deletion_rejects_malformed_client_completion(self):
+        backend = FakeBackend()
+        backend.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
+            ("left-thumb", "right-index-finger"),
+            2,
+            True,
+            MODULE.ENROLLED_FINGER,
+        )
+        client = FakeDeletionClient()
+        client.result = object()
+        device = make_device(backend, deletion_client=client)
+        await claim(device)
+
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await delete_finger(device, "left-thumb")
+
+        self.assertTrue(raised.exception.type.endswith(".PrintsNotDeleted"))
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_deletion_is_mutually_exclusive_and_disconnect_waits(self):
+        backend = FakeBackend()
+        backend.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
+            ("left-thumb", "right-index-finger"),
+            2,
+            True,
+            MODULE.ENROLLED_FINGER,
+        )
+        client = FakeDeletionClient()
+        client.block = True
+        device = make_device(backend, deletion_client=client)
+        await claim(device)
+        task = asyncio.create_task(delete_finger(device, "left-thumb"))
+        await client.entered.wait()
+
+        with self.assertRaises(MODULE.DBusError) as raised:
+            device.VerifyStart("any")
+        self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
+        departure = asyncio.create_task(device.sender_departed(":1.100"))
+        await asyncio.sleep(0)
+        self.assertFalse(departure.done())
+        self.assertIsNotNone(device.claimed_user)
+
+        client.release.set()
+        await task
+        await departure
+        self.assertIsNone(device.claimed_user)
+        self.assertIsNone(device.delete_task)
+
+    async def test_cancelled_deletion_projection_restores_bounded_claim(self):
+        entered = asyncio.Event()
+
+        class BlockingBackend(FakeBackend):
+            async def runtime_projection(self):
+                entered.set()
+                await asyncio.Event().wait()
+
+        client = FakeDeletionClient()
+        device = make_device(
+            BlockingBackend(),
+            enrollment_client=FakeEnrollmentClient(),
+            deletion_client=client,
+        )
+        await claim(device)
+        task = asyncio.create_task(delete_finger(device, "left-thumb"))
+        await entered.wait()
+
+        with self.assertRaises(MODULE.DBusError) as raised:
+            device.VerifyStart("any")
+        self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await enroll_start(device, "right-thumb")
+        self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertIsNone(device.delete_task)
+        self.assertIsNone(client.arguments)
+        self.assertIsNotNone(device.claim_expiry_task)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_cancellation_after_delete_handoff_waits_for_reconciliation(self):
+        backend = FakeBackend()
+        backend.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
+            ("left-thumb", "right-index-finger"),
+            2,
+            True,
+            MODULE.ENROLLED_FINGER,
+        )
+        client = FakeDeletionClient()
+        client.block = True
+        device = make_device(backend, deletion_client=client)
+        await claim(device)
+        task = asyncio.create_task(delete_finger(device, "left-thumb"))
+        await client.entered.wait()
+
+        task.cancel()
+        await asyncio.sleep(0)
+        self.assertFalse(task.done())
+        self.assertIs(device.delete_task, task)
+
+        client.release.set()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertIsNone(device.delete_task)
+        self.assertIsNotNone(device.claim_expiry_task)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_bulk_deletion_stays_fail_closed_with_single_client(self):
+        device = make_device(deletion_client=FakeDeletionClient())
+        with self.assertRaises(MODULE.DBusError) as raised:
+            device.DeleteEnrolledFingers(MODULE.LINUX_USER)
+        self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
+        await claim(device)
+        with self.assertRaises(MODULE.DBusError) as raised:
+            device.DeleteEnrolledFingers2()
+        self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
+        await MODULE.FprintDevice.Release.__wrapped__(device)
 
 
 class VerdictTests(unittest.TestCase):
