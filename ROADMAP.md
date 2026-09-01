@@ -62,6 +62,13 @@ evidence, not intent.
 - [x] Enable GitHub Actions CI across Python 3.12 and 3.14 with pinned actions,
       unit tests, shell checks, userspace build, and both privacy scans.
 - [x] Produce an experimental `v0.1.0` release checklist.
+- [x] Split the README into a user-facing guide plus a separate
+      `docs/DEVELOPMENT_STATUS.md` for non-exposed internal components, and add
+      prerequisites, safety/recovery, concepts, status-table, and
+      compatibility-reporting sections.
+- [ ] Give the installed commands one consistent prefix; `t2-aks-tool`,
+      `t2-aks-observe-test`, `t2-acm-preflight`, and `t2-acm-lifecycle-test`
+      currently break the `t2-touchid-*` convention.
 
 ## 9. Linux identity management
 
