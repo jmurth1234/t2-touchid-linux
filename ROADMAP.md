@@ -167,6 +167,10 @@ evidence, not intent.
 - [x] Stage the claim-bound standard single-delete facade behind an unattached
       client, with fresh canonical projection, survivor policy, typed
       reconciliation proof, operation exclusion, and disconnect waiting.
+- [x] Build the credential-free transient single-delete worker, distinct
+      pidfd-bearing protocol, lock-held exact-name resolver, immutable recovery
+      anchor, shared persistence tail, and reconciliation-only completion;
+      keep it unattached to the installed daemon pending live controls.
 - [x] Implement a pure, documented fprint enrollment-status/property boundary
       with monotonic progress, quality guidance, and reconciliation-gated
       completion; retain an undefined stage count until hardware proves one.

@@ -275,14 +275,17 @@ reconciliation. `t2_fprint_worker_client.py` supplies the async facade lifecycle
 behind the daemon's explicit default-off research flag and waits for a terminal
 update.
 
-`t2_fprint_deletion_runtime.py` is the typed success boundary for future
-single-name deletion. The source fprint facade accepts an injected deletion
-client only after the exact claim, operation exclusivity, fresh complete
-projection, named enrollment, and survivor-count checks pass. It waits through
-release or peer loss and accepts success only when the exact canonical name is
-reported as mutated, reconciled, and awaiting post-reboot proof. No installed
-client or activation flag reaches this path, and both bulk-delete methods stay
-fail-closed.
+`t2_fprint_deletion_runtime.py` is the typed success boundary for single-name
+deletion. The source fprint facade accepts an injected deletion client only
+after the exact claim, operation exclusivity, fresh complete projection, named
+enrollment, and survivor-count checks pass. `t2_fprint_delete_worker_*` now
+provide a separate credential-free transient worker, pidfd-bound request
+protocol, exact `delete-one` broker consumer, and reconciliation-only response.
+The worker repeats canonical-name resolution inside its lock-held private
+local/SEP snapshot, freezes an immutable recovery anchor, and shares the CLI's
+persistence/read-back tail. Peer loss cannot cancel or replay a handed-off
+deletion. The installed daemon still injects no deletion client and exposes no
+deletion activation flag, while both bulk-delete methods stay fail-closed.
 
 `t2_post_reboot_reconciler.py` supplies automatic enrollment E4 plus completed
 rename and single-delete proof without loading the encrypted password

@@ -108,7 +108,10 @@ or an alternative sleep mode has been validated on the specific Mac model.
 - `src/t2-fprintd.py`: verification facade with a default-off native enrollment
   activation boundary and an unattached single-name deletion adapter.
 - `src/t2_fprint_deletion_runtime.py`: exact reconciled-completion contract for
-  that future journaled deletion client.
+  the journaled deletion client.
+- `src/t2_fprint_delete_worker.py`: credential-free, caller-pidfd-bound
+  transient worker for exact-name `delete-one`; installed but not attached to
+  the default daemon.
 - `src/t2_user_mapping.py`: non-exposed, fail-closed schema for mapping Linux
   accounts to already-provisioned Apple users and explicit capabilities.
 - `src/t2_user_readiness.py`: pure classifier for per-user binding, alias, and
