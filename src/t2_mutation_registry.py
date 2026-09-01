@@ -9,6 +9,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+import t2_catacomb_sync_journal
 import t2_enrollment_journal
 import t2_identity_delete_journal
 import t2_identity_rename_journal
@@ -101,6 +102,20 @@ def _delete_entry(records) -> MutationEntry:
     return MutationEntry("delete-one", phase.value, not complete, post_reboot)
 
 
+def _catacomb_sync_entry(records) -> MutationEntry:
+    try:
+        history = t2_catacomb_sync_journal.validate_history(records)
+    except t2_catacomb_sync_journal.CatacombSyncJournalError as error:
+        raise MutationRegistryError("Catacomb sync journal is invalid") from error
+    complete = history.phase in {
+        t2_catacomb_sync_journal.CatacombSyncPhase.RECONCILED,
+        t2_catacomb_sync_journal.CatacombSyncPhase.ABORTED,
+    }
+    return MutationEntry(
+        "sync-user-catacomb", history.phase.value, not complete, False
+    )
+
+
 def scan(root: Path) -> tuple[MutationEntry, ...]:
     if not isinstance(root, Path):
         raise MutationRegistryError("mutation journal root is not a path")
@@ -126,6 +141,8 @@ def scan(root: Path) -> tuple[MutationEntry, ...]:
             result.append(_rename_entry(records))
         elif kind == "delete-one":
             result.append(_delete_entry(records))
+        elif kind == "sync-user-catacomb":
+            result.append(_catacomb_sync_entry(records))
         elif kind in {"delete-batch", "recovery"}:
             # No typed completion state exists yet, so these are conservatively
             # owned by their future broker and always block another mutation.

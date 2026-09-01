@@ -20,7 +20,14 @@ from typing import Any
 
 
 FORMAT_VERSION = 1
-ALLOWED_KINDS = {"enroll", "rename", "delete-one", "delete-batch", "recovery"}
+ALLOWED_KINDS = {
+    "enroll",
+    "rename",
+    "delete-one",
+    "delete-batch",
+    "recovery",
+    "sync-user-catacomb",
+}
 FORBIDDEN_KEY_PARTS = ("password", "passcode", "credential", "secret", "auth_token")
 SAFE_SECURITY_METADATA_SUFFIXES = ("_verified", "_digest", "_hash", "_present")
 BASELINE_KEYS = {

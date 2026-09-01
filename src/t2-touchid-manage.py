@@ -34,7 +34,9 @@ import t2_bridge_inventory
 import t2_catacomb_bridge
 import t2_catacomb_codec
 import t2_catacomb_local
+import t2_catacomb_protocol
 import t2_catacomb_store
+import t2_catacomb_sync_journal
 import t2_enrollment_finalizer
 import t2_enrollment_persistence_journal
 import t2_fprint_projection
@@ -181,6 +183,20 @@ def require_mapping_capability(
     ):
         raise IdentityManagementError(
             f"protected mapping does not permit {capability}"
+        )
+
+
+def require_declared_mapping_capability(
+    configuration: dict[str, object], capability: str
+) -> None:
+    capabilities = configuration.get("mapping_capabilities")
+    if (
+        configuration.get("protected_mapping_present") is not True
+        or not isinstance(capabilities, frozenset)
+        or capability not in capabilities
+    ):
+        raise IdentityManagementError(
+            f"protected mapping does not declare {capability}"
         )
 
 
@@ -393,8 +409,10 @@ def status() -> dict[str, object]:
     entries = t2_mutation_registry.scan(MUTATION_ROOT)
     rename_phases: dict[str, int] = {}
     delete_phases: dict[str, int] = {}
+    sync_phases: dict[str, int] = {}
     rename_pending = 0
     delete_pending = 0
+    sync_pending = 0
     rename_post_reboot = 0
     delete_post_reboot = 0
     for entry in entries:
@@ -406,6 +424,9 @@ def status() -> dict[str, object]:
             delete_phases[entry.phase] = delete_phases.get(entry.phase, 0) + 1
             delete_pending += 1
             delete_post_reboot += int(entry.post_reboot_pending)
+        elif entry.kind == "sync-user-catacomb" and entry.blocks_new_mutation:
+            sync_phases[entry.phase] = sync_phases.get(entry.phase, 0) + 1
+            sync_pending += 1
     return {
         "schema_version": 1,
         "status_only": True,
@@ -413,16 +434,20 @@ def status() -> dict[str, object]:
         "rename_pending_phases": dict(sorted(rename_phases.items())),
         "delete_pending_count": delete_pending,
         "delete_pending_phases": dict(sorted(delete_phases.items())),
+        "catacomb_sync_pending_count": sync_pending,
+        "catacomb_sync_pending_phases": dict(sorted(sync_phases.items())),
         "post_reboot_pending_count": rename_post_reboot + delete_post_reboot,
         "rename_recovery_candidate": (
             rename_pending == 1
             and rename_post_reboot == 0
             and delete_pending == 0
+            and sync_pending == 0
         ),
         "delete_recovery_candidate": (
             delete_pending == 1
             and delete_post_reboot == 0
             and rename_pending == 0
+            and sync_pending == 0
         ),
         "new_mutation_blocked": any(item.blocks_new_mutation for item in entries),
         "identifiers_redacted": True,
@@ -555,6 +580,326 @@ def run_rename(
             renamed_projection.duplicate_finger_name_count
         ),
         "post_reboot_verification_required": True,
+        "identifiers_redacted": True,
+    }
+
+
+def _identity_snapshot(local: t2_catacomb_codec.UserCatacomb) -> str:
+    records = [
+        {
+            "uuid": item.uuid,
+            "user_id": item.user_id,
+            "entity": item.entity,
+            "name": item.name,
+            "identity_type": item.identity_type,
+            "flags": item.flags,
+            "attribute": item.attribute,
+            "match_count": item.match_count,
+            "continuous_match_count": item.continuous_match_count,
+            "update_count": item.update_count,
+            "creation_time": item.creation_time,
+        }
+        for item in local.identities
+    ]
+    return hashlib.sha256(t2_mutation_journal.canonical(records)).hexdigest()
+
+
+def _component_snapshot(
+    components: dict[str, bytes], names: tuple[str, ...]
+) -> str:
+    value = [
+        {"name": name, "sha256": hashlib.sha256(components[name]).hexdigest()}
+        for name in names
+    ]
+    return hashlib.sha256(t2_mutation_journal.canonical(value)).hexdigest()
+
+
+def _catacomb_clean_state(
+    live: dict[str, object], apple_uid: int
+) -> tuple[bool, bool]:
+    catacomb = live.get("catacomb")
+    states = catacomb.get("user_states") if isinstance(catacomb, dict) else None
+    if not isinstance(states, list):
+        raise IdentityManagementError("SEP Catacomb state is unavailable")
+    selected = [
+        item
+        for item in states
+        if isinstance(item, dict)
+        and item.get("kind") == "user"
+        and item.get("user_id") == apple_uid
+    ]
+    masters = [
+        item
+        for item in states
+        if isinstance(item, dict) and item.get("kind") == "master"
+    ]
+    if (
+        len(selected) != 1
+        or len(masters) != 1
+        or type(selected[0].get("needs_save")) is not bool
+        or type(masters[0].get("needs_save")) is not bool
+    ):
+        raise IdentityManagementError("SEP Catacomb state is ambiguous")
+    return selected[0]["needs_save"], masters[0]["needs_save"]
+
+
+def run_user_catacomb_sync(
+    configuration: dict[str, object]
+) -> dict[str, object]:
+    """Persist one existing adaptive user update without changing identities."""
+
+    require_declared_mapping_capability(configuration, "verify")
+    if t2_mutation_registry.blocks_new_mutation(MUTATION_ROOT):
+        raise IdentityManagementError(
+            "an earlier biometric mutation is unfinished or awaits verification"
+        )
+    if os.path.lexists(STORE_ROOT / "prepare") or os.path.lexists(
+        STORE_ROOT / "commit"
+    ):
+        raise IdentityManagementError("a local Catacomb transaction needs recovery")
+    keybag_runtime(configuration["special_bag"])
+    store, host, local, backup = current_host_and_local(configuration)
+    user_name = f'user_{configuration["apple_uid"]:08x}.cat'
+    component_names = (user_name, "master.cat")
+    descriptors = (
+        t2_catacomb_protocol.CatacombComponent.user(
+            configuration["apple_uid"]
+        ).descriptor,
+        t2_catacomb_protocol.CatacombComponent.master().descriptor,
+    )
+    with t2_bridge_connection.BridgeConnectionLease.connect(
+        configuration["host"], configuration["interface"], _port(), timeout=60
+    ) as lease:
+        live = t2_bridge_inventory.collect_stable_private_inventory(
+            lease, configuration["apple_uid"]
+        )
+        t2_identity_inventory.summarize(local, live)
+        user_dirty, master_dirty = _catacomb_clean_state(
+            live, configuration["apple_uid"]
+        )
+        if not user_dirty and not master_dirty:
+            return {
+                "schema_version": 1,
+                "catacomb_already_clean": True,
+                "catacomb_sync_performed": False,
+                "identity_count": len(local.identities),
+                "identifiers_redacted": True,
+            }
+        if user_dirty is not True or master_dirty is not False:
+            raise IdentityManagementError(
+                "Catacomb sync refuses an unexpected dirty component set"
+            )
+        baseline = t2_baseline.build_baseline(
+            host=host,
+            live=live,
+            caller_linux_uid=configuration["linux_uid"],
+            target_linux_uid=configuration["linux_uid"],
+            linux_boot_uuid=BOOT_ID.read_text(encoding="ascii").strip(),
+            mapping_generation=configuration["mapping_generation"],
+            backup_reference=backup.name,
+            password_fallback_verified=False,
+        )
+        initial_components = store.read_committed_components()
+        master = t2_catacomb_codec.decode_master_catacomb(
+            initial_components["master.cat"]
+        )
+        initial_component_snapshot = _component_snapshot(
+            initial_components, component_names
+        )
+        initial_identity_snapshot = _identity_snapshot(local)
+        operation_id = str(uuid.uuid4())
+        journal_path = MUTATION_ROOT / f"{operation_id}.jsonl"
+        t2_mutation_journal.create(
+            journal_path,
+            "sync-user-catacomb",
+            baseline,
+            operation_id=operation_id,
+        )
+        t2_catacomb_sync_journal.append_checked(
+            journal_path,
+            operation_id,
+            "CATACOMB_SYNC_INTENT",
+            {
+                "connection_generation": lease.connection_generation,
+                "mapping_generation": configuration["mapping_generation"],
+                "descriptor_snapshot_sha256": hashlib.sha256(
+                    t2_mutation_journal.canonical(
+                        [hashlib.sha256(value).hexdigest() for value in descriptors]
+                    )
+                ).hexdigest(),
+                "initial_component_snapshot_sha256": initial_component_snapshot,
+                "initial_sep_catacomb_hash": live["catacomb"]["hash"],
+                "identity_snapshot_sha256": initial_identity_snapshot,
+            },
+        )
+        try:
+            store.begin_stage(set(component_names))
+        except BaseException as error:
+            t2_catacomb_sync_journal.append_checked(
+                journal_path,
+                operation_id,
+                "CATACOMB_SYNC_ABORTED_BEFORE_DISPATCH",
+                {"reason": "host-store-unavailable", "mutation_possible": False},
+            )
+            raise IdentityManagementError(
+                "Catacomb sync could not create a local transaction"
+            ) from error
+        transport = t2_catacomb_bridge.CatacombBridgeTransport(
+            lease,
+            protocol_version=2,
+            connection_generation=lease.connection_generation,
+        )
+        secure_blobs: list[bytearray] = []
+        encoded_values: list[bytearray] = []
+        stage = "prepare"
+        host_commit_possible = False
+        try:
+            staged: dict[str, str] = {}
+            secure_hashes: list[str] = []
+            for index, (name, descriptor) in enumerate(
+                zip(component_names, descriptors, strict=True)
+            ):
+                stage = f"prepare-{name}"
+                _status, expected_length = transport.prepare(descriptor)
+                stage = f"complete-{name}"
+                _status, secure_blob = transport.complete(descriptor)
+                secure_blobs.append(secure_blob)
+                if len(secure_blob) != expected_length:
+                    raise IdentityManagementError(
+                        "Catacomb sync export length changed"
+                    )
+                secure_hashes.append(hashlib.sha256(secure_blob).hexdigest())
+                stage = f"encode-{name}"
+                if name == user_name:
+                    encoded = bytearray(
+                        local.replace_secure_data(bytes(secure_blob))
+                    )
+                    verified = t2_catacomb_codec.decode_user_catacomb(
+                        bytes(encoded), configuration["apple_uid"]
+                    )
+                    if (
+                        verified.identities != local.identities
+                        or verified.account_uuid != local.account_uuid
+                        or verified.keybag_uuid != local.keybag_uuid
+                    ):
+                        raise IdentityManagementError(
+                            "Catacomb sync changed host identity metadata"
+                        )
+                else:
+                    encoded = bytearray(
+                        master.encode(secure_data=bytes(secure_blob))
+                    )
+                    t2_catacomb_codec.decode_master_catacomb(bytes(encoded))
+                encoded_values.append(encoded)
+                stage = f"host-stage-{name}"
+                staged[name] = store.stage_component(
+                    name, encoded, set(component_names)
+                )
+                if index + 1 < len(component_names):
+                    stage = f"early-confirm-{name}"
+                    transport.confirm(descriptor)
+            stage = "host-commit"
+            host_commit_possible = True
+            store.cross_commit_boundary(staged)
+            final_component_snapshot = hashlib.sha256(
+                t2_mutation_journal.canonical(
+                    [{"name": name, "sha256": staged[name]} for name in component_names]
+                )
+            ).hexdigest()
+            t2_catacomb_sync_journal.append_checked(
+                journal_path,
+                operation_id,
+                "CATACOMB_SYNC_HOST_COMMITTED",
+                {
+                    "connection_generation": lease.connection_generation,
+                    "final_component_snapshot_sha256": final_component_snapshot,
+                    "secure_blob_snapshot_sha256": hashlib.sha256(
+                        t2_mutation_journal.canonical(secure_hashes)
+                    ).hexdigest(),
+                },
+            )
+            stage = "final-confirm"
+            transport.confirm(descriptors[-1])
+            stage = "readback"
+            observed_live = t2_bridge_inventory.collect_stable_private_inventory(
+                lease, configuration["apple_uid"]
+            )
+            observed_components = store.read_committed_components()
+            observed_local = t2_catacomb_codec.decode_user_catacomb(
+                observed_components[user_name], configuration["apple_uid"]
+            )
+            observed_host = t2_enrollment_finalizer.read_local_host_snapshot(
+                store, baseline
+            )
+            t2_identity_inventory.summarize(observed_local, observed_live)
+            observed_user_dirty, observed_master_dirty = _catacomb_clean_state(
+                observed_live, configuration["apple_uid"]
+            )
+            if (
+                observed_user_dirty
+                or observed_master_dirty
+                or _identity_snapshot(observed_local) != initial_identity_snapshot
+                or observed_local.account_uuid != local.account_uuid
+                or observed_local.keybag_uuid != local.keybag_uuid
+                or observed_host["account_uuid"] != host["account_uuid"]
+                or observed_host["bag_uuid"] != host["bag_uuid"]
+                or observed_live["catacomb"]["uuid"]
+                != live["catacomb"]["uuid"]
+                or _component_snapshot(observed_components, component_names)
+                != final_component_snapshot
+                or observed_components["biolockout.cat"]
+                != initial_components["biolockout.cat"]
+            ):
+                raise IdentityManagementError(
+                    "Catacomb sync read-back did not reconcile"
+                )
+            final = t2_catacomb_sync_journal.append_checked(
+                journal_path,
+                operation_id,
+                "CATACOMB_SYNC_RECONCILED",
+                {
+                    "connection_generation": lease.connection_generation,
+                    "final_component_snapshot_sha256": final_component_snapshot,
+                    "final_sep_catacomb_hash": observed_live["catacomb"]["hash"],
+                    "identity_snapshot_sha256": initial_identity_snapshot,
+                    "sep_clean": True,
+                    "local_live_equal": True,
+                },
+            )
+        except BaseException as error:
+            try:
+                current = t2_catacomb_sync_journal.read(journal_path)
+                if current.phase not in {
+                    t2_catacomb_sync_journal.CatacombSyncPhase.RECONCILED,
+                    t2_catacomb_sync_journal.CatacombSyncPhase.ABORTED,
+                    t2_catacomb_sync_journal.CatacombSyncPhase.OUTCOME_UNKNOWN,
+                }:
+                    t2_catacomb_sync_journal.append_checked(
+                        journal_path,
+                        operation_id,
+                        "CATACOMB_SYNC_OUTCOME_UNKNOWN",
+                        {
+                            "stage": stage,
+                            "reason": "sync-error",
+                            "mutation_possible": True,
+                            "host_commit_possible": host_commit_possible,
+                        },
+                    )
+            except BaseException:
+                pass
+            raise IdentityManagementError(
+                f"Catacomb sync stopped at {stage}; reconciliation is required"
+            ) from error
+        finally:
+            for value in encoded_values + secure_blobs:
+                value[:] = b"\x00" * len(value)
+    if final.phase is not t2_catacomb_sync_journal.CatacombSyncPhase.RECONCILED:
+        raise IdentityManagementError("Catacomb sync did not reconcile")
+    return {
+        "schema_version": 1,
+        "catacomb_already_clean": False,
+        "catacomb_sync_performed": True,
+        "identity_count": len(local.identities),
         "identifiers_redacted": True,
     }
 
@@ -1263,6 +1608,16 @@ def main() -> int:
         "plan-delete", help="validate one deletion target without mutating it"
     )
     plan_delete.add_argument("--slot", type=int, required=True)
+    sync_user = subparsers.add_parser(
+        "sync-user-catacomb",
+        help="persist one current adaptive user Catacomb update",
+    )
+    sync_user.add_argument(
+        "--acknowledge-adaptive-template-persistence", action="store_true"
+    )
+    sync_user.add_argument(
+        "--acknowledge-local-catacomb-persistence", action="store_true"
+    )
     subparsers.add_parser(
         "verify-post-reboot", help="verify a reconciled rename after reboot"
     )
@@ -1295,6 +1650,11 @@ def main() -> int:
         and args.acknowledge_local_catacomb_persistence
     ):
         parser.error("both deletion mutation acknowledgements are required")
+    if args.command == "sync-user-catacomb" and not (
+        args.acknowledge_adaptive_template_persistence
+        and args.acknowledge_local_catacomb_persistence
+    ):
+        parser.error("both adaptive Catacomb sync acknowledgements are required")
     if args.command == "recover" and not (
         args.acknowledge_interrupted_rename_recovery
     ):
@@ -1328,6 +1688,9 @@ def main() -> int:
                 result = run_fprint_rename_preflight(
                     configuration, slot=args.slot, new_name=args.name
                 )
+            elif args.command == "sync-user-catacomb":
+                with sleep_inhibitor():
+                    result = run_user_catacomb_sync(configuration)
             elif args.command == "delete":
                 with sleep_inhibitor():
                     result = run_delete(configuration, slot=args.slot)
@@ -1347,6 +1710,7 @@ def main() -> int:
         t2_bridge_connection.BridgeConnectionError,
         t2_bridge_inventory.BridgeInventoryError,
         t2_catacomb_bridge.CatacombBridgeError,
+        t2_catacomb_sync_journal.CatacombSyncJournalError,
         t2_catacomb_codec.CatacombCodecError,
         t2_catacomb_local.LocalCatacombError,
         t2_catacomb_store.CatacombStoreError,

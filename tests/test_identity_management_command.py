@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sys
 import tempfile
@@ -394,7 +395,160 @@ class IdentityManagementCommandTests(unittest.TestCase):
     def test_management_mutations_never_manufacture_password_attestation(self):
         source = (SOURCE / "t2-touchid-manage.py").read_text(encoding="utf-8")
         self.assertNotIn("password_fallback_verified=True", source)
-        self.assertEqual(source.count("password_fallback_verified=False"), 2)
+        self.assertEqual(source.count("password_fallback_verified=False"), 3)
+
+    def test_adaptive_catacomb_sync_persists_user_then_master(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            boot = root / "boot-id"
+            boot.write_text("00000000-0000-0000-0000-000000000003\n")
+            identity = MODULE.t2_catacomb_codec.Identity(
+                uuid="00000000-0000-0000-0000-000000000005",
+                user_id=501,
+                entity=0,
+                name="right-index-finger",
+                identity_type=1,
+                flags=0,
+                attribute=0,
+                match_count=0,
+                continuous_match_count=0,
+                update_count=0,
+                creation_time=1.0,
+            )
+            local = mock.Mock()
+            local.identities = (identity,)
+            local.account_uuid = "00000000-0000-0000-0000-000000000001"
+            local.keybag_uuid = "00000000-0000-0000-0000-000000000002"
+            local.replace_secure_data.return_value = b"user-final"
+            master = mock.Mock()
+            master.encode.return_value = b"master-final"
+            initial = {
+                "user_000001f5.cat": b"user-initial",
+                "master.cat": b"master-initial",
+                "biolockout.cat": b"bio",
+            }
+            observed = {
+                "user_000001f5.cat": b"user-final",
+                "master.cat": b"master-final",
+                "biolockout.cat": b"bio",
+            }
+            store = mock.Mock()
+            store.read_committed_components.side_effect = (initial, observed)
+            store.stage_component.side_effect = (
+                lambda name, data, expected: hashlib.sha256(data).hexdigest()
+            )
+            dirty_live = {
+                "catacomb": {
+                    "uuid": "00000000-0000-0000-0000-000000000006",
+                    "hash": "a" * 64,
+                    "user_states": [
+                        {"kind": "master", "needs_save": False},
+                        {"kind": "user", "user_id": 501, "needs_save": True},
+                    ],
+                }
+            }
+            clean_live = {
+                "catacomb": {
+                    "uuid": "00000000-0000-0000-0000-000000000006",
+                    "hash": "b" * 64,
+                    "user_states": [
+                        {"kind": "master", "needs_save": False},
+                        {"kind": "user", "user_id": 501, "needs_save": False},
+                    ],
+                }
+            }
+            lease = mock.Mock()
+            lease.connection_generation = (
+                "00000000-0000-0000-0000-000000000004"
+            )
+            lease_context = mock.MagicMock()
+            lease_context.__enter__.return_value = lease
+            lease_context.__exit__.return_value = False
+            transport = mock.Mock()
+            transport.prepare.side_effect = ((0, 8), (0, 8))
+            transport.complete.side_effect = (
+                (0, bytearray(b"userblob")),
+                (0, bytearray(b"mastblob")),
+            )
+            configuration = {
+                "protected_mapping_present": True,
+                "mapping_capabilities": frozenset({"verify"}),
+                "special_bag": -501,
+                "apple_uid": 501,
+                "linux_uid": 1000,
+                "host": "host",
+                "interface": "interface",
+                "mapping_generation": "d" * 64,
+            }
+            from tests.test_mutation_journal import baseline
+
+            with (
+                mock.patch.object(MODULE, "MUTATION_ROOT", root),
+                mock.patch.object(MODULE, "BOOT_ID", boot),
+                mock.patch.object(
+                    MODULE.t2_mutation_registry,
+                    "blocks_new_mutation",
+                    return_value=False,
+                ),
+                mock.patch.object(MODULE.os.path, "lexists", return_value=False),
+                mock.patch.object(MODULE, "keybag_runtime"),
+                mock.patch.object(
+                    MODULE,
+                    "current_host_and_local",
+                    return_value=(
+                        store,
+                        {
+                            "account_uuid": local.account_uuid,
+                            "bag_uuid": local.keybag_uuid,
+                        },
+                        local,
+                        Path("backup"),
+                    ),
+                ),
+                mock.patch.object(MODULE, "_port", return_value=55555),
+                mock.patch.object(
+                    MODULE.t2_bridge_connection.BridgeConnectionLease,
+                    "connect",
+                    return_value=lease_context,
+                ),
+                mock.patch.object(
+                    MODULE.t2_bridge_inventory,
+                    "collect_stable_private_inventory",
+                    side_effect=(dirty_live, clean_live),
+                ),
+                mock.patch.object(MODULE.t2_identity_inventory, "summarize"),
+                mock.patch.object(
+                    MODULE.t2_baseline, "build_baseline", return_value=baseline()
+                ),
+                mock.patch.object(
+                    MODULE.t2_catacomb_codec,
+                    "decode_master_catacomb",
+                    return_value=master,
+                ),
+                mock.patch.object(
+                    MODULE.t2_catacomb_codec,
+                    "decode_user_catacomb",
+                    return_value=local,
+                ),
+                mock.patch.object(
+                    MODULE.t2_catacomb_bridge,
+                    "CatacombBridgeTransport",
+                    return_value=transport,
+                ),
+                mock.patch.object(
+                    MODULE.t2_enrollment_finalizer,
+                    "read_local_host_snapshot",
+                    return_value={
+                        "account_uuid": local.account_uuid,
+                        "bag_uuid": local.keybag_uuid,
+                    },
+                ),
+            ):
+                result = MODULE.run_user_catacomb_sync(configuration)
+        self.assertTrue(result["catacomb_sync_performed"])
+        self.assertEqual(transport.confirm.call_count, 2)
+        store.cross_commit_boundary.assert_called_once()
 
     def test_post_reboot_requires_exactly_one_candidate(self):
         with mock.patch.object(MODULE, "rename_journals", return_value=[]):

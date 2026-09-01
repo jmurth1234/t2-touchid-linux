@@ -642,6 +642,22 @@ Rename one current identity label (this does not alter its fingerprint
 template). For fprint migration, preview and commit only a canonical anatomical
 name:
 
+Successful matching can update a template adaptively and set the SEP user
+Catacomb's save bit. Before enrollment, rename, deletion, or first mapping
+enablement, persist that existing update with the exact Apple user-then-master
+save order. The command changes no identity UUID, label, or count, requires an
+explicit protected `verify` capability (an enabled mapping is not required for
+initial bootstrap), and journals host commit before final SEP confirmation:
+
+```sh
+sudo t2-touchid-manage sync-user-catacomb \
+  --acknowledge-adaptive-template-persistence \
+  --acknowledge-local-catacomb-persistence
+```
+
+An already-clean result is a read-only no-op. Any ambiguous dispatch or host
+commit remains blocking and must not be retried blindly.
+
 ```sh
 sudo t2-touchid-manage status
 sudo t2-touchid-identities
