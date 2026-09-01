@@ -149,8 +149,11 @@ evidence, not intent.
 - [x] Add a same-connection named-match gate that repeats the per-user and
       global SEP views, selects one opaque record, and proves local/live
       identity state is unchanged after the scan.
-- [ ] Route canonical fprint verification through that named-match gate while
+- [x] Route canonical fprint verification through that named-match gate while
       retaining the compatibility alias only for unmigrated labels.
+- [x] Resolve a successful complete-inventory `any` match back to exactly one
+      canonical presentation name for truthful `VerifyFingerSelected`; reject
+      ambiguous identity-bearing events without emitting identifiers.
 - [x] Define a strict runtime transition policy: incomplete projections list
       only the compatibility alias and match all; complete projections list
       canonical names and require a same-name private target; `any` is never a

@@ -250,12 +250,15 @@ template UUIDs:
 sudo t2-touchid-inventory
 ```
 
+While any reconciled label is not a unique canonical fprint finger name,
 `fprintd-list` and `fprintd-verify` deliberately expose one configured logical
-finger slot (for example `right-index-finger`). That slot means “authenticate
-against any built-in identity owned by the configured Apple user”; it is not an
-enrollment count. Use `sep_identity_count` from `t2-touchid-inventory` for the
-truthful hardware identity count. Multiple enrolled fingers can therefore all
-match while fprintd continues to list one logical slot.
+finger slot (for example `right-index-finger`). That compatibility slot means
+“authenticate against any built-in identity owned by the configured Apple
+user”; it is not an enrollment count. Use `sep_identity_count` from
+`t2-touchid-inventory` for the truthful hardware identity count. Once every
+label is uniquely canonical, the service automatically lists every finger,
+targets a named verification to only that identity, and reports the exact
+canonical identity selected by a successful `any` match.
 
 List the reconciled local labels as numbered management slots:
 
@@ -282,20 +285,22 @@ sudo t2-touchid-fprint-status
 labels need an explicit anatomical assignment before truthful per-finger fprint
 listing can replace that alias; the command never guesses or mutates a label.
 
-The repository also contains the fail-closed named-match boundary needed for
-that migration. It double-checks both SEP identity views on the same Bridge
-connection, reconciles them with the validated local Catacomb, sends only the
-selected opaque identity to the matcher, and proves all identity state is
-unchanged afterward. This path remains dormant while labels are not canonical
-anatomical fprint names; the compatibility alias continues to select all
-enrolled identities in that state.
+The fail-closed named-match boundary double-checks both SEP identity views on
+the same Bridge connection, reconciles them with the validated local Catacomb,
+sends only the selected opaque identity to the matcher, and proves all identity
+state is unchanged afterward. It is reached automatically only for a complete
+canonical projection. With legacy labels, the compatibility alias continues to
+select all enrolled identities.
 
 The transition policy is explicit: incomplete inventories expose only the
 compatibility alias, complete inventories expose the canonical per-finger
 list, named verification is restricted to that exact identity, and `any`
 always remains an all-identities request. The named backend verdict also
 requires both the pre-match reconciliation proof and post-match unchanged-state
-proof; a selected-identity match alone is insufficient.
+proof; a selected-identity match alone is insufficient. For a complete
+projection, a successful `any` match is also reduced to exactly one canonical
+finger name before fprintd emits `VerifyFingerSelected`; ambiguous events fail
+closed and UUIDs remain private.
 
 ### Experimental Linux enrollment
 

@@ -27,11 +27,82 @@ class FakeBackend:
         await asyncio.sleep(0)
         return self.verdict, {}
 
+    async def verify_fprint(self, _requested_finger):
+        return await self.verify()
+
+    async def list_fingers(self):
+        return (MODULE.ENROLLED_FINGER,)
+
     async def cancel(self):
         self.cancel_count += 1
 
 
 class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_listing_refreshes_backend_projection(self):
+        backend = FakeBackend()
+        backend.list_fingers = AsyncMock(
+            return_value=("left-thumb", "right-index-finger")
+        )
+        device = MODULE.FprintDevice(backend)
+        listed = await MODULE.FprintDevice.ListEnrolledFingers.__wrapped__(
+            device, MODULE.LINUX_USER
+        )
+        self.assertEqual(listed, ["left-thumb", "right-index-finger"])
+        self.assertEqual(
+            device.enrolled_fingers,
+            ("left-thumb", "right-index-finger"),
+        )
+
+    async def test_any_match_emits_exact_resolved_finger_before_status(self):
+        backend = FakeBackend()
+        backend.verify_fprint = AsyncMock(
+            return_value=(
+                "verify-match",
+                {
+                    "resolved_any_match_gate": {
+                        "identity_count": 2,
+                        "complete_named_inventory": True,
+                        "all_identities_selected": True,
+                        "same_connection_inventory_stable": True,
+                        "local_live_reconciled": True,
+                        "identifiers_redacted": True,
+                    },
+                    "resolved_any_match_post_attestation": {
+                        "identity_state_unchanged": True,
+                        "local_components_unchanged": True,
+                        "per_user_inventory_unchanged": True,
+                        "global_inventory_unchanged": True,
+                        "identifiers_redacted": True,
+                    },
+                    "match_events": [
+                        {
+                            "event_kind": "match_result",
+                            "matched": True,
+                            "matches_enrolled_identity": True,
+                            "matched_finger_name_present": True,
+                            "matched_finger_name": "left-thumb",
+                        }
+                    ],
+                },
+            )
+        )
+        device = MODULE.FprintDevice(backend)
+        emitted = []
+        device.VerifyFingerSelected = lambda name: emitted.append(("finger", name))
+        device.VerifyStatus = lambda result, done: emitted.append(
+            ("status", result, done)
+        )
+        device.Claim(MODULE.LINUX_USER)
+        device.VerifyStart("any")
+        await device.verify_task
+        self.assertEqual(
+            emitted,
+            [
+                ("finger", "left-thumb"),
+                ("status", "verify-match", True),
+            ],
+        )
+
     async def test_terminal_verdict_remains_stoppable(self):
         backend = FakeBackend()
         device = MODULE.FprintDevice(backend)
@@ -72,7 +143,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         started = asyncio.Event()
 
         class SlowBackend(FakeBackend):
-            async def verify(self):
+            async def verify_fprint(self, _requested_finger):
                 started.set()
                 await asyncio.Event().wait()
 
@@ -197,6 +268,79 @@ class VerdictTests(unittest.TestCase):
             with self.subTest(), self.assertRaises(RuntimeError):
                 MODULE.verdict_from_result(changed, "left-thumb")
 
+    def test_resolved_any_returns_only_attested_canonical_name(self):
+        result = {
+            "resolved_any_match_gate": {
+                "identity_count": 2,
+                "complete_named_inventory": True,
+                "all_identities_selected": True,
+                "same_connection_inventory_stable": True,
+                "local_live_reconciled": True,
+                "identifiers_redacted": True,
+            },
+            "resolved_any_match_post_attestation": {
+                "identity_state_unchanged": True,
+                "local_components_unchanged": True,
+                "per_user_inventory_unchanged": True,
+                "global_inventory_unchanged": True,
+                "identifiers_redacted": True,
+            },
+            "match_events": [
+                {
+                    "event_kind": "match_result",
+                    "matched": True,
+                    "matches_enrolled_identity": True,
+                    "matched_finger_name_present": True,
+                    "matched_finger_name": "left-thumb",
+                }
+            ],
+        }
+        self.assertEqual(
+            MODULE.resolved_any_finger_from_result(result), "left-thumb"
+        )
+        negative = {
+            **result,
+            "match_events": [
+                {"event_kind": "match_result", "matched": False}
+            ],
+        }
+        self.assertIsNone(MODULE.resolved_any_finger_from_result(negative))
+
+    def test_resolved_any_malformed_name_or_attestation_is_error(self):
+        gate = {
+            "identity_count": 2,
+            "complete_named_inventory": True,
+            "all_identities_selected": True,
+            "same_connection_inventory_stable": True,
+            "local_live_reconciled": True,
+            "identifiers_redacted": True,
+        }
+        post = {
+            "identity_state_unchanged": True,
+            "local_components_unchanged": True,
+            "per_user_inventory_unchanged": True,
+            "global_inventory_unchanged": True,
+            "identifiers_redacted": True,
+        }
+        for candidate in (
+            {"resolved_any_match_gate": None, "match_events": []},
+            {
+                "resolved_any_match_gate": gate,
+                "resolved_any_match_post_attestation": post,
+                "match_events": [
+                    {
+                        "event_kind": "match_result",
+                        "matched": True,
+                        "matches_enrolled_identity": True,
+                        "matched_finger_name_present": True,
+                        "matched_finger_name": "any",
+                    }
+                ],
+            },
+        ):
+            with self.subTest(), self.assertRaises(RuntimeError):
+                MODULE.resolved_any_finger_from_result(candidate)
+
     def test_missing_or_explicit_no_match_fails_closed(self):
         self.assertEqual(
             MODULE.verdict_from_result({"match_events": []}), "verify-no-match"
@@ -218,6 +362,44 @@ class VerdictTests(unittest.TestCase):
 
 
 class BackendRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_runtime_policy_routes_complete_named_and_legacy_alias(self):
+        backend = MODULE.T2Backend.__new__(MODULE.T2Backend)
+        backend.operation_lock = asyncio.Lock()
+        backend.runtime_projection = AsyncMock()
+        backend.verify = AsyncMock(return_value=("verify-match", {}))
+
+        backend.runtime_projection.return_value = MODULE.t2_fprint_runtime.RuntimeProjection(
+            ("left-thumb", "right-index-finger"),
+            2,
+            True,
+            MODULE.ENROLLED_FINGER,
+        )
+        await backend.verify_fprint("left-thumb")
+        backend.verify.assert_awaited_once_with(
+            target_finger="left-thumb", resolve_any_finger=False
+        )
+
+        backend.verify.reset_mock()
+        backend.runtime_projection.return_value = MODULE.t2_fprint_runtime.RuntimeProjection(
+            (), 2, False, MODULE.ENROLLED_FINGER
+        )
+        await backend.verify_fprint(MODULE.ENROLLED_FINGER)
+        backend.verify.assert_awaited_once_with(
+            target_finger=None, resolve_any_finger=False
+        )
+
+        backend.verify.reset_mock()
+        backend.runtime_projection.return_value = MODULE.t2_fprint_runtime.RuntimeProjection(
+            ("left-thumb", "right-index-finger"),
+            2,
+            True,
+            MODULE.ENROLLED_FINGER,
+        )
+        await backend.verify_fprint("any")
+        backend.verify.assert_awaited_once_with(
+            target_finger=None, resolve_any_finger=True
+        )
+
     async def test_failed_cached_endpoint_is_rediscovered_once(self):
         with tempfile.TemporaryDirectory() as directory:
             port_file = Path(directory) / "port"

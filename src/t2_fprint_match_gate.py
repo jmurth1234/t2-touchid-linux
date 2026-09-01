@@ -95,6 +95,25 @@ class TargetedMatchGate:
         }
 
 
+@dataclass(frozen=True, repr=False)
+class AllMatchGate:
+    identity_name_records: tuple[tuple[bytes, str], ...] = field(repr=False)
+    per_user_records: tuple[bytes, ...] = field(repr=False)
+    global_records: tuple[bytes, ...] = field(repr=False)
+    component_hashes: tuple[tuple[str, str], ...] = field(repr=False)
+
+    def public(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "identity_count": len(self.identity_name_records),
+            "complete_named_inventory": True,
+            "all_identities_selected": True,
+            "same_connection_inventory_stable": True,
+            "local_live_reconciled": True,
+            "identifiers_redacted": True,
+        }
+
+
 def prepare(
     local: object,
     components: object,
@@ -134,6 +153,66 @@ def prepare(
     )
 
 
+def prepare_all(
+    local: object,
+    components: object,
+    first_per_user: object,
+    first_global: object,
+    second_per_user: object,
+    second_global: object,
+) -> AllMatchGate:
+    """Prepare an all-identities match with complete private name resolution."""
+
+    if (
+        not isinstance(local, t2_catacomb_codec.UserCatacomb)
+        or not local.identities
+    ):
+        raise FprintMatchGateError("local Catacomb has no matchable identities")
+    # Reuse the targeted gate's complete-name and exact inventory checks with
+    # one existing label. The selected record is deliberately discarded: this
+    # gate retains every reconciled identity for an `any` match.
+    validated = prepare(
+        local,
+        components,
+        first_per_user,
+        first_global,
+        second_per_user,
+        second_global,
+        local.identities[0].name,
+    )
+    names_by_uuid = {
+        uuid.UUID(identity.uuid).bytes: identity.name
+        for identity in local.identities
+    }
+    identity_name_records = tuple(
+        (record, names_by_uuid[record[4:20]])
+        for record in validated.per_user_records
+    )
+    return AllMatchGate(
+        identity_name_records,
+        validated.per_user_records,
+        validated.global_records,
+        validated.component_hashes,
+    )
+
+
+def resolve_all_match_event(gate: object, event_data: object) -> str | None:
+    """Return only the canonical matched name; never return its UUID."""
+
+    if not isinstance(gate, AllMatchGate):
+        raise FprintMatchGateError("all-identities match gate has the wrong type")
+    if type(event_data) is not bytes or len(event_data) < 0xC70:
+        raise FprintMatchGateError("match-result event data is malformed")
+    matches = [
+        name
+        for record, name in gate.identity_name_records
+        if record[4:20] in event_data
+    ]
+    if len(matches) > 1:
+        raise FprintMatchGateError("match-result identity is ambiguous")
+    return matches[0] if matches else None
+
+
 def attest_unchanged(
     gate: object,
     components: object,
@@ -142,8 +221,8 @@ def attest_unchanged(
 ) -> dict[str, object]:
     """Prove the read-only named match did not change identity state."""
 
-    if not isinstance(gate, TargetedMatchGate):
-        raise FprintMatchGateError("targeted match gate has the wrong type")
+    if not isinstance(gate, (TargetedMatchGate, AllMatchGate)):
+        raise FprintMatchGateError("match gate has the wrong type")
     if (
         _component_hashes(components) != gate.component_hashes
         or per_user_records != gate.per_user_records

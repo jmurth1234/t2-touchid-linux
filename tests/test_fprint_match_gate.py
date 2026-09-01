@@ -149,6 +149,80 @@ class FprintMatchGateTests(unittest.TestCase):
             with self.subTest(), self.assertRaises(gate.FprintMatchGateError):
                 gate.attest_unchanged(result, components, user, all_records)
 
+    def test_all_match_resolves_one_canonical_name_without_identifier(self):
+        result = gate.prepare_all(
+            self.local,
+            self.components,
+            self.user,
+            self.global_records,
+            self.user,
+            self.global_records,
+        )
+        event_data = self.user[0][4:20] + b"\0" * (0xC70 - 16)
+        matched = gate.resolve_all_match_event(result, event_data)
+        expected = next(
+            identity.name
+            for identity in self.local.identities
+            if uuid.UUID(identity.uuid).bytes == self.user[0][4:20]
+        )
+        self.assertEqual(matched, expected)
+        rendered = json.dumps(result.public(), sort_keys=True)
+        self.assertNotIn(self.user[0].hex(), rendered)
+        self.assertNotIn(str(uuid.UUID(bytes=self.user[0][4:20])), rendered)
+
+    def test_all_match_negative_is_none_and_ambiguous_fails(self):
+        result = gate.prepare_all(
+            self.local,
+            self.components,
+            self.user,
+            self.global_records,
+            self.user,
+            self.global_records,
+        )
+        self.assertIsNone(
+            gate.resolve_all_match_event(result, b"\0" * 0xC70)
+        )
+        ambiguous = (
+            self.user[0][4:20]
+            + self.user[1][4:20]
+            + b"\0" * (0xC70 - 32)
+        )
+        with self.assertRaises(gate.FprintMatchGateError):
+            gate.resolve_all_match_event(result, ambiguous)
+
+    def test_all_match_requires_complete_names_and_post_attests(self):
+        original = codec.decode_user_catacomb(fixture(), 501)
+        original_records = tuple(
+            user_record(identity.user_id, identity.uuid)
+            for identity in original.identities
+        )
+        original_global = tuple(global_record(record) for record in original_records)
+        with self.assertRaises(gate.FprintMatchGateError):
+            gate.prepare_all(
+                original,
+                self.components,
+                original_records,
+                original_global,
+                original_records,
+                original_global,
+            )
+        prepared = gate.prepare_all(
+            self.local,
+            self.components,
+            self.user,
+            self.global_records,
+            self.user,
+            self.global_records,
+        )
+        self.assertTrue(
+            gate.attest_unchanged(
+                prepared,
+                self.components,
+                self.user,
+                self.global_records,
+            )["identity_state_unchanged"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

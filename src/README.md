@@ -171,18 +171,23 @@ validated committed local Catacomb, and one canonical target. After the match,
 the probe repeats both live inventories and rereads the local components; any
 change fails closed. Its public attestations contain only booleans and the
 fprint presentation name—never Apple user IDs, identity UUIDs, or Catacomb
-contents. `bridge-xpc-probe.py --match-finger-name` implements this dormant
-targeted path. The fprintd facade does not advertise it until the complete
-per-finger listing and named-verdict path are wired together.
+contents. `bridge-xpc-probe.py --match-finger-name` implements this targeted
+path. The probe's separate `--resolve-any-finger-name` mode retains
+all reconciled identities and reduces a successful event to exactly one
+canonical presentation name; an event containing zero identities is a normal
+negative result and more than one is ambiguous and fails closed.
 
 `t2_fprint_runtime.py` defines that transition without performing I/O. It
 strictly parses only the redacted projection schema. An incomplete projection
 lists exactly one compatibility alias and resolves it to an all-identities
 match; a complete projection lists all canonical names and resolves a named
 request only to the same named target. `any` remains an all-identities request
-and can never become private identity authority. The fprintd backend already
-has a dormant named-verdict path that requires the pre-match gate, the selected
-identity boolean, and the post-match unchanged-state attestation together.
+and can never become private identity authority. The fprintd facade refreshes
+this projection for list and verify transactions. It keeps the compatibility
+alias for incomplete labels; when the projection is complete it advertises the
+canonical list, routes names through the single-identity gate, and resolves an
+`any` success to the exact canonical `VerifyFingerSelected` name. Both paths
+require their pre-match gate and post-match unchanged-state attestation.
 
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;

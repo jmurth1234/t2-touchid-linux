@@ -17,6 +17,9 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
 
 import t2_bridge_wire as wire
+import t2_catacomb_codec as codec
+import t2_fprint_match_gate as match_gate
+from tests.test_catacomb_codec import fixture
 
 
 class ReplyTests(unittest.TestCase):
@@ -116,6 +119,50 @@ class ReplyTests(unittest.TestCase):
             selected_identity_record=selected,
         )
         self.assertTrue(summary["matches_selected_identity"])
+
+    def test_any_match_summary_resolves_only_one_canonical_name(self):
+        original = codec.decode_user_catacomb(fixture(), 501)
+        renamed = codec.decode_user_catacomb(
+            original.rename(
+                original.identities[0].uuid,
+                "right-index-finger",
+            ),
+            501,
+        )
+        local = codec.decode_user_catacomb(
+            renamed.add(
+                identity_uuid=str(uuid.UUID(int=4)),
+                entity=1,
+                name="left-thumb",
+            ),
+            501,
+        )
+        records = tuple(
+            struct.pack("<I", identity.user_id) + uuid.UUID(identity.uuid).bytes
+            for identity in local.identities
+        )
+        global_records = tuple(
+            record + struct.pack("<I", 1) + uuid.UUID(int=0).bytes
+            for record in records
+        )
+        gate = match_gate.prepare_all(
+            local,
+            {"master.cat": b"m", "user_000001f5.cat": b"u"},
+            records,
+            global_records,
+            records,
+            global_records,
+        )
+        raw = struct.pack("<QIIQ", 0, 0xE3FF8002, 2, 1)
+        raw += records[1][4:20] + b"\0" * (0xC70 - 16)
+        summary = MODULE.summarize_event(
+            [9, 0xE3FF8000, raw, None, None],
+            records,
+            all_match_gate=gate,
+        )
+        self.assertTrue(summary["matched_finger_name_present"])
+        self.assertEqual(summary["matched_finger_name"], local.identities[1].name)
+        self.assertNotIn(records[1].hex(), str(summary))
 
     def test_strict_identity_records_rejects_status_shape_and_events(self):
         record = struct.pack("<I", 501) + uuid.UUID(int=11).bytes
