@@ -16,14 +16,21 @@
 - [ ] Root doctor has no unexpected failures.
 - [ ] Enrolled and unenrolled fingers pass raw BridgeXPC controls.
 - [x] Every enrolled finger and one unenrolled finger pass explicit
-  `fprintd-verify -f any` controls; each enrolled finger also passes its named
-  `fprintd-verify -f FINGER-NAME` control.
+  `fprintd-verify -f any "$USER"` controls; each enrolled finger also passes
+  its named `fprintd-verify -f FINGER-NAME "$USER"` control.
 - [ ] Enrolled and unenrolled fingers pass sudo/PAM controls.
 - [x] `omarchy system lock` accepts the enrolled fingerprint.
 - [x] `omarchy system lock` rejects a wrong finger and retains password fallback.
 - [x] Cold boot with encrypted credential passes on the proven machine.
 - [ ] Kernel upgrade rebuild/install passes.
 - [ ] Suspend status is stated accurately; no unsupported claim is made.
+
+## Documentation gates
+
+- [ ] README status table matches what is actually installed and proven.
+- [ ] Prerequisites match what a fresh install needs.
+- [ ] Every command shown in the README exists and takes the documented flags.
+- [ ] Non-exposed work stays in `docs/DEVELOPMENT_STATUS.md`, not the README.
 
 ## Publication
 
