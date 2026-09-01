@@ -296,7 +296,9 @@ listing can replace that alias; the command never guesses or mutates a label.
 The staged native `EnrollStart` path also refuses to run until this projection
 is complete, and refuses a canonical name already present in it. This prevents
 standard fprint clients from compounding ambiguous or duplicate labels before
-the mutation worker starts.
+the mutation worker starts. The transient worker independently repeats that
+same rule against its fresh reconciled inventory while holding the machine-wide
+operation lock, before recovery anchoring, ACM, journaling, or SEP dispatch.
 
 The fail-closed named-match boundary double-checks both SEP identity views on
 the same Bridge connection, reconciles them with the validated local Catacomb,

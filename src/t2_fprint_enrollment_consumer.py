@@ -118,10 +118,27 @@ class EnrollmentConsumer:
         live: object,
     ) -> t2_enrollment_coordinator.EnrollmentCoordinatorResult:
         self._validate_authority(authority, live)
+        inventory = getattr(live, "public_identity_inventory", None)
         prepare = getattr(live, "prepare_enrollment_material", None)
-        if not callable(prepare):
+        if not callable(inventory) or not callable(prepare):
             raise FprintEnrollmentConsumerError(
                 "live enrollment material provider is unavailable"
+            )
+        try:
+            projection = t2_fprint_projection.project(
+                inventory(authority.selected)
+            )
+        except Exception as error:
+            raise FprintEnrollmentConsumerError(
+                "same-generation fprint projection failed"
+            ) from error
+        if not projection.complete:
+            raise FprintEnrollmentConsumerError(
+                "existing fingerprint labels require migration"
+            )
+        if self.finger_name in projection.finger_names:
+            raise FprintEnrollmentConsumerError(
+                "finger name is already enrolled"
             )
         try:
             material = prepare(authority.selected, authority.operation_id)

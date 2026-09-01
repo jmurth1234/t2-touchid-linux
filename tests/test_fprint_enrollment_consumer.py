@@ -106,9 +106,26 @@ class Lease:
 class Live:
     runtime_generation = identifier(32)
 
-    def __init__(self, material):
+    def __init__(self, material, names=("right-index-finger",)):
         self.material = material
+        self.names = names
         self.calls = []
+        self.inventory_calls = []
+
+    def public_identity_inventory(self, selected):
+        self.inventory_calls.append(selected)
+        return {
+            "schema_version": 1,
+            "identity_count": len(self.names),
+            "identities": [
+                {"slot": slot, "name": name, "live": True}
+                for slot, name in enumerate(self.names, 1)
+            ],
+            "local_live_reconciled": True,
+            "selection_scope": "current-reconciled-list",
+            "fprintd_listing_is_compatibility_alias": True,
+            "identifiers_redacted": True,
+        }
 
     def prepare_enrollment_material(self, selected, operation_id):
         self.calls.append((selected, operation_id))
@@ -190,6 +207,7 @@ class FprintEnrollmentConsumerTests(unittest.TestCase):
             self.live.calls,
             [(self.current.selected, self.current.operation_id)],
         )
+        self.assertEqual(self.live.inventory_calls, [self.current.selected])
         arguments = self.coordinator_calls[0]
         self.assertIs(arguments["lease"], self.material.lease)
         self.assertIs(arguments["host_inventory"], self.material.anchor.host_inventory)
@@ -241,6 +259,30 @@ class FprintEnrollmentConsumerTests(unittest.TestCase):
         )
         with self.assertRaises(consumer.FprintEnrollmentConsumerError):
             self.make_consumer()(self.current, Live(material))
+        self.assertEqual(self.coordinator_calls, [])
+
+    def test_rejects_incomplete_or_duplicate_lock_held_projection(self):
+        cases = (
+            (("Finger 1",), "require migration"),
+            (("left-thumb",), "already enrolled"),
+        )
+        for names, message in cases:
+            current_live = Live(self.material, names)
+            with self.subTest(names=names), self.assertRaisesRegex(
+                consumer.FprintEnrollmentConsumerError, message
+            ):
+                self.make_consumer()(self.current, current_live)
+            self.assertEqual(current_live.calls, [])
+        self.assertEqual(self.coordinator_calls, [])
+
+    def test_rejects_missing_or_malformed_lock_held_projection(self):
+        malformed = Live(self.material)
+        malformed.public_identity_inventory = lambda _selected: {}
+        for current_live in (object(), malformed):
+            with self.subTest(live=current_live), self.assertRaises(
+                consumer.FprintEnrollmentConsumerError
+            ):
+                self.make_consumer()(self.current, current_live)
         self.assertEqual(self.coordinator_calls, [])
 
     def test_preexisting_cancel_vetoes_dispatch(self):

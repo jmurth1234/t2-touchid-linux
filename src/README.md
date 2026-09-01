@@ -157,6 +157,13 @@ The installed, no-argument `t2-touchid-fprint-status` command feeds it only the
 existing root-only fresh reconciled identity collector and prints the redacted
 projection. It is diagnostic-only and cannot rename, enroll, or delete.
 
+The fprint enrollment consumer treats that projection as a mutation boundary
+as well as presentation. Under the worker's owned operation lock and Bridge
+generation, it requires the broker's fresh reconciled projection to be
+complete and the requested canonical name to be absent before recovery
+anchoring, ACM, journal creation, or enrollment dispatch. An earlier facade
+check is never accepted as authority across the worker handoff.
+
 `t2_fprint_match_selection.py` is the private authority half of that future
 listing. It accepts a strictly decoded user Catacomb and one exact tuple of live
 20-byte per-user identity records, requires complete unique canonical fprint

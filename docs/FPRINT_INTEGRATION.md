@@ -145,6 +145,12 @@ the existing ACM coordinator, journal, persistence finalizer, cancellation
 predicate, feedback stream, Linux boot, operation ID, and mapping generation.
 It accepts only an `operate`-stage, self-service, canonical-name enrollment
 authority and passes the broker's fresh pre-dispatch guard directly to E1.
+Inside the worker-held machine operation lock, the consumer also projects the
+broker's same-generation reconciled identity inventory. It requires a complete
+canonical projection and proves the requested finger name is absent before it
+creates a recovery anchor, ACM context, journal, or enrollment command. The
+facade's earlier projection check is therefore feedback, not trusted mutation
+authority.
 The short-lived worker boundary is now implemented but still unattached.
 `t2_fprint_worker_launcher` creates one root-private operation socket and
 starts a hardened transient service with `LoadCredentialEncrypted`; its argv
