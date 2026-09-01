@@ -802,8 +802,13 @@ class FprintDevice(ServiceInterface):
                     f"{FPRINT_ERROR}.NoEnrolledPrints",
                     "finger is not enrolled",
                 ) from error
-            if finger_name != "any":
-                self.VerifyFingerSelected(finger_name)
+            # fprint's ABI explicitly permits "any" on this signal to tell
+            # clients that any enrolled identity may be presented. Emit the
+            # instruction before capture; the exact successful identity is
+            # reported later through VerifyFingerMatched. Emitting a resolved
+            # VerifyFingerSelected after capture makes pam_fprintd display a
+            # stale "place your finger" prompt after authentication.
+            self.VerifyFingerSelected(finger_name)
             operation = asyncio.create_task(
                 self._run_verification(finger_name)
             )
@@ -838,7 +843,6 @@ class FprintDevice(ServiceInterface):
                         raise RuntimeError("matched any-finger result has no identity")
                 else:
                     selected = ENROLLED_FINGER
-                self.VerifyFingerSelected(selected)
                 self.VerifyFingerMatched(selected)
             elif verdict == "verify-match":
                 self.VerifyFingerMatched(requested_finger)

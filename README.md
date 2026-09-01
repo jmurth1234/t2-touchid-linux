@@ -365,8 +365,10 @@ always remains an all-identities request. The named backend verdict also
 requires both the pre-match reconciliation proof and post-match unchanged-state
 proof; a selected-identity match alone is insufficient. For a complete
 projection, a successful `any` match is also reduced to exactly one canonical
-finger name before fprintd emits `VerifyFingerSelected`; ambiguous events fail
-closed and UUIDs remain private.
+finger name. fprintd emits `VerifyFingerSelected("any")` before capture, as the
+upstream ABI specifies, then reports the resolved canonical identity through
+`VerifyFingerMatched` on success. Ambiguous events fail closed and UUIDs remain
+private.
 
 ### Experimental Linux enrollment
 

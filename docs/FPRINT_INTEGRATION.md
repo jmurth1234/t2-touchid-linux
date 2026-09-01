@@ -24,9 +24,9 @@ The repository now implements the non-mutating half:
    selects exactly one opaque identity record, and requires the match event to
    contain that identity.
 5. A complete-projection `any` match retains all identities but resolves a
-   success to exactly one canonical name. The service emits that name through
-   `VerifyFingerSelected` and `VerifyFingerMatched`; ambiguous events fail
-   closed.
+   success to exactly one canonical name. The service emits
+   `VerifyFingerSelected("any")` before capture and the resolved name through
+   `VerifyFingerMatched` after success; ambiguous events fail closed.
 6. Both resolved modes repeat both SEP identity views and reread the local
    Catacomb after matching. A state change invalidates the verdict.
 

@@ -476,7 +476,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(device.claim_expiry_task)
         await MODULE.FprintDevice.Release.__wrapped__(device)
 
-    async def test_any_match_emits_exact_resolved_finger_before_status(self):
+    async def test_any_match_prompts_before_capture_and_reports_exact_match(self):
         backend = FakeBackend()
         backend.verify_fprint = AsyncMock(
             return_value=(
@@ -522,7 +522,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             emitted,
             [
-                ("finger", "left-thumb"),
+                ("finger", "any"),
                 ("matched", "left-thumb"),
                 ("status", "verify-match", True),
             ],
