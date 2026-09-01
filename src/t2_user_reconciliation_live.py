@@ -59,6 +59,26 @@ class EnrollmentMaterial:
 
 
 @dataclass(frozen=True, repr=False)
+class DeletionMaterial:
+    """Private same-generation inputs for one authorized single deletion."""
+
+    lease: t2_bridge_connection.BridgeConnectionLease = field(repr=False)
+    anchor: t2_recovery_anchor.RecoveryAnchor = field(repr=False)
+    local: t2_catacomb_codec.UserCatacomb = field(repr=False)
+    live: dict[str, object] = field(repr=False)
+    apple_uid: int
+    connection_generation: str
+    catacomb_root: Path = field(repr=False)
+
+    def __repr__(self) -> str:
+        return (
+            "DeletionMaterial(apple_uid=<redacted>, connection_generation="
+            f"{self.connection_generation!r}, recovery_anchor=True, "
+            "local_live_reconciled=True, private=True)"
+        )
+
+
+@dataclass(frozen=True, repr=False)
 class PostRebootMaterial:
     """Stable, read-only host/SEP inputs for one E4 verification."""
 
@@ -302,7 +322,7 @@ class LiveUserReconciliationSession:
         self._inventory_selected: t2_user_mapping.UserMapping | None = None
         self._public_inventory_packet: bytes | None = None
         self._private_inventory_packet: bytes | None = None
-        self._enrollment_prepared = False
+        self._mutation_prepared = False
 
     @property
     def runtime_generation(self) -> str:
@@ -352,7 +372,7 @@ class LiveUserReconciliationSession:
             self._inventory_selected = None
             self._public_inventory_packet = None
             self._private_inventory_packet = None
-            self._enrollment_prepared = False
+            self._mutation_prepared = False
             self._stack = stack
             return self
         except BaseException:
@@ -364,7 +384,7 @@ class LiveUserReconciliationSession:
             self._inventory_selected = None
             self._public_inventory_packet = None
             self._private_inventory_packet = None
-            self._enrollment_prepared = False
+            self._mutation_prepared = False
             raise
 
     def __exit__(
@@ -382,7 +402,7 @@ class LiveUserReconciliationSession:
         self._inventory_selected = None
         self._public_inventory_packet = None
         self._private_inventory_packet = None
-        self._enrollment_prepared = False
+        self._mutation_prepared = False
         if stack is not None:
             stack.close()
         return False
@@ -442,9 +462,9 @@ class LiveUserReconciliationSession:
             raise LiveUserReconciliationError(
                 "enrollment material requires current reconciled evidence"
             )
-        if self._enrollment_prepared:
+        if self._mutation_prepared:
             raise LiveUserReconciliationError(
-                "enrollment material was already prepared"
+                "mutation material was already prepared"
             )
         if (
             not isinstance(selected, t2_user_mapping.UserMapping)
@@ -478,10 +498,110 @@ class LiveUserReconciliationSession:
             raise LiveUserReconciliationError(
                 "Bridge generation changed during recovery anchoring"
             )
-        self._enrollment_prepared = True
+        self._mutation_prepared = True
         return EnrollmentMaterial(
             self._lease,
             anchor,
+            selected.apple_uid,
+            self._generation,
+            STORE_ROOT,
+        )
+
+    def prepare_deletion_material(
+        self,
+        selected: t2_user_mapping.UserMapping,
+        operation_id: str,
+    ) -> DeletionMaterial:
+        """Freeze one reconciled private snapshot before a single deletion."""
+
+        if (
+            self._stack is None
+            or self._lease is None
+            or self._generation is None
+            or self._first_snapshot_digest is None
+            or self._inventory_selected != selected
+            or self._private_inventory_packet is None
+            or self._lease.connection_generation != self._generation
+        ):
+            raise LiveUserReconciliationError(
+                "deletion material requires current reconciled evidence"
+            )
+        if self._mutation_prepared:
+            raise LiveUserReconciliationError(
+                "mutation material was already prepared"
+            )
+        if (
+            not isinstance(selected, t2_user_mapping.UserMapping)
+            or not selected.permits("identity-management")
+        ):
+            raise LiveUserReconciliationError(
+                "selected mapping does not permit identity management"
+            )
+        try:
+            live = json.loads(self._private_inventory_packet.decode("ascii"))
+            encoded = json.dumps(
+                live,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+            store = t2_catacomb_store.CatacombStore(
+                STORE_ROOT, selected.apple_uid
+            )
+            before = store.read_committed_components()
+            local = t2_catacomb_codec.decode_user_catacomb(
+                before[f"user_{selected.apple_uid:08x}.cat"],
+                selected.apple_uid,
+            )
+            t2_identity_inventory.summarize(local, live)
+            if (
+                not isinstance(live, dict)
+                or encoded != self._private_inventory_packet
+                or _snapshot_digest(
+                    before, live, selected.apple_uid, self._generation
+                )
+                != self._first_snapshot_digest
+            ):
+                raise LiveUserReconciliationError(
+                    "deletion snapshot differs from reconciled evidence"
+                )
+            anchor = t2_recovery_anchor.materialize(
+                store, RECOVERY_ANCHOR_ROOT, operation_id
+            )
+            after = store.read_committed_components()
+        except LiveUserReconciliationError:
+            raise
+        except (
+            KeyError,
+            UnicodeError,
+            json.JSONDecodeError,
+            TypeError,
+            ValueError,
+            t2_catacomb_codec.CatacombCodecError,
+            t2_catacomb_store.CatacombStoreError,
+            t2_identity_inventory.IdentityInventoryError,
+            t2_recovery_anchor.RecoveryAnchorError,
+        ) as error:
+            raise LiveUserReconciliationError(
+                "pre-deletion material preparation failed"
+            ) from error
+        if (
+            before != after
+            or anchor.host_inventory.get("account_uuid")
+            != selected.account_uuid
+            or anchor.host_inventory.get("bag_uuid") != selected.bag_uuid
+            or self._lease.connection_generation != self._generation
+        ):
+            raise LiveUserReconciliationError(
+                "pre-deletion snapshot changed during recovery anchoring"
+            )
+        self._mutation_prepared = True
+        return DeletionMaterial(
+            self._lease,
+            anchor,
+            local,
+            live,
             selected.apple_uid,
             self._generation,
             STORE_ROOT,

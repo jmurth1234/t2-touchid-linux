@@ -48,6 +48,59 @@ class IdentityDeleteTests(unittest.TestCase):
         rebuilt = delete.plan_target(self.local, selected.identity_uuid)
         self.assertEqual(rebuilt, selected)
 
+    def test_plan_named_resolves_only_inside_reconciled_private_snapshot(self):
+        renamed = codec.decode_user_catacomb(
+            self.local.rename(
+                self.local.identities[0].uuid,
+                "right-index-finger",
+            ),
+            501,
+        )
+        renamed = codec.decode_user_catacomb(
+            renamed.rename(
+                renamed.identities[1].uuid,
+                "left-thumb",
+            ),
+            501,
+        )
+        value = delete.plan_named(
+            renamed,
+            live_for(renamed),
+            finger_name="left-thumb",
+        )
+        self.assertEqual(value.identity_uuid, str(uuid.UUID(int=2)))
+        self.assertEqual(value.name, "left-thumb")
+
+    def test_plan_named_rejects_noncanonical_duplicate_or_stale_authority(self):
+        renamed = codec.decode_user_catacomb(
+            self.local.rename(
+                self.local.identities[0].uuid,
+                "right-index-finger",
+            ),
+            501,
+        )
+        renamed = codec.decode_user_catacomb(
+            renamed.rename(
+                renamed.identities[1].uuid,
+                "left-thumb",
+            ),
+            501,
+        )
+        good_live = live_for(renamed)
+        selected = delete.plan_named(
+            renamed, good_live, finger_name="left-thumb"
+        )
+        self.assertEqual(selected.identity_uuid, str(uuid.UUID(int=2)))
+        for name in ("any", "Finger 2", "right-thumb"):
+            with self.subTest(name=name), self.assertRaises(
+                delete.IdentityDeleteError
+            ):
+                delete.plan_named(renamed, good_live, finger_name=name)
+        stale = live_for(renamed)
+        stale["per_user_identity_records"].pop()
+        with self.assertRaises(delete.IdentityDeleteError):
+            delete.plan_named(renamed, stale, finger_name="left-thumb")
+
     def test_recovery_plan_rebinds_an_already_committed_survivor_archive(self):
         selected = delete.plan(self.local, self.live, slot=2)
         survivor = codec.decode_user_catacomb(selected.archive, 501)

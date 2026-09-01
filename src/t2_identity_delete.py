@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import t2_catacomb_codec
+import t2_fprint_projection
 import t2_identity_inventory
 import t2_mutation_journal
 
@@ -67,6 +68,29 @@ def plan(
     except t2_identity_inventory.IdentityInventoryError as error:
         raise IdentityDeleteError(str(error)) from error
     return plan_target(local, selected.identity_uuid)
+
+
+def plan_named(
+    local: t2_catacomb_codec.UserCatacomb,
+    live: dict[str, Any],
+    *,
+    finger_name: str,
+) -> IdentityDeletePlan:
+    """Resolve one canonical fprint name inside a reconciled private snapshot."""
+    if finger_name not in t2_fprint_projection.FINGER_NAME_SET:
+        raise IdentityDeleteError("delete finger name is not canonical")
+    try:
+        t2_identity_inventory.summarize(local, live)
+    except t2_identity_inventory.IdentityInventoryError as error:
+        raise IdentityDeleteError(str(error)) from error
+    matches = [
+        identity for identity in local.identities if identity.name == finger_name
+    ]
+    if len(matches) != 1:
+        raise IdentityDeleteError(
+            "delete finger name is not unique in the reconciled inventory"
+        )
+    return plan_target(local, matches[0].uuid)
 
 
 def plan_target(

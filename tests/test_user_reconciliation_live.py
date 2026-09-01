@@ -17,6 +17,8 @@ import t2_user_mapping as mapping
 import t2_user_readiness as readiness
 import t2_user_reconciliation_live as live_reconciliation
 import t2_recovery_anchor as recovery_anchor
+import t2_catacomb_codec as codec
+from tests.test_catacomb_codec import fixture
 from tests.test_mutation_journal import baseline
 
 
@@ -265,6 +267,106 @@ class LiveUserReconciliationTests(unittest.TestCase):
                 "does not permit",
             ):
                 session.prepare_enrollment_material(disabled, identifier(30))
+
+    def test_deletion_material_freezes_private_snapshot_and_exact_lease(self):
+        local = codec.decode_user_catacomb(fixture(), 501)
+        management = replace(
+            selected(),
+            account_uuid=local.account_uuid,
+            bag_uuid=local.keybag_uuid,
+            capabilities=frozenset({"verify", "identity-management"}),
+            enabled=True,
+        )
+        components = dict(self.components)
+        components["user_000001f5.cat"] = fixture()
+        live_reconciliation.t2_catacomb_store.CatacombStore.return_value = Store(
+            (components,) * 4
+        )
+        live_reconciliation.t2_catacomb_codec.decode_user_catacomb.return_value = (
+            local
+        )
+        anchor = recovery_anchor.RecoveryAnchor(
+            Path("/private/anchor.tar"),
+            "recovery-anchors/anchor.tar",
+            "d" * 64,
+            {
+                "archive_sha256": "d" * 64,
+                "account_uuid": local.account_uuid,
+                "bag_uuid": local.keybag_uuid,
+            },
+        )
+        session = live_reconciliation.LiveUserReconciliationSession()
+        with mock.patch.object(
+            live_reconciliation.t2_recovery_anchor,
+            "materialize",
+            return_value=anchor,
+        ) as materialize, session:
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "current reconciled",
+            ):
+                session.prepare_deletion_material(management, identifier(31))
+            session.collect(management, "a" * 64, "b" * 64)
+            material = session.prepare_deletion_material(
+                management, identifier(31)
+            )
+            self.assertIs(material.lease, self.lease)
+            self.assertIs(material.anchor, anchor)
+            self.assertIs(material.local, local)
+            self.assertEqual(material.live, self.live)
+            self.assertEqual(material.connection_generation, identifier(10))
+            self.assertNotIn(local.account_uuid, repr(material))
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "already prepared",
+            ):
+                session.prepare_deletion_material(management, identifier(31))
+        materialize.assert_called_once()
+
+    def test_deletion_material_rejects_capability_and_cross_mutation_reuse(self):
+        enrollment = replace(
+            selected(),
+            capabilities=frozenset(
+                {"verify", "enroll", "identity-management"}
+            ),
+            enabled=True,
+        )
+        anchor = recovery_anchor.RecoveryAnchor(
+            Path("/private/anchor.tar"),
+            "recovery-anchors/anchor.tar",
+            "d" * 64,
+            {
+                "archive_sha256": "d" * 64,
+                "account_uuid": identifier(1),
+                "bag_uuid": identifier(2),
+            },
+        )
+        session = live_reconciliation.LiveUserReconciliationSession()
+        with mock.patch.object(
+            live_reconciliation.t2_recovery_anchor,
+            "materialize",
+            return_value=anchor,
+        ), session:
+            session.collect(enrollment, "a" * 64, "b" * 64)
+            session.prepare_enrollment_material(enrollment, identifier(32))
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "already prepared",
+            ):
+                session.prepare_deletion_material(enrollment, identifier(33))
+
+        verify_only = replace(selected(), enabled=True)
+        live_reconciliation.t2_catacomb_store.CatacombStore.return_value = Store(
+            (self.components,) * 2
+        )
+        session = live_reconciliation.LiveUserReconciliationSession()
+        with session:
+            session.collect(verify_only, "a" * 64, "b" * 64)
+            with self.assertRaisesRegex(
+                live_reconciliation.LiveUserReconciliationError,
+                "does not permit identity management",
+            ):
+                session.prepare_deletion_material(verify_only, identifier(34))
 
     def test_post_reboot_material_is_stable_private_and_read_only(self):
         enrollment = replace(
