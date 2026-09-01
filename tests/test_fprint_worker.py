@@ -223,6 +223,30 @@ class FprintWorkerTests(unittest.TestCase):
         self.assertTrue(authorization.closed)
         self.assertIsInstance(result[0], worker.FprintWorkerError)
 
+    def test_typed_capacity_refusal_emits_data_full(self):
+        def operation(_cancel, _feedback):
+            raise broker.UserBrokerError("consumer failed") from (
+                worker.t2_fprint_enrollment_consumer.FprintEnrollmentDataFullError(
+                    "capacity exhausted"
+                )
+            )
+
+        dependencies, authorization = self.dependencies(operation)
+        left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        thread, result = self.run_worker(right, **dependencies)
+        self.start_request(left)
+        updates = [protocol.receive_update(left) for _ in range(2)]
+        thread.join(timeout=5)
+        self.assertEqual(
+            [update.status for update in updates],
+            [None, "enroll-data-full"],
+        )
+        self.assertTrue(updates[-1].done)
+        self.assertTrue(authorization.closed)
+        self.assertIsInstance(result[0], worker.FprintWorkerError)
+
 
 if __name__ == "__main__":
     unittest.main()

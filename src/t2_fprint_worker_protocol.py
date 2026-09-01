@@ -68,6 +68,7 @@ ALLOWED_STATUSES = frozenset(
         "enroll-finger-not-centered",
         "enroll-remove-and-retry",
         "enroll-completed",
+        "enroll-duplicate",
         "enroll-failed",
         "enroll-data-full",
         "enroll-disconnected",
@@ -77,6 +78,7 @@ ALLOWED_STATUSES = frozenset(
 TERMINAL_STATUSES = frozenset(
     {
         "enroll-completed",
+        "enroll-duplicate",
         "enroll-failed",
         "enroll-data-full",
         "enroll-disconnected",

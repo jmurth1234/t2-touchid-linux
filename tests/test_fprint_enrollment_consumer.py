@@ -132,6 +132,14 @@ class Live:
         return self.material
 
 
+class FullLive(Live):
+    def prepare_enrollment_material(self, selected, operation_id):
+        self.calls.append((selected, operation_id))
+        raise live_reconciliation.EnrollmentCapacityExhausted(
+            "capacity exhausted"
+        )
+
+
 class ACM:
     def __init__(self):
         self.entered = False
@@ -307,6 +315,12 @@ class FprintEnrollmentConsumerTests(unittest.TestCase):
         result = current(self.current, self.live)
         self.assertEqual(result.outcome, "cancelled")
         self.assertEqual(observed, [False])
+
+    def test_preserves_typed_capacity_refusal(self):
+        current_live = FullLive(self.material)
+        with self.assertRaises(consumer.FprintEnrollmentDataFullError):
+            self.make_consumer()(self.current, current_live)
+        self.assertEqual(self.coordinator_calls, [])
 
 
 def replace_live_generation(value: Live, generation: str) -> Live:

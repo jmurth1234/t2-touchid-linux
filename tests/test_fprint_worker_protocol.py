@@ -158,6 +158,9 @@ class FprintWorkerProtocolTests(unittest.TestCase):
             runtime.EnrollmentUpdate(
                 "enroll-completed", True, False, False
             ),
+            runtime.EnrollmentUpdate(
+                "enroll-duplicate", True, False, False
+            ),
         )
         for update in updates:
             protocol.send_update(right, update)
@@ -198,4 +201,3 @@ class FprintWorkerProtocolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -41,6 +41,10 @@ class LiveUserReconciliationError(RuntimeError):
     pass
 
 
+class EnrollmentCapacityExhausted(LiveUserReconciliationError):
+    """The reconciled per-user inventory already reaches device capacity."""
+
+
 @dataclass(frozen=True, repr=False)
 class EnrollmentMaterial:
     """Private same-generation inputs for one authorized enrollment consumer."""
@@ -472,6 +476,27 @@ class LiveUserReconciliationSession:
         ):
             raise LiveUserReconciliationError(
                 "selected mapping does not permit enrollment"
+            )
+        try:
+            live = json.loads(self._private_inventory_packet.decode("ascii"))
+            records = live.get("per_user_identity_records")
+            maximum = live.get("maximum_capacity")
+        except (AttributeError, UnicodeError, json.JSONDecodeError) as error:
+            raise LiveUserReconciliationError(
+                "cached enrollment capacity is invalid"
+            ) from error
+        if (
+            not isinstance(live, dict)
+            or not isinstance(records, list)
+            or type(maximum) is not int
+            or not 0 <= len(records) <= maximum <= 64
+        ):
+            raise LiveUserReconciliationError(
+                "cached enrollment capacity is invalid"
+            )
+        if len(records) >= maximum:
+            raise EnrollmentCapacityExhausted(
+                "enrollment capacity is exhausted"
             )
         try:
             store = t2_catacomb_store.CatacombStore(

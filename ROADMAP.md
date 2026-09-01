@@ -154,6 +154,8 @@ evidence, not intent.
       identity state is unchanged after the scan.
 - [x] Route canonical fprint verification through that named-match gate while
       retaining the compatibility alias only for unmigrated labels.
+- [x] Refresh and revalidate the private identity projection inside every
+      `VerifyStart`, including clients which did not list fingerprints first.
 - [x] Resolve a successful complete-inventory `any` match back to exactly one
       canonical presentation name for truthful `VerifyFingerSelected`; reject
       ambiguous identity-bearing events without emitting identifiers.
@@ -178,6 +180,9 @@ evidence, not intent.
 - [x] Implement a pure, documented fprint enrollment-status/property boundary
       with monotonic progress, quality guidance, and reconciliation-gated
       completion; retain an undefined stage count until hardware proves one.
+- [x] Preserve a stable lock-held capacity refusal as standard
+      `enroll-data-full` before recovery anchoring or SEP dispatch; retain
+      fail-closed generic failure where no duplicate-finger signal is proven.
 - [x] Implement the async fprint enrollment lifecycle around a synchronous
       worker with ordered event-loop feedback and cooperative, journal-aware
       stop/release/task cancellation; attach no live consumer yet.

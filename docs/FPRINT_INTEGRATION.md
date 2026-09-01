@@ -197,8 +197,8 @@ Translation should be deterministic:
 | accepted progress stage | `enroll-stage-passed` | false |
 | retryable quality failure | the closest documented retry status | false |
 | lift/place required | `enroll-remove-and-retry` | false |
-| duplicate identity | `enroll-duplicate` | true |
-| capacity exhausted | `enroll-data-full` | true |
+| independently proven duplicate identity | `enroll-duplicate` | true |
+| lock-held stable capacity exhausted before dispatch | `enroll-data-full` | true |
 | reconciled identity and committed Catacomb | `enroll-completed` | true |
 | cancelled/reconciled failure | `enroll-failed` | true |
 | unresolved or malformed outcome | `enroll-unknown-error` | true |
@@ -207,7 +207,8 @@ The facade must not invent a fixed progress percentage or enrollment-stage
 count from variable T2 progress. `num-enroll-stages` remains undefined (`-1`)
 until a stable protocol-derived stage model is proven.
 
-The pure `t2_fprint_enrollment_runtime` translator now enforces this table.
+The pure `t2_fprint_enrollment_runtime` translator now enforces the proven
+subset of this table.
 It emits `enroll-stage-passed` only for strictly increasing, bounded T2
 progress; suppresses duplicate progress; maps quality guidance only to the
 documented fprint vocabulary; and reports completion only after the typed
@@ -216,6 +217,11 @@ Regressed progress, identity/terminal events that bypass final reconciliation,
 or incomplete success become fail-closed errors. The facade also serves the
 complete historical property set through `Get` and `GetAll`; stage count stays
 `-1`, while finger-present/needed state is ready for the future worker stream.
+The worker now preserves a stable lock-held capacity refusal as
+`enroll-data-full` before recovery anchoring or SEP dispatch. No recovered T2
+event yet distinguishes an already-enrolled physical finger from a generic
+reconciled failure, so source deliberately does not emit `enroll-duplicate`
+until that outcome can be independently proven.
 
 The D-Bus facade now has the tested final adapter around that stream. When an
 explicit client is supplied, canonical `EnrollStart` passes the exact pinned

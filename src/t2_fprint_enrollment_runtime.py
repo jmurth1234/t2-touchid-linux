@@ -144,6 +144,26 @@ class EnrollmentRuntime:
         self.finger_needed = False
         return EnrollmentUpdate(status, True, False, False)
 
+    def refuse_pre_dispatch(self, reason: object) -> EnrollmentUpdate:
+        """Translate only a typed refusal proven before enrollment dispatch."""
+        if self.finished:
+            raise FprintEnrollmentRuntimeError(
+                "enrollment completed more than once"
+            )
+        if (
+            self.last_progress != -1
+            or self.finger_present
+            or self.finger_needed is not True
+            or reason != "capacity-exhausted"
+        ):
+            raise FprintEnrollmentRuntimeError(
+                "pre-dispatch enrollment refusal is invalid"
+            )
+        self.finished = True
+        self.finger_present = False
+        self.finger_needed = False
+        return EnrollmentUpdate("enroll-data-full", True, False, False)
+
     def fail_unknown(self) -> EnrollmentUpdate:
         if self.finished:
             raise FprintEnrollmentRuntimeError(

@@ -91,7 +91,11 @@ class LiveUserReconciliationTests(unittest.TestCase):
             "user_000001f5.cat": b"user",
         }
         self.store = Store((self.components, self.components))
-        self.live = {"catacomb": catacomb()}
+        self.live = {
+            "catacomb": catacomb(),
+            "per_user_identity_records": [],
+            "maximum_capacity": 5,
+        }
         self.local = SimpleNamespace(
             account_uuid=identifier(1),
             keybag_uuid=identifier(2),
@@ -267,6 +271,25 @@ class LiveUserReconciliationTests(unittest.TestCase):
                 "does not permit",
             ):
                 session.prepare_enrollment_material(disabled, identifier(30))
+
+    def test_enrollment_capacity_refusal_precedes_recovery_anchor(self):
+        enrollment = replace(
+            selected(), capabilities=frozenset({"verify", "enroll"}), enabled=True
+        )
+        self.live["per_user_identity_records"] = [
+            {"user_id": 501, "identity_uuid": identifier(20)}
+        ]
+        self.live["maximum_capacity"] = 1
+        session = live_reconciliation.LiveUserReconciliationSession()
+        with mock.patch.object(
+            live_reconciliation.t2_recovery_anchor, "materialize"
+        ) as materialize, session:
+            session.collect(enrollment, "a" * 64, "b" * 64)
+            with self.assertRaises(
+                live_reconciliation.EnrollmentCapacityExhausted
+            ):
+                session.prepare_enrollment_material(enrollment, identifier(30))
+        materialize.assert_not_called()
 
     def test_deletion_material_freezes_private_snapshot_and_exact_lease(self):
         local = codec.decode_user_catacomb(fixture(), 501)

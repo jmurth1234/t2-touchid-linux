@@ -23,6 +23,10 @@ class FprintEnrollmentConsumerError(RuntimeError):
     """Raised before or during an authorized fprint enrollment handoff."""
 
 
+class FprintEnrollmentDataFullError(FprintEnrollmentConsumerError):
+    """Raised when stable lock-held evidence proves enrollment is full."""
+
+
 @dataclass(frozen=True, repr=False)
 class EnrollmentConsumer:
     finger_name: str
@@ -142,6 +146,10 @@ class EnrollmentConsumer:
             )
         try:
             material = prepare(authority.selected, authority.operation_id)
+        except t2_user_reconciliation_live.EnrollmentCapacityExhausted as error:
+            raise FprintEnrollmentDataFullError(
+                "same-generation enrollment capacity is exhausted"
+            ) from error
         except Exception as error:
             raise FprintEnrollmentConsumerError(
                 "same-generation enrollment material preparation failed"

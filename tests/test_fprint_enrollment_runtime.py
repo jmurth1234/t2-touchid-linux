@@ -78,6 +78,32 @@ class FprintEnrollmentRuntimeTests(unittest.TestCase):
                 outcome, True, False, True
             )
             self.assertEqual(state.finish(result).status, "enroll-failed")
+
+    def test_capacity_refusal_is_typed_and_strictly_pre_dispatch(self):
+        state = runtime.EnrollmentRuntime()
+        self.assertEqual(
+            state.refuse_pre_dispatch("capacity-exhausted"),
+            runtime.EnrollmentUpdate("enroll-data-full", True, False, False),
+        )
+        with self.assertRaises(runtime.FprintEnrollmentRuntimeError):
+            state.refuse_pre_dispatch("capacity-exhausted")
+
+        for reason in ("duplicate", None):
+            with self.subTest(reason=reason), self.assertRaises(
+                runtime.FprintEnrollmentRuntimeError
+            ):
+                runtime.EnrollmentRuntime().refuse_pre_dispatch(reason)
+
+        progressed = runtime.EnrollmentRuntime()
+        progressed.accept(
+            protocol.EnrollmentTransition(
+                protocol.EnrollmentAction.PROGRESS,
+                protocol.EnrollmentState.ACTIVE,
+                progress_percent=10,
+            )
+        )
+        with self.assertRaises(runtime.FprintEnrollmentRuntimeError):
+            progressed.refuse_pre_dispatch("capacity-exhausted")
         state = runtime.EnrollmentRuntime()
         ambiguous = coordinator.EnrollmentCoordinatorResult(
             "identity-observed", True, True, False

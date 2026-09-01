@@ -26,6 +26,21 @@ class FprintWorkerError(RuntimeError):
     pass
 
 
+def _capacity_exhausted(error: BaseException) -> bool:
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(
+            current,
+            t2_fprint_enrollment_consumer.FprintEnrollmentDataFullError,
+        ):
+            return True
+        seen.add(id(current))
+        cause = current.__cause__
+        current = cause if isinstance(cause, BaseException) else None
+    return False
+
+
 def _cancel_listener(
     connection: socket.socket,
     cancel_event: threading.Event,
@@ -144,8 +159,13 @@ def serve_once(
     except BaseException as error:
         if not terminal_sent:
             try:
+                update = (
+                    runtime.refuse_pre_dispatch("capacity-exhausted")
+                    if _capacity_exhausted(error)
+                    else runtime.fail_unknown()
+                )
                 t2_fprint_worker_protocol.send_update(
-                    connection, runtime.fail_unknown()
+                    connection, update
                 )
             except BaseException:
                 pass
