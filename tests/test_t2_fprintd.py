@@ -1371,6 +1371,7 @@ class BackendRecoveryTests(unittest.IsolatedAsyncioTestCase):
             "t2-touchid-adaptive-sync.service.d/05-account-home.conf",
             uninstaller,
         )
+        self.assertIn("Environment=SUDO_UID=%s", installer)
 
     async def test_adaptive_sync_dispatch_is_explicit_and_exact(self):
         backend = MODULE.T2Backend.__new__(MODULE.T2Backend)

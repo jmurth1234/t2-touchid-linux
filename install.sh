@@ -154,6 +154,11 @@ for service in fprintd t2-touchid-adaptive-sync; do
     >"$dropin_dir/05-account-home.conf"
   chmod 0644 "$dropin_dir/05-account-home.conf"
 done
+printf '[Service]\nBindReadOnlyPaths=%s\nEnvironment=SUDO_UID=%s\n' \
+  "$target_home" "$target_uid" \
+  >/etc/systemd/system/t2-touchid-adaptive-sync.service.d/05-account-home.conf
+chmod 0644 \
+  /etc/systemd/system/t2-touchid-adaptive-sync.service.d/05-account-home.conf
 install -d -o root -g root -m 0755 /etc/modprobe.d
 module_options='options t2_sep_transport register_ool=1'
 if [[ $acm_research == 1 ]]; then
