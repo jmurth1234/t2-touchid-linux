@@ -63,6 +63,10 @@ After the documented mapping, canonical-label, worker-negative, fallback, and
 recovery gates pass, stage it explicitly:
 
 ```sh
+sudo t2-touchid-fprint-enrollment-gate \
+  --acknowledge-two-distinct-fingers-verified-this-boot \
+  --acknowledge-password-fallback-tested \
+  --acknowledge-worker-negative-controls-passed
 sudo install -d -o root -g root -m 0755 \
   /etc/systemd/system/fprintd.service.d
 sudo install -o root -g root -m 0644 \
@@ -71,6 +75,12 @@ sudo install -o root -g root -m 0644 \
 sudo systemctl daemon-reload
 sudo systemctl restart fprintd.service
 ```
+
+The first command is read-only and must exit zero immediately before staging.
+It combines exact stack health, AKS alias observation, a complete canonical
+projection, enabled protected mapping, clear enrollment/rename/delete journals,
+the effective default-off daemon command, and the three explicit live-control
+attestations. It never installs the drop-in or performs a T2 mutation.
 
 Rollback does not touch fingerprints, Catacomb data, mappings, credentials, or
 journals. Remove only that exact drop-in, reload, and restart:

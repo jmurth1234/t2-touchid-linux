@@ -101,6 +101,7 @@ install -o root -g root -m 0755 "$source_dir/src/t2-touchid-enroll.py" /usr/loca
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-user-map.py" /usr/local/sbin/t2-touchid-user-map
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-user-broker-gate.py" /usr/local/sbin/t2-touchid-user-broker-gate
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-fprint-status.py" /usr/local/sbin/t2-touchid-fprint-status
+install -o root -g root -m 0755 "$source_dir/src/t2-touchid-fprint-enrollment-gate.py" /usr/local/sbin/t2-touchid-fprint-enrollment-gate
 install -o root -g root -m 0755 "$source_dir/src/t2-touchid-post-reboot.py" /usr/local/sbin/t2-touchid-post-reboot
 install -o root -g root -m 0700 "$source_dir/src/t2-fprint-enrollment-worker.py" /usr/local/sbin/t2-fprint-enrollment-worker
 install -o root -g root -m 0644 "$source_dir/README.md" "$target_dir/README.md"

@@ -300,6 +300,22 @@ the mutation worker starts. The transient worker independently repeats that
 same rule against its fresh reconciled inventory while holding the machine-wide
 operation lock, before recovery anchoring, ACM, journaling, or SEP dispatch.
 
+The installed read-only staging gate collects the complete set of prerequisites
+for the separate native-enrollment research drop-in. Its acknowledgements are
+statements about controls already performed; they do not run those controls or
+authorize a mutation:
+
+```sh
+sudo t2-touchid-fprint-enrollment-gate \
+  --acknowledge-two-distinct-fingers-verified-this-boot \
+  --acknowledge-password-fallback-tested \
+  --acknowledge-worker-negative-controls-passed
+```
+
+Exit status zero means only that the uninstalled drop-in may be staged for the
+documented standard-client test. The report does not enable enrollment, install
+a unit, expose identifiers, or send an enrollment command.
+
 The fail-closed named-match boundary double-checks both SEP identity views on
 the same Bridge connection, reconciles them with the validated local Catacomb,
 sends only the selected opaque identity to the matcher, and proves all identity

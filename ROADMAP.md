@@ -178,6 +178,9 @@ evidence, not intent.
       while ensuring the installed systemd service omits it.
 - [x] Add an uninstalled, exact-flag systemd research drop-in with explicit
       staging and rollback instructions; keep the normal installer default-off.
+- [x] Add one installed read-only activation gate that requires exact health,
+      mapping, AKS, canonical-projection, journal-clear, default-off-daemon, and
+      explicit live-control evidence without staging a unit or mutating T2.
 - [x] Implement the internal authorized enrollment consumer on the exact
       broker-held Bridge generation, with a fresh pre-dispatch authority guard
       and immutable local Catacomb recovery anchor; keep it unreachable until

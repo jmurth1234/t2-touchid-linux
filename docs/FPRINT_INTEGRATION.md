@@ -227,6 +227,11 @@ The daemon now has an explicit `--enable-native-enrollment` process flag that
 constructs this exact worker client. The installed systemd unit deliberately
 omits the flag, so its method remains disabled and cannot launch the worker.
 This is a staging switch for the installed hardware controls, not a default.
+The installed `t2-touchid-fprint-enrollment-gate` is read-only and combines the
+exact stack, mapping, AKS observer, canonical projection, journal-clear, and
+effective-daemon state with explicit attestations for the live fallback,
+two-finger, and worker-negative controls. It can report readiness but cannot
+install the separate research drop-in or dispatch a mutation.
 
 Incomplete legacy labels now have a read-only migration bootstrap rather than
 a guessing rule. `t2_fprint_match_gate.prepare_slots` joins every opaque SEP

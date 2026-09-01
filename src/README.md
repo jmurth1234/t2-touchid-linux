@@ -164,6 +164,15 @@ complete and the requested canonical name to be absent before recovery
 anchoring, ACM, journal creation, or enrollment dispatch. An earlier facade
 check is never accepted as authority across the worker handoff.
 
+`t2_fprint_activation_gate.py` and the installed
+`t2-touchid-fprint-enrollment-gate` compose only redacted, read-only readiness
+evidence for the uninstalled native-enrollment drop-in. The gate requires exact
+core health, current module/DKMS, AKS alias observation, an enabled protected
+mapping, a complete canonical projection, no blocking enrollment or identity-
+management journal, an effective default-off daemon, and explicit prior-live-
+control attestations. It reports readiness only; it cannot stage a unit or
+invoke enrollment.
+
 `t2_fprint_match_selection.py` is the private authority half of that future
 listing. It accepts a strictly decoded user Catacomb and one exact tuple of live
 20-byte per-user identity records, requires complete unique canonical fprint
