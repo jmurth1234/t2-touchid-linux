@@ -181,8 +181,12 @@ evidence, not intent.
 - [x] Bind the internal mutation handoff to the protected mapping and one
       bounded PolicyKit grant derived from the exact claim, and revalidate it
       immediately before enrollment dispatch.
-- [ ] Implement the short-lived systemd encrypted-credential worker and
-      bounded local protocol before exposing any fprint mutation method.
+- [x] Implement the short-lived hardened systemd encrypted-credential worker,
+      exact-one-pidfd seqpacket protocol, stdin-only AKS credential binder,
+      and cooperative facade client without exposing a D-Bus mutation method.
+- [ ] Prove the worker's mapping-disabled, wrong-caller, expired-grant,
+      disconnect, and wrong-generation controls on the installed machine,
+      then connect `EnrollStart`/`EnrollStop` only after automatic E4 exists.
 - [ ] Support mapped Linux users through the same caller/session/PolicyKit and
       protected Apple-user authority model, including negative cross-user tests.
 - [ ] Validate the complete fprint client experience—list, enroll, verify,

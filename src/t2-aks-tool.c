@@ -518,7 +518,8 @@ out:
 }
 
 static int read_verify_password_inputs(unsigned char context[16],
-				       char secret[129], size_t *length_out)
+				       char secret[129], size_t *length_out,
+				       int password_stdin)
 {
 	ssize_t got = 0;
 
@@ -536,7 +537,7 @@ static int read_verify_password_inputs(unsigned char context[16],
 		fprintf(stderr, "expected exactly 16 context bytes on stdin\n");
 		return -1;
 	}
-	return read_password_input(secret, length_out, 0);
+	return read_password_input(secret, length_out, password_stdin);
 }
 
 static int exchange_verify_password_acm(int fd, uint64_t session,
@@ -589,7 +590,7 @@ out:
 }
 
 static int verify_password_acm(int fd, const char *session_text,
-			       const char *handle_text)
+			       const char *handle_text, int password_stdin)
 {
 	unsigned char context[16] = { 0 };
 	char secret[129] = { 0 };
@@ -610,7 +611,8 @@ static int verify_password_acm(int fd, const char *session_text,
 		fprintf(stderr, "invalid keybag handle\n");
 		return 2;
 	}
-	if (read_verify_password_inputs(context, secret, &length))
+	if (read_verify_password_inputs(context, secret, &length,
+					password_stdin))
 		goto out;
 	ret = exchange_verify_password_acm(fd, session, (int32_t)handle,
 					   (unsigned char *)secret, length,
@@ -682,7 +684,7 @@ static int verify_password_acm_matrix(int fd, const char *session_text,
 		fprintf(stderr, "invalid positive runtime handle\n");
 		return 2;
 	}
-	if (read_verify_password_inputs(context, secret, &length))
+	if (read_verify_password_inputs(context, secret, &length, 0))
 		goto out;
 	current_ret = exchange_verify_password_acm(
 		fd, session, -3, (unsigned char *)secret, length,
@@ -857,7 +859,8 @@ int main(int argc, char **argv)
 	      (argc == 5 && !strcmp(argv[1], "set-system-keybag")) ||
 	      (argc == 4 && (!strcmp(argv[1], "unlock-keybag") ||
 	                     !strcmp(argv[1], "unlock-keybag-stdin"))) ||
-	      (argc == 4 && !strcmp(argv[1], "verify-password-acm")) ||
+	      (argc == 4 && (!strcmp(argv[1], "verify-password-acm") ||
+	                     !strcmp(argv[1], "verify-password-acm-stdin"))) ||
 	      (argc == 4 && (!strcmp(argv[1], "verify-password-only") ||
 	                     !strcmp(argv[1], "verify-password-only-stdin"))) ||
 	      (argc == 5 && !strcmp(argv[1], "verify-password-acm-matrix")) ||
@@ -871,6 +874,7 @@ int main(int argc, char **argv)
 			"       %s unlock-keybag SESSION HANDLE\n"
 			"       %s unlock-keybag-stdin SESSION HANDLE\n"
 			"       %s verify-password-acm SESSION HANDLE < CONTEXT_16_BYTES\n"
+			"       %s verify-password-acm-stdin SESSION HANDLE < CONTEXT_16_BYTES_AND_PASSWORD\n"
 			"       %s verify-password-only SESSION HANDLE\n"
 			"       %s verify-password-only-stdin SESSION HANDLE\n"
 			"       %s verify-password-acm-matrix SESSION SPECIAL POSITIVE < CONTEXT_16_BYTES\n"
@@ -878,7 +882,7 @@ int main(int argc, char **argv)
 			"       %s get-device-state HANDLE SELECTOR OUTPUT\n"
 			"       %s get-device-state-v1 SESSION HANDLE SELECTOR OUTPUT\n",
 			argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0],
-			argv[0], argv[0], argv[0], argv[0], argv[0]);
+			argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
 		return 2;
 	}
 	fd = open("/dev/t2-aks", O_RDWR | O_CLOEXEC);
@@ -896,8 +900,11 @@ int main(int argc, char **argv)
 		ret = unlock_keybag(fd, argv[2], argv[3], 0);
 	else if (!strcmp(argv[1], "unlock-keybag-stdin"))
 		ret = unlock_keybag(fd, argv[2], argv[3], 1);
-	else if (!strcmp(argv[1], "verify-password-acm"))
-		ret = verify_password_acm(fd, argv[2], argv[3]);
+	else if (!strcmp(argv[1], "verify-password-acm") ||
+		 !strcmp(argv[1], "verify-password-acm-stdin"))
+		ret = verify_password_acm(
+			fd, argv[2], argv[3],
+			!strcmp(argv[1], "verify-password-acm-stdin"));
 	else if (!strcmp(argv[1], "verify-password-only"))
 		ret = verify_password_only(fd, argv[2], argv[3], 0);
 	else if (!strcmp(argv[1], "verify-password-only-stdin"))

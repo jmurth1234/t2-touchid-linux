@@ -243,6 +243,29 @@ class FprintEnrollmentConsumerTests(unittest.TestCase):
             self.make_consumer()(self.current, Live(material))
         self.assertEqual(self.coordinator_calls, [])
 
+    def test_preexisting_cancel_vetoes_dispatch(self):
+        observed = []
+
+        def coordinator_run(**arguments):
+            observed.append(arguments["dispatch_allowed"]())
+            return coordinator.EnrollmentCoordinatorResult(
+                "cancelled", True, False, True
+            )
+
+        current = consumer.EnrollmentConsumer(
+            "left-thumb",
+            lambda _context: None,
+            lambda: True,
+            lambda _transition: None,
+            True,
+            acm_device_factory=lambda: self.acm,
+            finalizer_factory=lambda **_arguments: self.finalizer,
+            coordinator=coordinator_run,
+        )
+        result = current(self.current, self.live)
+        self.assertEqual(result.outcome, "cancelled")
+        self.assertEqual(observed, [False])
+
 
 def replace_live_generation(value: Live, generation: str) -> Live:
     replacement = Live(value.material)

@@ -236,9 +236,28 @@ reconciliation and an unchanged protected account/keybag binding.
 
 `t2_fprint_enrollment_consumer.py` composes those inputs with the existing ACM
 coordinator, journal, built-in finalizer, canonical finger label, feedback,
-and cooperative cancellation. It remains hardware-inert because the
-short-lived encrypted-credential worker and D-Bus `EnrollStart` handoff are
-not connected yet.
+and cooperative cancellation.
+
+`t2_fprint_worker_protocol.py` is the bounded Unix-seqpacket boundary around
+that consumer. One canonical start packet carries a canonical finger name and
+the original protected account/session evidence alongside exactly one SCM-
+transferred pidfd. The receiver independently validates the descriptor, PID,
+UID, and start time. Subsequent packets are identifier-free progress or one
+exact cancellation. `t2_fprint_worker_launcher.py` binds the private socket,
+authenticates the accepted process against its exact transient systemd unit,
+and supplies the encrypted credential only through
+`LoadCredentialEncrypted`. Its argv contains only the operation socket path.
+
+`t2_system_credential.py` validates the service-scoped credential and runtime
+keybag state, proves password fallback through `verify-password-only-stdin`,
+and binds ACM through the new `verify-password-acm-stdin` command. Mutable
+password buffers are wiped and tool output is suppressed. `t2_fprint_worker`
+reconstructs the pinned authorization session, requires an enabled host-
+encrypted-credential mapping, and runs the real broker/consumer while a
+dedicated listener converts cancellation or peer loss into cooperative
+reconciliation. `t2_fprint_worker_client.py` supplies the unattached async
+facade lifecycle and waits for a terminal update. D-Bus `EnrollStart` remains
+disabled pending installed negative controls and automatic E4.
 
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;

@@ -13,6 +13,8 @@ ExecStart=/opt/t2-touchid/.venv/bin/python /opt/t2-touchid/src/t2-fprintd.py
 Restart=on-failure
 RestartSec=2
 UMask=0077
+RuntimeDirectory=t2-touchid/workers
+RuntimeDirectoryMode=0700
 
 ProtectSystem=strict
 ProtectHome=true

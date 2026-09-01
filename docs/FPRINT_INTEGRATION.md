@@ -145,9 +145,27 @@ the existing ACM coordinator, journal, persistence finalizer, cancellation
 predicate, feedback stream, Linux boot, operation ID, and mapping generation.
 It accepts only an `operate`-stage, self-service, canonical-name enrollment
 authority and passes the broker's fresh pre-dispatch guard directly to E1.
-What remains is the short-lived systemd credential worker and its bounded
-socket protocol; until that exists, neither this consumer nor `EnrollStart` is
-reachable from D-Bus.
+The short-lived worker boundary is now implemented but still unattached.
+`t2_fprint_worker_launcher` creates one root-private operation socket and
+starts a hardened transient service with `LoadCredentialEncrypted`; its argv
+contains only the random socket path. `t2_fprint_worker_protocol` transfers
+exactly one live pidfd plus canonical finger, account, and login-session
+evidence over bounded Unix seqpackets. The worker independently reconstructs
+the pinned authorization session before PolicyKit, mapping, Bridge, or T2
+access. It accepts only an enabled `host-encrypted-credential` mapping.
+
+`t2_system_credential` first proves password fallback against the positive
+runtime keybag, then supplies the 16-byte ACM external form and password to the
+new stdin-only AKS command. Plaintext is confined to the transient worker and
+its child tool, wiped from mutable buffers, suppressed from stdout/stderr, and
+never reaches fprintd. Progress is identifier-free; cancel, peer close, or
+facade task cancellation sets one cooperative predicate and waits for the
+journaled terminal response. `t2_fprint_worker_client` revalidates the original
+claim before and after worker launch and retains completion until stop.
+
+`EnrollStart` remains disabled until installed negative controls and automatic
+E4 post-reboot reconciliation are proven; these modules cannot currently be
+reached through D-Bus.
 
 ## Enrollment status translation
 
@@ -229,11 +247,10 @@ Native mutation remains disabled until all of these are demonstrated:
 
 ## Next implementation order
 
-1. Define the bounded protocol and short-lived systemd credential worker which
-   invokes the implemented same-generation enrollment consumer.
-2. Prove mapping-disabled, wrong-caller, expired-grant, and wrong-generation
-   negatives before connecting `EnrollStart`.
-3. Attach the existing lifecycle/status stream and add automatic E4 recovery.
+1. Add automatic E4 recovery for successful worker journals.
+2. Prove mapping-disabled, wrong-caller, expired-grant, disconnect, and
+   wrong-generation worker negatives on the installed machine.
+3. Attach the tested worker client/status stream to `EnrollStart`/`EnrollStop`.
 4. Validate canonical enrollment, fresh listing, targeted verification, and
    reboot survival through standard fprint clients.
 5. Adapt single named deletion and its survivor controls.

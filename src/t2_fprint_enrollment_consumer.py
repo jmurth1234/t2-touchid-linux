@@ -189,7 +189,10 @@ class EnrollmentConsumer:
                     ),
                     password_binder=self.password_binder,
                     finalizer=finalizer,
-                    dispatch_allowed=authority.dispatch_allowed,
+                    dispatch_allowed=lambda: (
+                        not self.cancel_requested()
+                        and authority.dispatch_allowed()
+                    ),
                     cancel_requested=self.cancel_requested,
                     on_feedback=self.on_feedback,
                 )
