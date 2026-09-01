@@ -151,6 +151,10 @@ evidence, not intent.
       identity state is unchanged after the scan.
 - [ ] Route canonical fprint verification through that named-match gate while
       retaining the compatibility alias only for unmigrated labels.
+- [x] Define a strict runtime transition policy: incomplete projections list
+      only the compatibility alias and match all; complete projections list
+      canonical names and require a same-name private target; `any` is never a
+      private identity selector.
 - [ ] Implement fprintd-native enrollment and deletion through the journaled,
       explicit-target Linux mutation brokers; never treat a D-Bus finger label
       as biometric authority.

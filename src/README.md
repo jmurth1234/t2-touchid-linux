@@ -175,6 +175,15 @@ contents. `bridge-xpc-probe.py --match-finger-name` implements this dormant
 targeted path. The fprintd facade does not advertise it until the complete
 per-finger listing and named-verdict path are wired together.
 
+`t2_fprint_runtime.py` defines that transition without performing I/O. It
+strictly parses only the redacted projection schema. An incomplete projection
+lists exactly one compatibility alias and resolves it to an all-identities
+match; a complete projection lists all canonical names and resolves a named
+request only to the same named target. `any` remains an all-identities request
+and can never become private identity authority. The fprintd backend already
+has a dormant named-verdict path that requires the pre-match gate, the selected
+identity boolean, and the post-match unchanged-state attestation together.
+
 `t2_user_broker_dispatch.py` receives exactly one protocol packet and dispatches
 only those two read-only forms. It passes modification policy only to preflight;
 the identities runner is intrinsically non-modifying and cannot collect

@@ -290,6 +290,13 @@ unchanged afterward. This path remains dormant while labels are not canonical
 anatomical fprint names; the compatibility alias continues to select all
 enrolled identities in that state.
 
+The transition policy is explicit: incomplete inventories expose only the
+compatibility alias, complete inventories expose the canonical per-finger
+list, named verification is restricted to that exact identity, and `any`
+always remains an all-identities request. The named backend verdict also
+requires both the pre-match reconciliation proof and post-match unchanged-state
+proof; a selected-identity match alone is insufficient.
+
 ### Experimental Linux enrollment
 
 The stable command frontend exposes the proven journaled enrollment broker

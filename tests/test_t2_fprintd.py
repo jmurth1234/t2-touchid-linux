@@ -126,6 +126,77 @@ class VerdictTests(unittest.TestCase):
         }
         self.assertEqual(MODULE.verdict_from_result(result), "verify-no-match")
 
+    def test_named_match_requires_selected_identity_and_both_attestations(self):
+        result = {
+            "targeted_match_gate": {
+                "finger_name": "left-thumb",
+                "single_identity_selected": True,
+                "same_connection_inventory_stable": True,
+                "local_live_reconciled": True,
+                "identifiers_redacted": True,
+            },
+            "targeted_match_post_attestation": {
+                "identity_state_unchanged": True,
+                "local_components_unchanged": True,
+                "per_user_inventory_unchanged": True,
+                "global_inventory_unchanged": True,
+                "identifiers_redacted": True,
+            },
+            "match_events": [
+                {
+                    "event_kind": "match_result",
+                    "matched": True,
+                    "matches_enrolled_identity": True,
+                    "matches_selected_identity": True,
+                }
+            ],
+        }
+        self.assertEqual(
+            MODULE.verdict_from_result(result, "left-thumb"),
+            "verify-match",
+        )
+        wrong_identity = {
+            **result,
+            "match_events": [
+                {
+                    "event_kind": "match_result",
+                    "matched": True,
+                    "matches_enrolled_identity": True,
+                    "matches_selected_identity": False,
+                }
+            ],
+        }
+        self.assertEqual(
+            MODULE.verdict_from_result(wrong_identity, "left-thumb"),
+            "verify-no-match",
+        )
+
+    def test_named_match_missing_or_rebound_attestation_is_error(self):
+        base = {
+            "targeted_match_gate": {
+                "finger_name": "right-thumb",
+                "single_identity_selected": True,
+                "same_connection_inventory_stable": True,
+                "local_live_reconciled": True,
+                "identifiers_redacted": True,
+            },
+            "targeted_match_post_attestation": {
+                "identity_state_unchanged": True,
+                "local_components_unchanged": True,
+                "per_user_inventory_unchanged": True,
+                "global_inventory_unchanged": True,
+                "identifiers_redacted": True,
+            },
+            "match_events": [],
+        }
+        for changed in (
+            {**base, "targeted_match_gate": None},
+            {**base, "targeted_match_post_attestation": None},
+            base,
+        ):
+            with self.subTest(), self.assertRaises(RuntimeError):
+                MODULE.verdict_from_result(changed, "left-thumb")
+
     def test_missing_or_explicit_no_match_fails_closed(self):
         self.assertEqual(
             MODULE.verdict_from_result({"match_events": []}), "verify-no-match"

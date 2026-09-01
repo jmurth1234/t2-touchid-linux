@@ -50,10 +50,31 @@ if ENROLLED_FINGER not in {
     raise RuntimeError("T2_TOUCHID_ENROLLED_FINGER is invalid")
 
 
-def verdict_from_result(result: object) -> str:
+def verdict_from_result(
+    result: object, target_finger: str | None = None
+) -> str:
     """Translate privacy-safe probe JSON into a fail-closed fprintd verdict."""
     if not isinstance(result, dict):
         raise RuntimeError("malformed T2 probe result")
+    if target_finger is not None:
+        gate = result.get("targeted_match_gate")
+        post = result.get("targeted_match_post_attestation")
+        if (
+            target_finger == "any"
+            or not isinstance(gate, dict)
+            or gate.get("finger_name") != target_finger
+            or gate.get("single_identity_selected") is not True
+            or gate.get("same_connection_inventory_stable") is not True
+            or gate.get("local_live_reconciled") is not True
+            or gate.get("identifiers_redacted") is not True
+            or not isinstance(post, dict)
+            or post.get("identity_state_unchanged") is not True
+            or post.get("local_components_unchanged") is not True
+            or post.get("per_user_inventory_unchanged") is not True
+            or post.get("global_inventory_unchanged") is not True
+            or post.get("identifiers_redacted") is not True
+        ):
+            raise RuntimeError("named T2 match attestation is incomplete")
     events = result.get("match_events", [])
     if not isinstance(events, list):
         raise RuntimeError("malformed T2 match event list")
@@ -63,6 +84,10 @@ def verdict_from_result(result: object) -> str:
         if (
             event.get("matched") is True
             and event.get("matches_enrolled_identity") is True
+            and (
+                target_finger is None
+                or event.get("matches_selected_identity") is True
+            )
         ):
             return "verify-match"
         return "verify-no-match"
@@ -113,7 +138,9 @@ class T2Backend:
         self.port_from_cache = False
         return self.port
 
-    async def _run_probe(self, port: int) -> dict:
+    async def _run_probe(
+        self, port: int, target_finger: str | None = None
+    ) -> dict:
         command = [
             "/usr/bin/flock",
             "--exclusive",
@@ -136,6 +163,8 @@ class T2Backend:
             str(self.match_seconds),
             "--stop-on-match-result",
         ]
+        if target_finger is not None:
+            command.extend(["--match-finger-name", target_finger])
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
@@ -157,11 +186,13 @@ class T2Backend:
             raise RuntimeError("BridgeXPC probe returned malformed JSON")
         return result
 
-    async def verify(self) -> tuple[str, dict]:
+    async def verify(
+        self, target_finger: str | None = None
+    ) -> tuple[str, dict]:
         port = await self.discover()
         await self.notify_finger_requested()
         try:
-            result = await self._run_probe(port)
+            result = await self._run_probe(port, target_finger)
         except RuntimeError:
             if not self.port_from_cache:
                 raise
@@ -170,8 +201,8 @@ class T2Backend:
             self.port = None
             self.port_from_cache = False
             port = await self.discover()
-            result = await self._run_probe(port)
-        verdict = verdict_from_result(result)
+            result = await self._run_probe(port, target_finger)
+        verdict = verdict_from_result(result, target_finger)
         await self.notify_feedback(verdict)
         return verdict, result
 
