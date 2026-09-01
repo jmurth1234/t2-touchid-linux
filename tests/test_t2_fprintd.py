@@ -154,6 +154,10 @@ async def enroll_start(device, finger_name):
     await MODULE.FprintDevice.EnrollStart.__wrapped__(device, finger_name)
 
 
+async def verify_start(device, finger_name):
+    await MODULE.FprintDevice.VerifyStart.__wrapped__(device, finger_name)
+
+
 async def delete_finger(device, finger_name):
     await MODULE.FprintDevice.DeleteEnrolledFinger.__wrapped__(
         device, finger_name
@@ -204,6 +208,76 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             ("left-thumb", "right-index-finger"),
         )
 
+    async def test_verify_start_refreshes_projection_before_named_match(self):
+        backend = FakeBackend("verify-no-match")
+        backend.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
+            ("left-thumb", "right-index-finger"),
+            2,
+            True,
+            MODULE.ENROLLED_FINGER,
+        )
+        backend.runtime_projection = AsyncMock(
+            return_value=backend.projection
+        )
+        backend.verify_fprint = AsyncMock(
+            return_value=("verify-no-match", {})
+        )
+        device = make_device(backend)
+        selected = []
+        device.VerifyFingerSelected = selected.append
+        device.VerifyStatus = lambda _result, _done: None
+        await claim(device)
+
+        await verify_start(device, "left-thumb")
+        await device.verify_task
+
+        self.assertEqual(
+            device.enrolled_fingers,
+            ("left-thumb", "right-index-finger"),
+        )
+        self.assertEqual(selected, ["left-thumb"])
+        backend.runtime_projection.assert_awaited_once_with()
+        backend.verify_fprint.assert_awaited_once_with("left-thumb")
+
+    async def test_verify_start_rejects_absent_or_invalid_name_before_match(self):
+        backend = FakeBackend()
+        backend.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
+            ("right-index-finger",),
+            1,
+            True,
+            MODULE.ENROLLED_FINGER,
+        )
+        backend.verify_fprint = AsyncMock()
+        device = make_device(backend)
+        await claim(device)
+        with self.assertRaises(MODULE.DBusError) as absent:
+            await verify_start(device, "left-thumb")
+        self.assertTrue(absent.exception.type.endswith(".NoEnrolledPrints"))
+        with self.assertRaises(MODULE.DBusError) as invalid:
+            await verify_start(device, "not-a-finger")
+        self.assertTrue(invalid.exception.type.endswith(".InvalidFingername"))
+        backend.verify_fprint.assert_not_awaited()
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_cancelled_verify_projection_restores_bounded_claim(self):
+        entered = asyncio.Event()
+
+        class BlockingBackend(FakeBackend):
+            async def runtime_projection(self):
+                entered.set()
+                await asyncio.Event().wait()
+
+        device = make_device(BlockingBackend())
+        await claim(device)
+        task = asyncio.create_task(verify_start(device, "any"))
+        await entered.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertIsNone(device.verify_task)
+        self.assertIsNotNone(device.claim_expiry_task)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
     async def test_any_match_emits_exact_resolved_finger_before_status(self):
         backend = FakeBackend()
         backend.verify_fprint = AsyncMock(
@@ -245,7 +319,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             ("status", result, done)
         )
         await claim(device)
-        device.VerifyStart("any")
+        await verify_start(device, "any")
         await device.verify_task
         self.assertEqual(
             emitted,
@@ -273,7 +347,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         device.VerifyStatus = lambda result, done: statuses.append((result, done))
 
         await claim(device)
-        device.VerifyStart("any")
+        await verify_start(device, "any")
         task = device.verify_task
         self.assertIsNotNone(task)
         await task
@@ -299,7 +373,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         MODULE.current_dbus_sender = lambda: ":1.101"
         try:
             with self.assertRaises(MODULE.DBusError) as raised:
-                device.VerifyStart("any")
+                await verify_start(device, "any")
             self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
             await device.sender_departed(":1.100")
             self.assertIsNone(device.claimed_user)
@@ -317,7 +391,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(pinned)
         pinned.closed = True
         with self.assertRaises(MODULE.DBusError) as raised:
-            device.VerifyStart("any")
+            await verify_start(device, "any")
         self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
 
     async def test_claim_revalidates_session_and_account_on_scoped_calls(self):
@@ -327,7 +401,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(evidence)
         evidence.invalid = True
         with self.assertRaises(MODULE.DBusError) as raised:
-            device.VerifyStart("any")
+            await verify_start(device, "any")
         self.assertTrue(raised.exception.type.endswith(".PermissionDenied"))
 
     async def test_departure_waiting_during_claim_clears_the_new_claim(self):
@@ -421,7 +495,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         device = make_device(backend)
         device.VerifyStatus = lambda _result, _done: None
         await claim(device)
-        device.VerifyStart("any")
+        await verify_start(device, "any")
         await started.wait()
         await MODULE.FprintDevice.VerifyStop.__wrapped__(device)
         self.assertEqual(backend.cancel_count, 1)
@@ -434,7 +508,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         device.VerifyStatus = lambda _result, _done: None
 
         await claim(device)
-        device.VerifyStart("any")
+        await verify_start(device, "any")
         await device.verify_task
         await MODULE.FprintDevice.Release.__wrapped__(device)
 
@@ -596,10 +670,12 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(enroll_start(device, "left-thumb"))
         await entered.wait()
 
-        device.VerifyStart("any")
+        verification = asyncio.create_task(verify_start(device, "any"))
+        await asyncio.sleep(0)
         release.set()
         with self.assertRaises(MODULE.DBusError) as raised:
             await task
+        await verification
 
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
         self.assertIsNone(client.start_arguments)
@@ -617,7 +693,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(raised.exception.type.endswith(".InvalidFingername"))
         await enroll_start(device, "right-thumb")
         with self.assertRaises(MODULE.DBusError) as raised:
-            device.VerifyStart("any")
+            await verify_start(device, "any")
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
         with self.assertRaises(MODULE.DBusError) as raised:
             await delete_finger(device, "right-thumb")
@@ -762,7 +838,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await client.entered.wait()
 
         with self.assertRaises(MODULE.DBusError) as raised:
-            device.VerifyStart("any")
+            await verify_start(device, "any")
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
         departure = asyncio.create_task(device.sender_departed(":1.100"))
         await asyncio.sleep(0)
@@ -794,7 +870,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await entered.wait()
 
         with self.assertRaises(MODULE.DBusError) as raised:
-            device.VerifyStart("any")
+            await verify_start(device, "any")
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
         with self.assertRaises(MODULE.DBusError) as raised:
             await enroll_start(device, "right-thumb")

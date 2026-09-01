@@ -579,7 +579,7 @@ class FprintDevice(ServiceInterface):
         return list(self.enrolled_fingers)
 
     @method()
-    def VerifyStart(self, finger_name: "s"):
+    async def VerifyStart(self, finger_name: "s"):
         self._require_claim_owner()
         if (
             self.verify_task is not None
@@ -590,18 +590,72 @@ class FprintDevice(ServiceInterface):
             or self.delete_task is not None
         ):
             raise DBusError(f"{FPRINT_ERROR}.AlreadyInUse", "verification is active")
-        if finger_name != "any" and finger_name not in self.enrolled_fingers:
+        if (
+            finger_name != "any"
+            and finger_name not in t2_fprint_projection.FINGER_NAME_SET
+        ):
             raise DBusError(
-                f"{FPRINT_ERROR}.NoEnrolledPrints", "finger is not enrolled"
+                f"{FPRINT_ERROR}.InvalidFingername",
+                "verification requires any or a canonical finger name",
             )
         if self.claim_expiry_task is not None:
             self.claim_expiry_task.cancel()
             self.claim_expiry_task = None
-        if finger_name != "any":
-            self.VerifyFingerSelected(finger_name)
-        self.verify_task = asyncio.create_task(
-            self._run_verification(finger_name)
-        )
+        current_task = asyncio.current_task()
+        if current_task is None:
+            raise DBusError(
+                f"{FPRINT_ERROR}.Internal",
+                "verification task identity is unavailable",
+            )
+        self.verify_task = current_task
+        started = False
+        try:
+            async with self.backend.operation_lock:
+                view = await self.backend.runtime_projection()
+            self._require_claim_owner()
+            if self.verify_task is not current_task:
+                raise RuntimeError("verification task binding changed")
+            if (
+                self.delete_task is not None
+                or (
+                    self.enrollment_client is not None
+                    and getattr(self.enrollment_client, "task", None) is not None
+                )
+            ):
+                raise DBusError(
+                    f"{FPRINT_ERROR}.AlreadyInUse",
+                    "a biometric operation is active",
+                )
+            if not isinstance(view, t2_fprint_runtime.RuntimeProjection):
+                raise RuntimeError(
+                    "fprint projection returned an invalid result"
+                )
+            self.enrolled_fingers = view.listed_fingers
+            try:
+                t2_fprint_runtime.resolve_match(view, finger_name)
+            except t2_fprint_runtime.FprintRuntimeError as error:
+                raise DBusError(
+                    f"{FPRINT_ERROR}.NoEnrolledPrints",
+                    "finger is not enrolled",
+                ) from error
+            if finger_name != "any":
+                self.VerifyFingerSelected(finger_name)
+            operation = asyncio.create_task(
+                self._run_verification(finger_name)
+            )
+            self.verify_task = operation
+            started = True
+        except DBusError:
+            raise
+        except Exception as error:
+            raise DBusError(
+                f"{FPRINT_ERROR}.Internal",
+                "verification could not be started",
+            ) from error
+        finally:
+            if not started and self.verify_task is current_task:
+                self.verify_task = None
+            self._arm_unstarted_claim_expiry()
 
     @method()
     async def VerifyStop(self):
