@@ -668,8 +668,25 @@ class FprintDevice(ServiceInterface):
         await asyncio.gather(task, return_exceptions=True)
         self.verify_task = None
 
+    def _arm_unstarted_claim_expiry(self) -> None:
+        """Restore bounded claim lifetime after enrollment fails to start."""
+
+        client = self.enrollment_client
+        if (
+            self.claimed_user is not None
+            and self.claim_expiry_task is None
+            and self.verify_task is None
+            and (
+                client is None
+                or getattr(client, "task", None) is None
+            )
+        ):
+            self.claim_expiry_task = asyncio.create_task(
+                self._expire_unstarted_claim()
+            )
+
     @method()
-    def EnrollStart(self, finger_name: "s"):
+    async def EnrollStart(self, finger_name: "s"):
         self._require_claim_owner()
         client = self.enrollment_client
         if client is None:
@@ -689,12 +706,41 @@ class FprintDevice(ServiceInterface):
             self.claim_expiry_task.cancel()
             self.claim_expiry_task = None
         try:
+            # Enrollment persists ``finger_name`` as presentation metadata.
+            # Require a fresh, complete projection before mutation so a
+            # standard fprint client cannot compound legacy/duplicate labels
+            # or silently replace an already enrolled canonical name.
+            async with self.backend.operation_lock:
+                view = await self.backend.runtime_projection()
+            self._require_claim_owner()
+            if (
+                self.verify_task is not None
+                or getattr(client, "task", None) is not None
+            ):
+                raise DBusError(
+                    f"{FPRINT_ERROR}.AlreadyInUse",
+                    "a biometric operation is active",
+                )
+            if not isinstance(view, t2_fprint_runtime.RuntimeProjection):
+                raise RuntimeError("fprint projection returned an invalid result")
+            if not view.complete:
+                raise DBusError(
+                    f"{FPRINT_ERROR}.Internal",
+                    "existing fingerprint labels require migration",
+                )
+            if finger_name in view.finger_names:
+                raise DBusError(
+                    f"{FPRINT_ERROR}.InvalidFingername",
+                    "finger name is already enrolled",
+                )
             client.start(
                 finger_name,
                 self.claimed_caller,
                 self.claimed_evidence,
                 self._enrollment_update,
             )
+        except DBusError:
+            raise
         except Exception as error:
             self.finger_present = False
             self.finger_needed = False
@@ -702,6 +748,10 @@ class FprintDevice(ServiceInterface):
                 f"{FPRINT_ERROR}.Internal",
                 "native enrollment could not be started",
             ) from error
+        finally:
+            # This also covers coroutine cancellation while collecting the
+            # projection; a failed D-Bus call must not leave an immortal claim.
+            self._arm_unstarted_claim_expiry()
 
     @method()
     async def EnrollStop(self):

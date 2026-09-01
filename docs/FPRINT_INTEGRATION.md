@@ -212,6 +212,11 @@ explicit client is supplied, canonical `EnrollStart` passes the exact pinned
 claim to it, updates the historical properties, emits ordered `EnrollStatus`,
 keeps verify/enroll mutually exclusive, and makes `EnrollStop`, `Release`,
 sender departure, and terminal grace expiry wait for worker reconciliation.
+Before it can launch the worker, `EnrollStart` collects a fresh projection
+under the biometric operation lock. It refuses incomplete legacy or duplicate
+labels and refuses a requested canonical name that is already assigned. A
+collection failure, malformed result, or claim change during the asynchronous
+check also fails closed before any mutation client is called.
 The daemon now has an explicit `--enable-native-enrollment` process flag that
 constructs this exact worker client. The installed systemd unit deliberately
 omits the flag, so its method remains disabled and cannot launch the worker.

@@ -25,6 +25,13 @@ class FakeBackend:
     def __init__(self, verdict="verify-match"):
         self.verdict = verdict
         self.cancel_count = 0
+        self.operation_lock = asyncio.Lock()
+        self.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
+            (MODULE.ENROLLED_FINGER,),
+            1,
+            True,
+            MODULE.ENROLLED_FINGER,
+        )
 
     async def verify(self):
         await asyncio.sleep(0)
@@ -35,6 +42,9 @@ class FakeBackend:
 
     async def list_fingers(self):
         return (MODULE.ENROLLED_FINGER,)
+
+    async def runtime_projection(self):
+        return self.projection
 
     async def cancel(self):
         self.cancel_count += 1
@@ -119,6 +129,10 @@ async def claim(device, username=None):
     await MODULE.FprintDevice.Claim.__wrapped__(
         device, username or MODULE.LINUX_USER
     )
+
+
+async def enroll_start(device, finger_name):
+    await MODULE.FprintDevice.EnrollStart.__wrapped__(device, finger_name)
 
 
 class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
@@ -406,7 +420,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         device = make_device()
         await claim(device)
         with self.assertRaises(MODULE.DBusError) as raised:
-            device.EnrollStart("left-thumb")
+            await enroll_start(device, "left-thumb")
         self.assertTrue(raised.exception.type.endswith(".Internal"))
         self.assertFalse(device.finger_present)
         self.assertFalse(device.finger_needed)
@@ -422,7 +436,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await claim(device)
         caller = device.claimed_caller
         evidence = device.claimed_evidence
-        device.EnrollStart("left-thumb")
+        await enroll_start(device, "left-thumb")
         self.assertEqual(
             client.start_arguments, ("left-thumb", caller, evidence)
         )
@@ -456,14 +470,124 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(device.finger_needed)
         await MODULE.FprintDevice.Release.__wrapped__(device)
 
+    async def test_enrollment_refuses_incomplete_legacy_projection(self):
+        backend = FakeBackend()
+        backend.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
+            (), 2, False, MODULE.ENROLLED_FINGER
+        )
+        client = FakeEnrollmentClient()
+        device = make_device(backend, client)
+
+        await claim(device)
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await enroll_start(device, "left-thumb")
+
+        self.assertTrue(raised.exception.type.endswith(".Internal"))
+        self.assertIn("require migration", raised.exception.text)
+        self.assertIsNone(client.start_arguments)
+        self.assertIsNotNone(device.claim_expiry_task)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_enrollment_refuses_duplicate_canonical_name(self):
+        client = FakeEnrollmentClient()
+        device = make_device(enrollment_client=client)
+
+        await claim(device)
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await enroll_start(device, MODULE.ENROLLED_FINGER)
+
+        self.assertTrue(raised.exception.type.endswith(".InvalidFingername"))
+        self.assertIn("already enrolled", raised.exception.text)
+        self.assertIsNone(client.start_arguments)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_enrollment_refuses_malformed_projection(self):
+        backend = FakeBackend()
+        backend.runtime_projection = AsyncMock(return_value={})
+        client = FakeEnrollmentClient()
+        device = make_device(backend, client)
+
+        await claim(device)
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await enroll_start(device, "left-thumb")
+
+        self.assertTrue(raised.exception.type.endswith(".Internal"))
+        self.assertIsNone(client.start_arguments)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_enrollment_refuses_projection_collection_failure(self):
+        backend = FakeBackend()
+        backend.runtime_projection = AsyncMock(
+            side_effect=RuntimeError("unavailable")
+        )
+        client = FakeEnrollmentClient()
+        device = make_device(backend, client)
+
+        await claim(device)
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await enroll_start(device, "left-thumb")
+
+        self.assertTrue(raised.exception.type.endswith(".Internal"))
+        self.assertIsNone(client.start_arguments)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_cancelled_projection_restores_claim_expiry(self):
+        entered = asyncio.Event()
+
+        class BlockingBackend(FakeBackend):
+            async def runtime_projection(self):
+                entered.set()
+                await asyncio.Event().wait()
+
+        client = FakeEnrollmentClient()
+        device = make_device(BlockingBackend(), client)
+        await claim(device)
+        task = asyncio.create_task(enroll_start(device, "left-thumb"))
+        await entered.wait()
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertIsNone(client.start_arguments)
+        self.assertIsNotNone(device.claim_expiry_task)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_enrollment_rechecks_operation_after_projection_await(self):
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingBackend(FakeBackend):
+            async def runtime_projection(self):
+                entered.set()
+                await release.wait()
+                return self.projection
+
+        backend = BlockingBackend()
+        client = FakeEnrollmentClient()
+        device = make_device(backend, client)
+        device.VerifyStatus = lambda _result, _done: None
+        await claim(device)
+        task = asyncio.create_task(enroll_start(device, "left-thumb"))
+        await entered.wait()
+
+        device.VerifyStart("any")
+        release.set()
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await task
+
+        self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
+        self.assertIsNone(client.start_arguments)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
     async def test_enrollment_is_caller_bound_and_mutually_exclusive(self):
         client = FakeEnrollmentClient()
         device = make_device(enrollment_client=client)
         await claim(device)
         with self.assertRaises(MODULE.DBusError) as raised:
-            device.EnrollStart("any")
+            await enroll_start(device, "any")
         self.assertTrue(raised.exception.type.endswith(".InvalidFingername"))
-        device.EnrollStart("right-thumb")
+        await enroll_start(device, "right-thumb")
         with self.assertRaises(MODULE.DBusError) as raised:
             device.VerifyStart("any")
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
@@ -479,7 +603,7 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             device = make_device(enrollment_client=client)
             device.EnrollStatus = lambda _status, _done: None
             await claim(device)
-            device.EnrollStart("left-thumb")
+            await enroll_start(device, "left-thumb")
             client.emit(
                 MODULE.t2_fprint_enrollment_runtime.EnrollmentUpdate(
                     "enroll-completed", True, False, False

@@ -293,6 +293,10 @@ sudo t2-touchid-fprint-status
 `complete: false` keeps the compatibility alias in place. It means one or more
 labels need an explicit anatomical assignment before truthful per-finger fprint
 listing can replace that alias; the command never guesses or mutates a label.
+The staged native `EnrollStart` path also refuses to run until this projection
+is complete, and refuses a canonical name already present in it. This prevents
+standard fprint clients from compounding ambiguous or duplicate labels before
+the mutation worker starts.
 
 The fail-closed named-match boundary double-checks both SEP identity views on
 the same Bridge connection, reconciles them with the validated local Catacomb,
@@ -314,8 +318,9 @@ closed and UUIDs remain private.
 ### Experimental Linux enrollment
 
 The stable command frontend exposes the proven journaled enrollment broker
-without adding enrollment to fprintd. Check the redacted state first, then run
-the non-mutating preflight after confirming password fallback works:
+without enabling enrollment in the installed fprintd service. Check the
+redacted state first, then run the non-mutating preflight after confirming
+password fallback works:
 
 ```sh
 sudo t2-touchid-enroll status
