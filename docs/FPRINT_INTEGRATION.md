@@ -345,8 +345,11 @@ Native mutation remains disabled until all of these are demonstrated:
   and after reboot and the deleted finger does not.
 - Contention, daemon restart, client disconnect, suspend fault, and broker
   crash all fail closed without command replay.
-- Standard `fprintd-enroll`, `fprintd-list`, `fprintd-verify`, PAM, sudo, lock
-  screen, and desktop settings UI paths behave consistently.
+- Standard `fprintd-enroll`, `fprintd-list`, explicit
+  `fprintd-verify -f any`, named `fprintd-verify -f FINGER-NAME`, PAM, sudo,
+  lock screen, and desktop settings UI paths behave consistently. Bare
+  `fprintd-verify` is not an all-identity control once multiple canonical
+  names are listed: the upstream utility selects the first listed name.
 
 ## Next implementation order
 

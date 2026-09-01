@@ -169,9 +169,10 @@ or an alternative sleep mode has been validated on the specific Mac model.
    sudo /usr/local/sbin/t2-aks-tool unlock-keybag 1 SPECIAL_BAG
    ```
 
-7. Start `fprintd.service`. Run `fprintd-verify` once with the enrolled finger
-   and once with an unenrolled finger. Require `verify-match` and
-   `verify-no-match`, respectively.
+7. Start `fprintd.service`. Run `fprintd-verify -f any` once with an enrolled
+   finger and once with an unenrolled finger. Require `verify-match` and
+   `verify-no-match`, respectively. Once canonical labels are assigned, also
+   test each identity explicitly with `fprintd-verify -f FINGER-NAME`.
 8. Only after those controls pass, install the relevant files from `pam/` into
    `/etc/pam.d/` with `sudo tools/install-pam.sh`. Keep password authentication
    as fallback; `sudo tools/rollback-pam.sh` restores the originals.
@@ -280,6 +281,21 @@ user”; it is not an enrollment count. Use `sep_identity_count` from
 label is uniquely canonical, the service automatically lists every finger,
 targets a named verification to only that identity, and reports the exact
 canonical identity selected by a successful `any` match.
+
+With more than one listed finger, do not use bare `fprintd-verify` as an
+all-finger control. The upstream command-line utility's "automatic" default
+selects the first name returned by `ListEnrolledFingers`; it does not request
+`VerifyStart("any")`. Select the intended operation explicitly:
+
+```sh
+fprintd-verify -f any "$USER"
+fprintd-verify -f right-index-finger "$USER"
+fprintd-verify -f right-thumb "$USER"
+```
+
+The first command accepts any reconciled enrolled identity. The named commands
+deliberately restrict SEP matching to only that identity. PAM uses fprintd's
+`any` verification path and is not represented by the bare utility default.
 
 List the reconciled local labels as numbered management slots:
 

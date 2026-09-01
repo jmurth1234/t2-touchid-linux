@@ -15,7 +15,9 @@
 
 - [ ] Root doctor has no unexpected failures.
 - [ ] Enrolled and unenrolled fingers pass raw BridgeXPC controls.
-- [ ] Enrolled and unenrolled fingers pass `fprintd-verify` controls.
+- [ ] Every enrolled finger and one unenrolled finger pass explicit
+  `fprintd-verify -f any` controls; each enrolled finger also passes its named
+  `fprintd-verify -f FINGER-NAME` control.
 - [ ] Enrolled and unenrolled fingers pass sudo/PAM controls.
 - [x] `omarchy system lock` accepts the enrolled fingerprint.
 - [x] `omarchy system lock` rejects a wrong finger and retains password fallback.
