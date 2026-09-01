@@ -42,7 +42,11 @@ See the redacted conversation that produced this here: https://gist.github.com/j
 Developed and verified on an Intel `MacBookPro16,2`, bridgeOS build `23P1072`,
 BridgeXPC 39, and Omarchy/Arch Linux. A positive right-index control and a
 negative unenrolled-finger control were both verified at the raw bridge,
-`fprintd`, and sudo/PAM layers.
+`fprintd`, and sudo/PAM layers. After the first Linux enrollment and a reboot,
+two distinct enrolled physical fingers independently returned `verify-match`
+while a third, unenrolled finger returned `verify-no-match`. Their anatomical
+fprint labels have not yet been assigned, so fprintd still truthfully exposes
+one compatibility alias rather than pretending that it knows both names.
 
 ## Security properties
 
@@ -570,8 +574,25 @@ The report distinguishes the reconciled T2 identity count from fprintd's one
 compatibility alias. A successful report means only that an unmapped/inactive
 caller negative test may be staged; the candidate socket remains uninstalled.
 
+Legacy/macOS labels such as `Finger 1` and early Linux research labels cannot
+be converted to anatomical names by guessing. The installed read-only helper
+matches one presented finger against all freshly reconciled identities and
+returns only its current ephemeral management slot:
+
+```sh
+sudo t2-touchid-identities
+sudo t2-touchid-identify-finger
+```
+
+No UUID, fingerprint payload, or guessed name is emitted, and the helper sends
+no enrollment, rename, persistence, or deletion command. A positive result is
+valid only for the current reconciled list. Note which physical finger you
+presented, list again, and then rename that exact slot to one of fprint's
+canonical names (`left-thumb`, `right-index-finger`, and so on). Never infer
+the anatomical name from the old compatibility alias.
+
 Rename one current identity label (this does not alter its fingerprint
-template or fprintd's compatibility-slot name):
+template):
 
 ```sh
 sudo t2-touchid-manage status

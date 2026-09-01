@@ -223,6 +223,82 @@ class FprintMatchGateTests(unittest.TestCase):
             )["identity_state_unchanged"]
         )
 
+    def test_slot_match_bootstraps_noncanonical_names_without_identifier(self):
+        original = codec.decode_user_catacomb(fixture(), 501)
+        noncanonical = codec.decode_user_catacomb(
+            original.add(
+                identity_uuid=str(uuid.UUID(int=4)),
+                entity=1,
+                name="Linux enrolled finger",
+            ),
+            501,
+        )
+        records = tuple(
+            user_record(identity.user_id, identity.uuid)
+            for identity in reversed(noncanonical.identities)
+        )
+        global_records = tuple(global_record(record) for record in records)
+        result = gate.prepare_slots(
+            noncanonical,
+            self.components,
+            records,
+            global_records,
+            records,
+            global_records,
+        )
+        expected_slot = next(
+            slot
+            for slot, identity in enumerate(
+                sorted(noncanonical.identities, key=lambda item: item.entity),
+                1,
+            )
+            if uuid.UUID(identity.uuid).bytes == records[0][4:20]
+        )
+        event_data = records[0][4:20] + b"\0" * (0xC70 - 16)
+        self.assertEqual(
+            gate.resolve_slot_match_event(result, event_data), expected_slot
+        )
+        rendered = json.dumps(result.public(), sort_keys=True)
+        self.assertNotIn(records[0].hex(), rendered)
+        self.assertNotIn(str(uuid.UUID(bytes=records[0][4:20])), rendered)
+        self.assertEqual(result.public()["slot_scope"], "current-reconciled-list")
+
+    def test_slot_match_negative_ambiguous_and_inventory_drift_fail(self):
+        result = gate.prepare_slots(
+            self.local,
+            self.components,
+            self.user,
+            self.global_records,
+            self.user,
+            self.global_records,
+        )
+        self.assertIsNone(
+            gate.resolve_slot_match_event(result, b"\0" * 0xC70)
+        )
+        ambiguous = (
+            self.user[0][4:20]
+            + self.user[1][4:20]
+            + b"\0" * (0xC70 - 32)
+        )
+        with self.assertRaises(gate.FprintMatchGateError):
+            gate.resolve_slot_match_event(result, ambiguous)
+        with self.assertRaises(gate.FprintMatchGateError):
+            gate.prepare_slots(
+                self.local,
+                self.components,
+                self.user,
+                self.global_records,
+                self.user[::-1],
+                self.global_records,
+            )
+        with self.assertRaises(gate.FprintMatchGateError):
+            gate.attest_unchanged(
+                result,
+                self.components,
+                self.user[::-1],
+                self.global_records,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

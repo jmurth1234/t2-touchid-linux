@@ -211,6 +211,17 @@ sender departure, and terminal grace expiry wait for worker reconciliation.
 Production startup deliberately supplies no enrollment client yet, so the
 installed method remains disabled and cannot launch the worker.
 
+Incomplete legacy labels now have a read-only migration bootstrap rather than
+a guessing rule. `t2_fprint_match_gate.prepare_slots` joins every opaque SEP
+identity to the same ephemeral slot ordering used by the identity-management
+preflight, after exact repeated local/per-user/global reconciliation. The
+probe selects all identities, reports only the matched slot, and repeats the
+inventory and local-component attestation after the scan. The installed
+`t2-touchid-identify-finger` wrapper exposes that slot with an explicit
+`mutation_performed: false` result. It cannot assign an anatomical name; the
+operator must know which finger was presented and separately invoke the
+existing acknowledged, journaled rename transaction.
+
 `t2_fprint_enrollment_controller` now supplies that stream boundary without
 starting a real mutation. It runs the synchronous journaled worker in a
 separate thread, delivers each translated update back onto the D-Bus event loop

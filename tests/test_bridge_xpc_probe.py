@@ -164,6 +164,45 @@ class ReplyTests(unittest.TestCase):
         self.assertEqual(summary["matched_finger_name"], local.identities[1].name)
         self.assertNotIn(records[1].hex(), str(summary))
 
+    def test_slot_match_summary_resolves_only_ephemeral_slot(self):
+        original = codec.decode_user_catacomb(fixture(), 501)
+        local = codec.decode_user_catacomb(
+            original.add(
+                identity_uuid=str(uuid.UUID(int=4)),
+                entity=1,
+                name="Linux enrolled finger",
+            ),
+            501,
+        )
+        records = tuple(
+            struct.pack("<I", identity.user_id)
+            + uuid.UUID(identity.uuid).bytes
+            for identity in reversed(local.identities)
+        )
+        global_records = tuple(
+            record + struct.pack("<I", 1) + uuid.UUID(int=0).bytes
+            for record in records
+        )
+        gate = match_gate.prepare_slots(
+            local,
+            {"master.cat": b"m", "user_000001f5.cat": b"u"},
+            records,
+            global_records,
+            records,
+            global_records,
+        )
+        raw = struct.pack("<QIIQ", 0, 0xE3FF8002, 2, 1)
+        raw += records[0][4:20] + b"\0" * (0xC70 - 16)
+        summary = MODULE.summarize_event(
+            [9, 0xE3FF8000, raw, None, None],
+            records,
+            slot_match_gate=gate,
+        )
+        self.assertTrue(summary["matched_identity_slot_present"])
+        self.assertIn(summary["matched_identity_slot"], (1, 2))
+        self.assertNotIn(records[0].hex(), str(summary))
+        self.assertNotIn("finger_name", str(summary))
+
     def test_strict_identity_records_rejects_status_shape_and_events(self):
         record = struct.pack("<I", 501) + uuid.UUID(int=11).bytes
         self.assertEqual(

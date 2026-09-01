@@ -143,6 +143,9 @@ evidence, not intent.
       and never produce a misleading partial per-finger list.
 - [x] Add a read-only installed fprint migration-status command backed by the
       fresh reconciled identity collector, with no label guessing or mutation.
+- [x] Add a read-only physical-finger-to-ephemeral-slot bootstrap match with
+      stable local/per-user/global pre- and post-attestation, allowing legacy
+      labels to be migrated without exposing or guessing a private identity.
 - [x] Add a private targeted-match selector that requires complete unique
       canonical names plus exact local/live UUID-set agreement, while emitting
       only the selected presentation name publicly.

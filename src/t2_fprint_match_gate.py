@@ -114,6 +114,27 @@ class AllMatchGate:
         }
 
 
+@dataclass(frozen=True, repr=False)
+class SlotMatchGate:
+    """Private identity records joined to ephemeral reconciled list slots."""
+
+    identity_slot_records: tuple[tuple[bytes, int], ...] = field(repr=False)
+    per_user_records: tuple[bytes, ...] = field(repr=False)
+    global_records: tuple[bytes, ...] = field(repr=False)
+    component_hashes: tuple[tuple[str, str], ...] = field(repr=False)
+
+    def public(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "identity_count": len(self.identity_slot_records),
+            "all_identities_selected": True,
+            "same_connection_inventory_stable": True,
+            "local_live_reconciled": True,
+            "slot_scope": "current-reconciled-list",
+            "identifiers_redacted": True,
+        }
+
+
 def prepare(
     local: object,
     components: object,
@@ -196,6 +217,59 @@ def prepare_all(
     )
 
 
+def prepare_slots(
+    local: object,
+    components: object,
+    first_per_user: object,
+    first_global: object,
+    second_per_user: object,
+    second_global: object,
+) -> SlotMatchGate:
+    """Select all identities and bind each to its current reconciled slot.
+
+    Unlike :func:`prepare_all`, this bootstrap gate deliberately does not
+    require canonical fprint labels.  It is read-only and exposes only the
+    ephemeral slot used by the existing identity-management preflight.
+    """
+
+    if (
+        not isinstance(local, t2_catacomb_codec.UserCatacomb)
+        or not local.identities
+    ):
+        raise FprintMatchGateError("local Catacomb has no matchable identities")
+    apple_user_id = local.expected_user_id
+    first_user = _per_user_records(first_per_user, apple_user_id)
+    second_user = _per_user_records(second_per_user, apple_user_id)
+    first_all, first_configured = _global_records(first_global, apple_user_id)
+    second_all, second_configured = _global_records(second_global, apple_user_id)
+    if first_user != second_user or first_all != second_all:
+        raise FprintMatchGateError("live identity inventory is unstable")
+    if first_configured != set(first_user) or second_configured != set(first_user):
+        raise FprintMatchGateError(
+            "global and per-user identity inventories disagree"
+        )
+    records_by_uuid = {record[4:20]: record for record in first_user}
+    ordered = sorted(local.identities, key=lambda identity: identity.entity)
+    local_uuids = {uuid.UUID(identity.uuid).bytes for identity in ordered}
+    if (
+        len(records_by_uuid) != len(first_user)
+        or len(ordered) != len(first_user)
+        or set(records_by_uuid) != local_uuids
+    ):
+        raise FprintMatchGateError(
+            "local and live identity inventories disagree"
+        )
+    return SlotMatchGate(
+        tuple(
+            (records_by_uuid[uuid.UUID(identity.uuid).bytes], slot)
+            for slot, identity in enumerate(ordered, 1)
+        ),
+        first_user,
+        first_all,
+        _component_hashes(components),
+    )
+
+
 def resolve_all_match_event(gate: object, event_data: object) -> str | None:
     """Return only the canonical matched name; never return its UUID."""
 
@@ -213,6 +287,23 @@ def resolve_all_match_event(gate: object, event_data: object) -> str | None:
     return matches[0] if matches else None
 
 
+def resolve_slot_match_event(gate: object, event_data: object) -> int | None:
+    """Return only the matched ephemeral slot; never return its UUID."""
+
+    if not isinstance(gate, SlotMatchGate):
+        raise FprintMatchGateError("slot match gate has the wrong type")
+    if type(event_data) is not bytes or len(event_data) < 0xC70:
+        raise FprintMatchGateError("match-result event data is malformed")
+    matches = [
+        slot
+        for record, slot in gate.identity_slot_records
+        if record[4:20] in event_data
+    ]
+    if len(matches) > 1:
+        raise FprintMatchGateError("match-result identity is ambiguous")
+    return matches[0] if matches else None
+
+
 def attest_unchanged(
     gate: object,
     components: object,
@@ -221,7 +312,7 @@ def attest_unchanged(
 ) -> dict[str, object]:
     """Prove the read-only named match did not change identity state."""
 
-    if not isinstance(gate, (TargetedMatchGate, AllMatchGate)):
+    if not isinstance(gate, (TargetedMatchGate, AllMatchGate, SlotMatchGate)):
         raise FprintMatchGateError("match gate has the wrong type")
     if (
         _component_hashes(components) != gate.component_hashes

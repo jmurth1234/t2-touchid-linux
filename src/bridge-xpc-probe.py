@@ -61,6 +61,7 @@ def summarize_event(
     expected_user_id: int | None = None,
     selected_identity_record: bytes | None = None,
     all_match_gate: object | None = None,
+    slot_match_gate: object | None = None,
 ) -> dict:
     if isinstance(payload, list) and len(payload) == 5 and payload[0] == 9:
         data = payload[2]
@@ -149,6 +150,17 @@ def summarize_event(
                         )
                         if matched_name is not None:
                             summary["matched_finger_name"] = matched_name
+                    if slot_match_gate is not None:
+                        matched_slot = (
+                            t2_fprint_match_gate.resolve_slot_match_event(
+                                slot_match_gate, event_data
+                            )
+                        )
+                        summary["matched_identity_slot_present"] = (
+                            matched_slot is not None
+                        )
+                        if matched_slot is not None:
+                            summary["matched_identity_slot"] = matched_slot
             elif embedded_type == 0xE3FF8004:
                 summary["event_kind"] = "statistics"
             elif embedded_type == 0xE3FF800A:
@@ -583,6 +595,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--resolve-any-identity-slot",
+        action="store_true",
+        help=(
+            "allow noncanonical labels and report only the ephemeral current "
+            "identity slot selected by an all-identities match"
+        ),
+    )
+    parser.add_argument(
         "--match-processed-flags",
         type=lambda value: int(value, 0),
         default=0,
@@ -710,9 +730,17 @@ def main() -> None:
         parser.error("--match-finger-name requires --match-seconds")
     if args.resolve_any_finger_name and args.match_seconds is None:
         parser.error("--resolve-any-finger-name requires --match-seconds")
-    if args.resolve_any_finger_name and args.match_finger_name is not None:
+    if args.resolve_any_identity_slot and args.match_seconds is None:
+        parser.error("--resolve-any-identity-slot requires --match-seconds")
+    if sum(
+        (
+            args.match_finger_name is not None,
+            args.resolve_any_finger_name,
+            args.resolve_any_identity_slot,
+        )
+    ) > 1:
         parser.error(
-            "--resolve-any-finger-name conflicts with --match-finger-name"
+            "named, resolved-name, and resolved-slot matching conflict"
         )
     if not 0 <= args.macos_user_id <= 0xFFFFFFFF:
         parser.error("--macos-user-id must fit an unsigned 32-bit integer")
@@ -1252,8 +1280,13 @@ def main() -> None:
                 )
             targeted_gate = None
             all_match_gate = None
+            slot_match_gate = None
             selected_identity_record = None
-            if args.match_finger_name is not None or args.resolve_any_finger_name:
+            if (
+                args.match_finger_name is not None
+                or args.resolve_any_finger_name
+                or args.resolve_any_identity_slot
+            ):
                 if not args.identity_list:
                     raise ValueError(
                         "resolved matching requires --identity-list"
@@ -1315,7 +1348,7 @@ def main() -> None:
                     selected_identity_record = targeted_gate.identity_record
                     selected_records = (selected_identity_record,)
                     result["targeted_match_gate"] = targeted_gate.public()
-                else:
+                elif args.resolve_any_finger_name:
                     all_match_gate = t2_fprint_match_gate.prepare_all(
                         local,
                         targeted_components,
@@ -1326,6 +1359,19 @@ def main() -> None:
                     )
                     selected_records = all_match_gate.per_user_records
                     result["resolved_any_match_gate"] = all_match_gate.public()
+                else:
+                    slot_match_gate = t2_fprint_match_gate.prepare_slots(
+                        local,
+                        targeted_components,
+                        first_user_records,
+                        first_global_records,
+                        repeated_user_records,
+                        repeated_global_records,
+                    )
+                    selected_records = slot_match_gate.per_user_records
+                    result["resolved_slot_match_gate"] = (
+                        slot_match_gate.public()
+                    )
             else:
                 selected_records = enrolled_identity_records
             # match_init_data_v1: processed flags, macOS user ID, and 60 bytes
@@ -1377,6 +1423,7 @@ def main() -> None:
                                 expected_user_id=args.macos_user_id,
                                 selected_identity_record=selected_identity_record,
                                 all_match_gate=all_match_gate,
+                                slot_match_gate=slot_match_gate,
                             ).get("event_kind")
                             == "match_result"
                         ):
@@ -1391,7 +1438,7 @@ def main() -> None:
                 result["cancel_reply"] = summarize_command_reply(cancel_reply)
             else:
                 result["match_rejected"] = True
-            reconciled_gate = targeted_gate or all_match_gate
+            reconciled_gate = targeted_gate or all_match_gate or slot_match_gate
             if reconciled_gate is not None:
                 post_user_reply, post_user_events = biometric_command(
                     sock,
@@ -1421,7 +1468,11 @@ def main() -> None:
                 result[
                     "targeted_match_post_attestation"
                     if targeted_gate is not None
-                    else "resolved_any_match_post_attestation"
+                    else (
+                        "resolved_any_match_post_attestation"
+                        if all_match_gate is not None
+                        else "resolved_slot_match_post_attestation"
+                    )
                 ] = post_attestation
             result["match_events"] = [
                 summarize_event(
@@ -1430,6 +1481,7 @@ def main() -> None:
                     expected_user_id=args.macos_user_id,
                     selected_identity_record=selected_identity_record,
                     all_match_gate=all_match_gate,
+                    slot_match_gate=slot_match_gate,
                 )
                 for event in events
             ]
