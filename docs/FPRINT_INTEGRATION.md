@@ -289,10 +289,13 @@ Native mutation remains disabled until all of these are demonstrated:
 
 ## Next implementation order
 
-1. Prove automatic E4 plus mapping-disabled, wrong-caller, expired-grant,
-   disconnect, and wrong-generation worker negatives on the installed machine.
-2. Attach the tested worker client/status stream to `EnrollStart`/`EnrollStop`.
-3. Validate canonical enrollment, fresh listing, targeted verification, and
-   reboot survival through standard fprint clients.
-4. Adapt single named deletion and its survivor controls.
+1. Use the read-only slot matcher plus separately acknowledged renames to make
+   the two existing identities a complete unique canonical projection.
+2. Prove mapping-disabled, wrong-caller, expired-grant, disconnect,
+   wrong-generation, cancellation, and automatic-E4 worker controls on the
+   installed machine.
+3. Stage the uninstalled research drop-in, then validate canonical enrollment,
+   fresh listing, targeted verification, cancellation, and reboot survival
+   through standard fprint clients.
+4. Adapt single named deletion and prove its survivor controls.
 5. Add batch deletion only after a separate atomic/recoverable design.

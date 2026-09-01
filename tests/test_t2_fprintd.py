@@ -952,6 +952,30 @@ class NativeEnrollmentActivationTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("--enable-native-enrollment", unit)
 
+    def test_research_dropin_enables_only_the_explicit_process_flag(self):
+        root = MODULE_PATH.parents[1]
+        candidate = (
+            root
+            / "systemd/research/fprintd.service.d/10-native-enrollment.conf"
+        ).read_text(encoding="utf-8")
+        directives = [
+            line
+            for line in candidate.splitlines()
+            if line and not line.startswith("#")
+        ]
+        self.assertEqual(
+            directives,
+            [
+                "[Service]",
+                "ExecStart=",
+                "ExecStart=/opt/t2-touchid/.venv/bin/python "
+                "/opt/t2-touchid/src/t2-fprintd.py "
+                "--enable-native-enrollment",
+            ],
+        )
+        installer = (root / "install.sh").read_text(encoding="utf-8")
+        self.assertNotIn("10-native-enrollment.conf", installer)
+
 
 if __name__ == "__main__":
     unittest.main()

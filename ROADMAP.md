@@ -176,6 +176,8 @@ evidence, not intent.
       installed daemon's enrollment client explicitly unset by default.
 - [x] Add a staging-only daemon activation flag for the exact worker client
       while ensuring the installed systemd service omits it.
+- [x] Add an uninstalled, exact-flag systemd research drop-in with explicit
+      staging and rollback instructions; keep the normal installer default-off.
 - [x] Implement the internal authorized enrollment consumer on the exact
       broker-held Bridge generation, with a fresh pre-dispatch authority guard
       and immutable local Catacomb recovery anchor; keep it unreachable until

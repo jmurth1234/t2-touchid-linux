@@ -1,4 +1,4 @@
-# Read-only user-broker candidates
+# Uninstalled integration candidates
 
 These units are design artifacts for the future mapped-user broker. They are
 not copied by `install.sh`, contain no `[Install]` section, and must not be
@@ -49,3 +49,40 @@ install or authorize the positive mapped-user path.
 
 After those gates pass, the units still require a reviewed installer, rollback
 path, socket-path client, and live failure-injection tests before enablement.
+
+## Native fprint enrollment drop-in
+
+`fprintd.service.d/10-native-enrollment.conf` is a separate, uninstalled
+candidate for the live standard-client controls. It changes only the daemon's
+exact `ExecStart` by adding `--enable-native-enrollment`; the normal service,
+installer, and upgrades remain default-off. Do not stage it while the fprint
+projection is incomplete or while any mutation journal requires recovery or
+post-reboot proof.
+
+After the documented mapping, canonical-label, worker-negative, fallback, and
+recovery gates pass, stage it explicitly:
+
+```sh
+sudo install -d -o root -g root -m 0755 \
+  /etc/systemd/system/fprintd.service.d
+sudo install -o root -g root -m 0644 \
+  systemd/research/fprintd.service.d/10-native-enrollment.conf \
+  /etc/systemd/system/fprintd.service.d/10-native-enrollment.conf
+sudo systemctl daemon-reload
+sudo systemctl restart fprintd.service
+```
+
+Rollback does not touch fingerprints, Catacomb data, mappings, credentials, or
+journals. Remove only that exact drop-in, reload, and restart:
+
+```sh
+sudo rm /etc/systemd/system/fprintd.service.d/10-native-enrollment.conf
+sudo systemctl daemon-reload
+sudo systemctl restart fprintd.service
+```
+
+Before and after staging, inspect the effective command with:
+
+```sh
+systemctl show -p ExecStart fprintd.service
+```
