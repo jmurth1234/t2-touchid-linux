@@ -15,6 +15,8 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import pwd
+import stat
 import sys
 
 LOCAL_SOURCE = Path(__file__).resolve().parent
@@ -53,6 +55,13 @@ ENROLLED_FINGER = os.environ.get(
 ALLOWED_PAM_USERS = (LINUX_USER,)
 UNSTARTED_CLAIM_SECONDS = 5.0
 COMPLETED_CLAIM_SECONDS = 0.5
+DESKTOP_FEEDBACK_UNITS = frozenset(
+    {
+        "t2-touchid-alert.service",
+        "t2-touchid-success.service",
+        "t2-touchid-failure.service",
+    }
+)
 
 if not 0 <= MACOS_USER_ID <= 0xFFFFFFFF:
     raise RuntimeError("T2_TOUCHID_MACOS_USER_ID is outside uint32 range")
@@ -158,6 +167,56 @@ def resolved_any_finger_from_result(result: object) -> str | None:
     if result.get("match_rejected") is True:
         raise RuntimeError("the T2 rejected match startup")
     return None
+
+
+def desktop_user_unit_command(unit: object) -> tuple[str, ...] | None:
+    """Return a command bound to the configured desktop user's live bus.
+
+    The fprint facade is a root system service.  Root's environment is not a
+    desktop user session, and ``systemctl --machine=... --user`` is not a
+    reliable substitute for the target user's runtime bus.  Refuse an absent,
+    replaced, or wrong-owner socket and let feedback remain best-effort.
+    """
+
+    if unit not in DESKTOP_FEEDBACK_UNITS or not LINUX_USER:
+        return None
+    try:
+        account = pwd.getpwnam(LINUX_USER)
+    except (KeyError, OSError):
+        return None
+    if account.pw_uid <= 0:
+        return None
+    runtime_dir = Path(f"/run/user/{account.pw_uid}")
+    bus = runtime_dir / "bus"
+    try:
+        runtime_info = runtime_dir.stat(follow_symlinks=False)
+        bus_info = bus.stat(follow_symlinks=False)
+    except OSError:
+        return None
+    if (
+        not stat.S_ISDIR(runtime_info.st_mode)
+        or runtime_info.st_uid != account.pw_uid
+        or runtime_info.st_nlink < 1
+        or runtime_info.st_mode & 0o077
+        or not stat.S_ISSOCK(bus_info.st_mode)
+        or bus_info.st_uid != account.pw_uid
+        or bus_info.st_nlink != 1
+    ):
+        return None
+    return (
+        "/usr/bin/runuser",
+        "-u",
+        LINUX_USER,
+        "--",
+        "/usr/bin/env",
+        f"XDG_RUNTIME_DIR={runtime_dir}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
+        "/usr/bin/systemctl",
+        "--user",
+        "start",
+        "--no-block",
+        unit,
+    )
 
 
 class T2Backend:
@@ -379,14 +438,9 @@ class T2Backend:
             pass
 
     async def start_user_unit(self, unit: str) -> None:
-        command = [
-            "/usr/bin/systemctl",
-            f"--machine={LINUX_USER}@.host",
-            "--user",
-            "start",
-            "--no-block",
-            unit,
-        ]
+        command = desktop_user_unit_command(unit)
+        if command is None:
+            return
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,

@@ -7,6 +7,7 @@ import argparse
 import importlib.util
 import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 import xml.etree.ElementTree as ElementTree
@@ -176,6 +177,66 @@ async def delete_finger(device, finger_name):
 
 
 class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_desktop_feedback_uses_exact_target_user_bus(self):
+        account = mock.Mock(pw_uid=1000)
+        runtime = mock.Mock(st_mode=stat.S_IFDIR | 0o700, st_uid=1000, st_nlink=2)
+        bus = mock.Mock(st_mode=stat.S_IFSOCK | 0o666, st_uid=1000, st_nlink=1)
+
+        def path_stat(path, *, follow_symlinks=True):
+            self.assertFalse(follow_symlinks)
+            return bus if path.name == "bus" else runtime
+
+        with (
+            mock.patch.object(MODULE, "LINUX_USER", "mapped"),
+            mock.patch.object(MODULE.pwd, "getpwnam", return_value=account),
+            mock.patch.object(MODULE.Path, "stat", path_stat),
+        ):
+            command = MODULE.desktop_user_unit_command(
+                "t2-touchid-success.service"
+            )
+        self.assertEqual(
+            command,
+            (
+                "/usr/bin/runuser",
+                "-u",
+                "mapped",
+                "--",
+                "/usr/bin/env",
+                "XDG_RUNTIME_DIR=/run/user/1000",
+                "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
+                "/usr/bin/systemctl",
+                "--user",
+                "start",
+                "--no-block",
+                "t2-touchid-success.service",
+            ),
+        )
+
+    async def test_desktop_feedback_rejects_untrusted_bus_or_unit(self):
+        account = mock.Mock(pw_uid=1000)
+        runtime = mock.Mock(st_mode=stat.S_IFDIR | 0o700, st_uid=1000, st_nlink=2)
+        wrong_bus = mock.Mock(
+            st_mode=stat.S_IFSOCK | 0o666, st_uid=1001, st_nlink=1
+        )
+
+        def path_stat(path, *, follow_symlinks=True):
+            self.assertFalse(follow_symlinks)
+            return wrong_bus if path.name == "bus" else runtime
+
+        with (
+            mock.patch.object(MODULE, "LINUX_USER", "mapped"),
+            mock.patch.object(MODULE.pwd, "getpwnam", return_value=account),
+            mock.patch.object(MODULE.Path, "stat", path_stat),
+        ):
+            self.assertIsNone(
+                MODULE.desktop_user_unit_command(
+                    "t2-touchid-success.service"
+                )
+            )
+            self.assertIsNone(
+                MODULE.desktop_user_unit_command("not-a-feedback.service")
+            )
+
     async def test_complete_historical_property_set_is_available(self):
         device = make_device()
         device.finger_present = True

@@ -186,7 +186,9 @@ If the desktop user's systemd user manager is already running, installation
 reloads it through that user's `/run/user/<uid>/bus`. If no user bus exists,
 the reload is skipped quietly and the units are discovered at the next login;
 the root environment is never mistaken for a desktop user session. Uninstall
-uses the same bounded user-bus rule after removing the feedback units.
+uses the same bounded user-bus rule after removing the feedback units. The
+root fprint daemon applies that rule at runtime as well: audible scan and
+result cues are sent only through the configured user's live, owned bus socket.
 
 ### Unlocking keybags from password authentication
 
