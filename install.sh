@@ -14,8 +14,9 @@ fi
 source_dir=$(cd -- "$(dirname -- "$0")" && pwd -P)
 target_dir=/opt/t2-touchid
 target_user=$SUDO_USER
+target_uid=$(id -u -- "$target_user")
 target_home=$(getent passwd "$target_user" | cut -d: -f6)
-if [[ -z $target_home || ! -d $target_home ]]; then
+if [[ ! $target_uid =~ ^[0-9]+$ || -z $target_home || ! -d $target_home ]]; then
   echo "Could not determine the home directory for $target_user." >&2
   exit 1
 fi
@@ -163,7 +164,15 @@ chmod 0644 /etc/dbus-1/system.d/99-t2-touchid-fprint.conf
 systemctl daemon-reload
 systemctl enable t2-sep-transport.service t2-keybag-load.service t2-credential-unlock.service t2-biometric-ready.service fprintd.service
 systemctl reload dbus.service
-systemctl --machine="$target_user@.host" --user daemon-reload || true
+target_runtime_dir=/run/user/$target_uid
+if [[ -S $target_runtime_dir/bus ]]; then
+  if ! runuser -u "$target_user" -- env \
+    XDG_RUNTIME_DIR="$target_runtime_dir" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$target_runtime_dir/bus" \
+    systemctl --user daemon-reload; then
+    echo "Warning: could not reload $target_user's active user manager." >&2
+  fi
+fi
 
 if command -v dkms >/dev/null 2>&1; then
   dkms_source=/usr/src/t2-sep-transport-0.1.0

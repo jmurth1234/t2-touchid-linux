@@ -182,6 +182,10 @@ warns that the installer must be rerun after an upgrade. `sudo ./uninstall.sh`
 removes code and services but preserves configuration, credentials, keybags,
 and PAM backups. Add `--purge-private-data` only when those secrets should be
 permanently removed; PAM restoration remains an explicit operation.
+If the desktop user's systemd user manager is already running, installation
+reloads it through that user's `/run/user/<uid>/bus`. If no user bus exists,
+the reload is skipped quietly and the units are discovered at the next login;
+the root environment is never mistaken for a desktop user session.
 
 ### Unlocking keybags from password authentication
 
