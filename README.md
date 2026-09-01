@@ -43,10 +43,12 @@ Developed and verified on an Intel `MacBookPro16,2`, bridgeOS build `23P1072`,
 BridgeXPC 39, and Omarchy/Arch Linux. A positive right-index control and a
 negative unenrolled-finger control were both verified at the raw bridge,
 `fprintd`, and sudo/PAM layers. After the first Linux enrollment and a reboot,
-two distinct enrolled physical fingers independently returned `verify-match`
-while a third, unenrolled finger returned `verify-no-match`. Their anatomical
-fprint labels have not yet been assigned, so fprintd still truthfully exposes
-one compatibility alias rather than pretending that it knows both names.
+the macOS-enrolled right index and Linux-enrolled right thumb were reconciled
+and assigned the canonical `right-index-finger` and `right-thumb` labels. Both
+independently return `verify-match` through an explicit
+`fprintd-verify -f any` request, while an unenrolled finger returns
+`verify-no-match`; named requests also select only their corresponding
+identity.
 
 ## Security properties
 
