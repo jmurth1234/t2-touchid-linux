@@ -154,6 +154,15 @@ encoding failures produce no fallback operation. The dispatcher returns one
 canonical packet, then its caller owns connection closure. No listener or
 public service installs these modules yet.
 
+`t2_user_broker_socket_activation.py` is a non-installed one-connection process
+adapter for a future systemd `Accept=yes` unit. It calls
+`sd_listen_fds_with_names(1)`, inheriting systemd's PID/PIDFD activation checks,
+`FD_CLOEXEC` handling, and activation-environment clearing. It then requires
+root, exactly one fd starting at 3 with the default `connection` name, an
+`AF_UNIX`/`SOCK_SEQPACKET` type, `SO_ACCEPTCONN=0`, and a live peer. It owns and
+closes that descriptor after exactly one dispatcher call. No socket or service
+unit invokes this adapter yet.
+
 `t2_linux_account.py` supplies the previously abstract caller account
 generation. It supports a strict local-files profile only: one numeric UID must
 have one root-owned local passwd row, NSS must resolve the same complete record,

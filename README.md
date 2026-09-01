@@ -376,6 +376,14 @@ different user, expose UUIDs, or perform a T2 mutation. A one-request dispatcher
 selects only `preflight` or the exact `identities/inventory` pair and returns one
 canonical response. No public socket invokes it yet.
 
+The non-installed socket-activation adapter is the final process boundary before
+that future socket. It delegates activation-environment validation to
+libsystemd, requires exactly one `Accept=yes` descriptor named `connection`,
+then independently proves it is a connected, non-listening Unix seqpacket
+socket. The root process dispatches one request and closes the descriptor on
+every outcome. No daemon loop, socket path, unit, executable, or enablement is
+installed yet.
+
 The same adapter now derives the caller's account generation itself rather than
 accepting an opaque digest from its future client. The deliberately conservative
 `local-files-v1` profile resolves the kernel UID to one exact root-owned

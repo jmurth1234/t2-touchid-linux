@@ -3138,6 +3138,18 @@ typed inventory consumer; a denied response must carry a null list and no
 handoff claim. This remains a non-exposed dispatcher rather than a daemon or
 public client boundary.
 
+The next non-exposed process boundary now consumes a future systemd
+`Accept=yes` connection without implementing an ad-hoc accept loop. It uses
+`sd_listen_fds_with_names(1)`, so systemd validates the activation PID/PIDFD,
+sets close-on-exec, and clears the activation environment. The adapter then
+requires a root process, exactly one descriptor starting at fd 3 with the
+default `connection` name, and independently verifies connected
+`AF_UNIX`/`SOCK_SEQPACKET` state with `SO_ACCEPTCONN=0`. It dispatches one
+request and closes the descriptor on success or failure. The repository still
+does not install a socket unit, service template, executable entry point, or
+public client, so this does not widen the live attack surface before the
+endpoint-7 hardware gate passes.
+
 The protected mapping administrator now has one concrete disabled-state writer.
 `t2-touchid-user-map bind-disabled` requires an explicit already-provisioned
 Apple UID/account UUID/bag UUID, explicit capabilities, the canonical private

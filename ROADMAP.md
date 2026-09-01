@@ -108,6 +108,8 @@ evidence, not intent.
       to the exact stable broker snapshot without exposing a listener.
 - [x] Add a strict one-request dispatcher for `preflight` and the exact
       `identities/inventory` pair, with no mutation command or fallback.
+- [x] Add a non-installed libsystemd `Accept=yes` adapter that validates and
+      owns exactly one connected Unix seqpacket descriptor per process.
 - [x] Add a live local-files account-generation assertion over the exact
       UID/passwd/shadow/database/home binding and revalidate it after PolicyKit.
 - [x] Add atomic administrator creation/rebinding for protected account
