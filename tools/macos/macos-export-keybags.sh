@@ -40,18 +40,35 @@ for root in \
   fi
 done | sort -u | sudo tee "$CANDIDATES" >/dev/null
 
-sudo sh -c ': > "$1"' sh "$WORK_DIR/state/keybags-listing.txt"
-index=0
-while IFS= read -r candidate; do
-  test -n "$candidate" || continue
-  index=$((index + 1))
-  destination="$WORK_DIR/state/candidate-$(printf '%04d' "$index")"
-  sudo stat -f '%Sp %Su:%Sg %z %N' "$candidate" \
-    | sudo tee -a "$WORK_DIR/state/keybags-listing.txt" >/dev/null || true
-  sudo ditto --noqtn "$candidate" "$destination"
-  printf '%s\t%s\n' "$(basename "$destination")" "$candidate" \
-    | sudo tee -a "$WORK_DIR/state/path-map.txt" >/dev/null
-done < "$CANDIDATES"
+# candidates.txt is root-owned after sudo tee. Reading it in this shell fails
+# with "Permission denied" and still produces an empty-looking archive. Copy
+# under sudo and refuse to publish zero-candidate output.
+copied="$(
+  sudo bash -c '
+    set -euo pipefail
+    candidates="$1"
+    state="$2"
+    : > "$state/keybags-listing.txt"
+    : > "$state/path-map.txt"
+    index=0
+    while IFS= read -r candidate; do
+      test -n "$candidate" || continue
+      index=$((index + 1))
+      destination="$state/candidate-$(printf "%04d" "$index")"
+      stat -f "%Sp %Su:%Sg %z %N" "$candidate" \
+        >> "$state/keybags-listing.txt" || true
+      ditto --noqtn "$candidate" "$destination"
+      printf "%s\t%s\n" "$(basename "$destination")" "$candidate" \
+        >> "$state/path-map.txt"
+    done < "$candidates"
+    printf "%s\n" "$index"
+  ' bash "$CANDIDATES" "$WORK_DIR/state"
+)"
+
+if [[ "${copied:-0}" -lt 1 ]]; then
+  echo "error: no keybag candidates were copied; refusing to write $OUTPUT" >&2
+  exit 1
+fi
 
 sudo tar -czf "$OUTPUT.tmp.$$" -C "$WORK_DIR" state
 sudo mv -f -- "$OUTPUT.tmp.$$" "$OUTPUT"
