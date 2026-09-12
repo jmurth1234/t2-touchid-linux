@@ -38,6 +38,7 @@ class AKSToolTests(unittest.TestCase):
                     "-Wall",
                     "-Wextra",
                     "-Werror",
+                    "-D_FORTIFY_SOURCE=3",
                     str(ROOT / "tests/t2_aks_tool_unit.c"),
                     "-o",
                     str(executable),

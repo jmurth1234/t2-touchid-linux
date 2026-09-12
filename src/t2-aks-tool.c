@@ -589,7 +589,8 @@ static int unlock_keybags(int fd, const char *session_text,
 		static const char rejected[] =
 			"macOS password was rejected; run sudo t2-keybag-unlock to retry.\n";
 
-		(void)write(tty, rejected, sizeof(rejected) - 1);
+		if (write(tty, rejected, sizeof(rejected) - 1) != sizeof(rejected) - 1)
+			perror("write password rejection");
 	}
 out:
 	explicit_bzero(secret, sizeof(secret));
