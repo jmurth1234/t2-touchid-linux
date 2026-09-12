@@ -14,8 +14,9 @@ printf '%s\n' "$SPECIAL_BAG" | grep -Eq '^-[0-9]+$' || {
 STATE_DIR=/run/t2-touchid
 STATE_FILE=$STATE_DIR/keybag.env
 READY_FILE=$STATE_DIR/keybags-unlocked
+REJECTED_FILE=$STATE_DIR/keybag-password-rejected
 
-rm -f -- "$READY_FILE"
+rm -f -- "$READY_FILE" "$REJECTED_FILE"
 
 output="$($TOOL load-keybag "$BAG" "$SESSION")"
 case "$output" in

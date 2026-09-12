@@ -19,7 +19,8 @@ Catacomb files, and exported archives private.
   endpoint-7 state.
 - Do not repeatedly restart BiometricKit port discovery. A repeated
   high-concurrency RemoteXPC scan triggered a `cdc_ncm` watchdog followed by an
-  `apple_bce` kernel failure on the tested MacBookPro15,2.
+  `apple_bce` kernel failure on the tested MacBookPro15,2. The installed refresh
+  helper fails closed after one full scan, and readiness only uses its cache.
 - Do not overlap boot-time port discovery with SEP capability negotiation. On
   the tested machine that race produced capability timeout `-110`, pinning the
   transport without `/dev/t2-aks` for the rest of the boot. The installed units

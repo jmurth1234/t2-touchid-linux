@@ -59,6 +59,15 @@ class PamAssetTests(unittest.TestCase):
         self.assertIn("t2-pam-fingerprint-ready", helper)
         self.assertNotIn("read -r password", helper)
         self.assertNotIn("printf '%s\\n'", helper)
+        aks_tool = (ROOT / "src/t2-aks-tool.c").read_text()
+        unlock_secret = aks_tool[
+            aks_tool.index("static int unlock_keybag_secret") :
+            aks_tool.index("static int protect_secret_buffer")
+        ]
+        self.assertIn('exchange.sep_status == -5', unlock_secret)
+        self.assertIn("macOS password was rejected", unlock_secret)
+        self.assertIn("sudo t2-keybag-unlock to retry", aks_tool)
+        self.assertIn("keybag-password-rejected", helper)
         installer = (ROOT / "tools/install-pam.sh").read_text()
         self.assertIn(
             "local hook='auth optional pam_exec.so quiet seteuid ", installer
@@ -77,6 +86,7 @@ class PamAssetTests(unittest.TestCase):
         ):
             source = (ROOT / "src" / name).read_text()
             self.assertIn("keybags-unlocked", source)
+            self.assertIn("keybag-password-rejected", source)
             self.assertIn("install -o root -g root -m 0600", source)
             normalized = source.upper()
             self.assertIn('CMP -S -- "$SNAPSHOT" "$STATE_FILE"', normalized)

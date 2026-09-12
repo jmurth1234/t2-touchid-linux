@@ -369,6 +369,11 @@ static int unlock_keybag_secret(int fd, uint64_t session, int32_t handle,
 	memcpy(request + 24, secret, length);
 	exchange.request = (uintptr_t)request;
 	if (ioctl(fd, T2_AKS_IOC_EXCHANGE, &exchange) < 0) {
+		if (exchange.sep_status == -5) {
+			fprintf(stderr, "macOS password was rejected\n");
+			ret = 3;
+			goto out;
+		}
 		perror("T2_AKS_IOC_EXCHANGE");
 		goto out;
 	}
@@ -580,6 +585,12 @@ static int unlock_keybags(int fd, const char *session_text,
 	ret = unlock_keybag_secret(fd, session, normal, secret, length);
 	if (!ret)
 		ret = unlock_keybag_secret(fd, session, special, secret, length);
+	if (ret == 3 && !password_stdin) {
+		static const char rejected[] =
+			"macOS password was rejected; run sudo t2-keybag-unlock to retry.\n";
+
+		(void)write(tty, rejected, sizeof(rejected) - 1);
+	}
 out:
 	explicit_bzero(secret, sizeof(secret));
 	munlock(secret, sizeof(secret));

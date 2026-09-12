@@ -46,7 +46,7 @@ below, and nowhere else.
 | --- | --- | --- |
 | Fingerprint verification through `fprintd` and PAM | Yes, installed and enabled | Yes, including negative controls and password fallback |
 | Keybag unlock (manual, PAM hook, or encrypted credential) | Yes, installed | Yes, including cold boot |
-| Persistent BridgeOS network and boot ordering | Yes, installed and enabled through service dependencies | Yes, including reboot and recovery from the observed SEP timeout race |
+| Persistent BridgeOS network and boot ordering | Yes, installed and enabled through service dependencies | Partly; ordered startup succeeds, but endpoint-7 can remain stale across Linux-only reboots and require one macOS recovery boot |
 | Diagnostics and identity inventory | Yes, installed | Yes |
 | Enrollment from Linux (`t2-touchid-enroll`) | Yes, separate root-only CLI | Yes, one identity enrolled and re-proven after Linux reboot; a later macOS boot removed it |
 | Label rename (`t2-touchid-manage rename-fprint`) | Yes, separate root-only CLI | Yes |
@@ -86,10 +86,11 @@ password prompt. Each Linux boot follows this sequence:
 
 Cancelling or entering the wrong macOS password does not turn a valid sudo
 password into an authentication failure. Sudo succeeds, Touch ID remains
-unavailable, and the separate macOS prompt is offered after the next successful
-password-authenticated sudo. `sudo t2-keybag-unlock` remains the manual recovery
-path. `t2-interactive-unlock.service` is installed but disabled by default; it
-is only for systems with a working systemd password agent during boot.
+unavailable, and a fixed terminal warning recommends `sudo t2-keybag-unlock`.
+The separate macOS prompt is also offered after the next successful
+password-authenticated sudo. `t2-interactive-unlock.service` is installed but
+disabled by default; it is only for systems with a working systemd password
+agent during boot.
 
 ## Proven configuration
 
@@ -403,7 +404,10 @@ fprintd starts. This avoids exposing the first Omarchy lock-screen scan to the
 cold BiometricKit startup race observed on the proven configuration. Its
 verified dynamic port is cached root-only under `/var/lib/t2-touchid`; fprintd
 consumes that cache and does not request a finger until discovery has
-completed.
+completed. The refresh service permits one full port scan per boot and the
+readiness service only consumes that cache. A failed scan or warm-up is
+terminal because repeated high-concurrency scans can wedge `cdc_ncm` and crash
+the out-of-tree `apple_bce` driver.
 
 Cold boot authentication has been verified with sudo. Touch ID unlock through
 an explicit `omarchy system lock` has also been verified, including
@@ -897,6 +901,10 @@ See [`SECURITY.md`](SECURITY.md) for reporting and threat-model notes.
   [Proven configuration](#proven-configuration).
 - The SEP kernel module is pinned after DMA registration and must not be
   unloaded; reboot before replacing it.
+- On the tested `MacBookPro15,2`, endpoint-7 capability negotiation is not yet
+  reliable across repeated Linux-only boots. Linux does not implement Apple's
+  endpoint disable/reacquire and OOL reset lifecycle, so a stale generation can
+  still require the macOS recovery sequence even when boot ordering is correct.
 - The macOS-derived keybag must remain private and must be unlocked with the
   macOS login password after every reboot. The password is never stored.
 - Linux-only enrollments currently do not survive a macOS boot because macOS's

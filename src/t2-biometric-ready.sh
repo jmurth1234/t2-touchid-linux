@@ -24,10 +24,10 @@ enrolled_finger=$(read_config T2_TOUCHID_ENROLLED_FINGER)
 [[ $special_bag =~ ^-[0-9]+$ ]] || exit 1
 [[ $enrolled_finger =~ ^(left|right)-(thumb|index-finger|middle-finger|ring-finger|little-finger)$ ]] || exit 1
 
-if [[ -x $project/.venv/bin/python && -f $project/src/discover-biometric-port.py ]]; then
+if [[ -x $project/.venv/bin/python && -f $project/src/bridge-xpc-probe.py ]]; then
   python=$project/.venv/bin/python
   source_dir=$project/src
-elif [[ -x $project/.venv-re/bin/python && -f $project/linux/discover-biometric-port.py ]]; then
+elif [[ -x $project/.venv-re/bin/python && -f $project/linux/bridge-xpc-probe.py ]]; then
   # Compatibility with early research installs.
   python=$project/.venv-re/bin/python
   source_dir=$project/linux
@@ -46,13 +46,9 @@ export T2_TOUCHID_ENROLLED_FINGER=$enrolled_finger
 
 port_file=/var/lib/t2-touchid/biometric-port
 umask 077
-deadline=$((SECONDS + 45))
-port=
-warmed=0
-if [[ -r $port_file ]]; then
-  candidate=$(<"$port_file")
-  [[ $candidate =~ ^[0-9]+$ ]] && port=$candidate
-fi
+[[ -r $port_file ]] || exit 1
+port=$(<"$port_file")
+[[ $port =~ ^[0-9]+$ && $port -ge 49152 && $port -le 65535 ]] || exit 1
 
 warm_up() {
   /usr/bin/flock --exclusive --timeout 10 --no-fork \
@@ -63,26 +59,8 @@ warm_up() {
     --identity-list >/dev/null 2>&1
 }
 
-if [[ -n $port ]]; then
-  if warm_up "$port"; then
-    warmed=1
-  else
-    port=
-  fi
-fi
-while (( SECONDS < deadline )); do
-  [[ -n $port ]] && break
-  port=$($python "$source_dir/discover-biometric-port.py" \
-    --host "$host" --interface "$interface" \
-    --probe-timeout 0.2 --concurrency 256 2>/dev/null) && break
-  sleep 1
-done
-[[ $port =~ ^[0-9]+$ ]] || exit 1
-
-[[ $warmed == 1 ]] || warm_up "$port"
-temporary_port_file=$(mktemp "${port_file}.XXXXXX")
-printf '%s\n' "$port" >"$temporary_port_file"
-chmod 0600 "$temporary_port_file"
-mv -f "$temporary_port_file" "$port_file"
+# Discovery owns the only full port scan permitted during boot. Retrying it
+# here can wedge cdc_ncm and crash apple_bce.
+warm_up "$port" || exit 1
 logger --priority authpriv.info --tag t2-biometric-ready \
   'T2 BiometricKit cold-start readiness check passed'

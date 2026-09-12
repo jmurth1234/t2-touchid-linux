@@ -46,6 +46,18 @@ class BiometricPortRefreshAssetTests(unittest.TestCase):
             transport.index("ExecStart=/usr/local/sbin/t2-sep-transport-load"),
         )
 
+    def test_boot_helpers_never_retry_full_port_discovery(self):
+        refresh = (ROOT / "src/t2-biometric-port-refresh.sh").read_text(
+            encoding="utf-8"
+        )
+        ready = (ROOT / "src/t2-biometric-ready.sh").read_text(encoding="utf-8")
+
+        self.assertNotIn("while (( SECONDS < deadline ))", refresh)
+        self.assertNotIn("sleep 1", refresh)
+        self.assertEqual(refresh.count("--concurrency 256"), 1)
+        self.assertNotIn("discover-biometric-port.py", ready)
+        self.assertIn('warm_up "$port" || exit 1', ready)
+
     def test_network_helper_is_private_and_configuration_driven(self):
         helper = (ROOT / "src/t2-bridge-network-prepare.sh").read_text(
             encoding="utf-8"

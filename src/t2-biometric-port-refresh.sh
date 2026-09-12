@@ -33,20 +33,13 @@ else
 fi
 
 # The RemoteXPC query identifies the advertised BiometricKit service instead
-# of trusting whichever dynamic TCP port happens to be open on BridgeOS.
-deadline=$((SECONDS + 45))
-port=
-while (( SECONDS < deadline )); do
-  if port=$(
-    "$python" "$discovery" \
-      --host "$host" --interface "$interface" \
-      --probe-timeout 0.2 --concurrency 256 2>/dev/null
-  ); then
-    break
-  fi
-  port=
-  sleep 1
-done
+# of trusting whichever dynamic TCP port happens to be open on BridgeOS. Never
+# repeat a full scan: repeated scans can wedge cdc_ncm and crash apple_bce.
+port=$(
+  "$python" "$discovery" \
+    --host "$host" --interface "$interface" \
+    --probe-timeout 0.2 --concurrency 256 2>/dev/null
+) || port=
 [[ $port =~ ^[0-9]+$ && $port -ge 49152 && $port -le 65535 ]] || {
   echo "T2 did not advertise a valid BiometricKit port" >&2
   exit 1

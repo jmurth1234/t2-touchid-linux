@@ -35,6 +35,14 @@ class FakeBackend:
             True,
             MODULE.ENROLLED_FINGER,
         )
+        self.ready = True
+        self.password_rejected = False
+
+    def keybags_ready(self):
+        return self.ready
+
+    def keybag_password_rejected(self):
+        return self.password_rejected
 
     async def verify(self):
         await asyncio.sleep(0)
@@ -181,6 +189,33 @@ async def delete_finger(device, finger_name):
 
 
 class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_verify_refuses_locked_keybags_before_capture(self):
+        backend = FakeBackend()
+        backend.ready = False
+        device = make_device(backend)
+        await claim(device)
+
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await verify_start(device, "any")
+
+        self.assertTrue(raised.exception.type.endswith(".Internal"))
+        self.assertIn("t2-keybag-unlock", raised.exception.text)
+        self.assertIsNone(device.verify_task)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_verify_reports_a_recorded_password_rejection(self):
+        backend = FakeBackend()
+        backend.ready = False
+        backend.password_rejected = True
+        device = make_device(backend)
+        await claim(device)
+
+        with self.assertRaises(MODULE.DBusError) as raised:
+            await verify_start(device, "any")
+
+        self.assertIn("macOS password was rejected", raised.exception.text)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
     async def test_desktop_feedback_uses_exact_target_user_bus(self):
         account = mock.Mock(pw_uid=1000)
         runtime = mock.Mock(st_mode=stat.S_IFDIR | 0o700, st_uid=1000, st_nlink=2)
@@ -1353,6 +1388,38 @@ class VerdictTests(unittest.TestCase):
 
 
 class BackendRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    def test_keybag_readiness_requires_matching_private_regular_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_file = Path(directory) / "keybag.env"
+            ready_file = Path(directory) / "keybags-unlocked"
+            owner = (os.geteuid(), os.getegid())
+            state_file.write_text("generation=1\n", encoding="ascii")
+            ready_file.write_text("generation=1\n", encoding="ascii")
+            state_file.chmod(0o600)
+            ready_file.chmod(0o600)
+
+            self.assertTrue(
+                MODULE.keybags_ready(state_file, ready_file, owner)
+            )
+            ready_file.write_text("generation=2\n", encoding="ascii")
+            self.assertFalse(
+                MODULE.keybags_ready(state_file, ready_file, owner)
+            )
+            ready_file.write_text("generation=1\n", encoding="ascii")
+            ready_file.chmod(0o644)
+            self.assertFalse(
+                MODULE.keybags_ready(state_file, ready_file, owner)
+            )
+
+    def test_password_rejection_marker_must_be_private_empty_and_regular(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "keybag-password-rejected"
+            owner = (os.geteuid(), os.getegid())
+            marker.touch(mode=0o600)
+            self.assertTrue(MODULE.keybag_password_rejected(marker, owner))
+            marker.write_text("detail", encoding="ascii")
+            self.assertFalse(MODULE.keybag_password_rejected(marker, owner))
+
     def test_adaptive_sync_service_is_static_and_default_off(self):
         root = MODULE_PATH.parents[1]
         unit = (

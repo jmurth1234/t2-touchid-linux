@@ -37,6 +37,9 @@ evidence, not intent.
 - [x] Invalidate and rediscover after a cached endpoint fails.
 - [x] Refresh the dynamic port independently before the keybag service chain.
 - [ ] Test bridgeOS restart and port-change behavior.
+- [ ] Recover and implement the exact AppleKeyStore endpoint-7
+      disable/reacquire and OOL reset lifecycle before attempting automatic
+      recovery from stale generations.
 
 ## 6. Installation and rollback
 
