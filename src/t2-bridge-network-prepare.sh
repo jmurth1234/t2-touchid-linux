@@ -59,10 +59,35 @@ if not value.is_link_local or value.is_multicast or value.scope_id is not None:
 print(value.compressed)
 ') || { echo "Configured BridgeOS peer is not an unscoped IPv6 link-local address" >&2; exit 1; }
 
+bind_unbound_ibridge() {
+  local device function
+  local -a candidates=()
+
+  [[ -w /sys/bus/usb/drivers/cdc_ncm/bind ]] || return 1
+  for device in /sys/bus/usb/devices/*; do
+    [[ -f $device/idVendor && -f $device/idProduct ]] || continue
+    [[ $(<"$device/idVendor") == 05ac && $(<"$device/idProduct") == 8233 ]] || continue
+    function=$device:1.0
+    [[ -d $function && ! -e $function/driver ]] || continue
+    candidates+=("$(basename "$function")")
+  done
+  (( ${#candidates[@]} == 1 )) || return 1
+
+  printf '%s' "${candidates[0]}" >/sys/bus/usb/drivers/cdc_ncm/bind || return 1
+  logger --priority authpriv.info --tag t2-bridge-network \
+    'recovered delayed Apple T2 cdc_ncm bind'
+}
+
 deadline=$((SECONDS + 30))
 while [[ ! -d /sys/class/net/$interface && $SECONDS -lt $deadline ]]; do
   sleep 1
 done
+if [[ ! -d /sys/class/net/$interface ]] && bind_unbound_ibridge; then
+  deadline=$((SECONDS + 5))
+  while [[ ! -d /sys/class/net/$interface && $SECONDS -lt $deadline ]]; do
+    sleep 1
+  done
+fi
 [[ -d /sys/class/net/$interface ]] || { echo "T2 network interface is unavailable" >&2; exit 1; }
 
 driver=$(basename "$(readlink -f "/sys/class/net/$interface/device/driver" 2>/dev/null)" 2>/dev/null || true)

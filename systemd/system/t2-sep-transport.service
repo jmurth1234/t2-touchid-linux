@@ -6,6 +6,7 @@ ConditionPathExists=/usr/local/sbin/t2-sep-transport-load
 
 [Service]
 Type=oneshot
+ExecStartPre=/usr/bin/sleep 5
 ExecStart=/usr/local/sbin/t2-sep-transport-load
 RemainAfterExit=yes
 

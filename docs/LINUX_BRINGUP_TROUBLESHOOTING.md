@@ -72,6 +72,17 @@ boot-time port discovery. During an older install or manual recovery, the T2
 NetworkManager because BridgeOS does not provide normal DHCP. Substitute the
 interface and Linux link-local address determined for the machine:
 
+The service also handles the observed boot race where the Apple `05ac:8233`
+iBridge enumerates but its first automatic `cdc_ncm` bind fails. After the
+normal interface wait, it makes one bind attempt only when exactly one matching
+USB control interface remains unbound. It never unbinds a device or reloads the
+driver or SEP transport.
+
+Port discovery can also leave late BridgeXPC traffic after its process exits.
+The transport unit enforces a five-second quiet period after that ordered
+discovery step before making the one capability-negotiation attempt for the
+boot. This avoids treating process exit and endpoint quiescence as identical.
+
 ```sh
 nmcli device set <T2_INTERFACE> managed no
 sudo sysctl -w net.ipv6.conf.<T2_INTERFACE>.autoconf=1
