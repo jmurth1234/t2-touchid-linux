@@ -92,6 +92,11 @@ password-authenticated sudo. `t2-interactive-unlock.service` is installed but
 disabled by default; it is only for systems with a working systemd password
 agent during boot.
 
+If endpoint-7 capability negotiation failed before the keybags could load, the
+same sudo hook does not request a password that SEP cannot use. It instead
+warns that Touch ID is unavailable for the boot and gives the proven macOS
+recovery sequence. Linux sudo authentication still succeeds normally.
+
 ## Proven configuration
 
 The complete verification, enrollment, rename, reconciliation, and mutation

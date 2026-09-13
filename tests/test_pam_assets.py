@@ -68,6 +68,14 @@ class PamAssetTests(unittest.TestCase):
         self.assertIn("macOS password was rejected", unlock_secret)
         self.assertIn("sudo t2-keybag-unlock to retry", aks_tool)
         self.assertIn("keybag-password-rejected", helper)
+        self.assertIn("t2_sep_transport/parameters/register_ool", helper)
+        self.assertIn("! -e /dev/t2-aks", helper)
+        self.assertIn("T2 Touch ID unavailable for this boot", helper)
+        self.assertIn("Boot macOS and use Touch ID", helper)
+        self.assertLess(
+            helper.index("T2 Touch ID unavailable for this boot"),
+            helper.index('[[ -x $TOOL ]] || exit 0'),
+        )
         installer = (ROOT / "tools/install-pam.sh").read_text()
         self.assertIn(
             "local hook='auth optional pam_exec.so quiet seteuid ", installer
