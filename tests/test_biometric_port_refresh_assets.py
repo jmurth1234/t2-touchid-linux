@@ -40,6 +40,23 @@ class BiometricPortRefreshAssetTests(unittest.TestCase):
         )
 
         self.assertIn("After=local-fs.target t2-biometric-port-refresh.service", transport)
+        self.assertIn("ExecStartPre=/usr/bin/sleep 5", transport)
+        self.assertLess(
+            transport.index("ExecStartPre=/usr/bin/sleep 5"),
+            transport.index("ExecStart=/usr/local/sbin/t2-sep-transport-load"),
+        )
+
+    def test_boot_helpers_never_retry_full_port_discovery(self):
+        refresh = (ROOT / "src/t2-biometric-port-refresh.sh").read_text(
+            encoding="utf-8"
+        )
+        ready = (ROOT / "src/t2-biometric-ready.sh").read_text(encoding="utf-8")
+
+        self.assertNotIn("while (( SECONDS < deadline ))", refresh)
+        self.assertNotIn("sleep 1", refresh)
+        self.assertEqual(refresh.count("--concurrency 256"), 1)
+        self.assertNotIn("discover-biometric-port.py", ready)
+        self.assertIn('warm_up "$port" || exit 1', ready)
 
     def test_network_helper_is_private_and_configuration_driven(self):
         helper = (ROOT / "src/t2-bridge-network-prepare.sh").read_text(
@@ -54,10 +71,25 @@ class BiometricPortRefreshAssetTests(unittest.TestCase):
         self.assertIn("value.is_link_local", helper)
         self.assertIn("network-manager-detached", helper)
         self.assertIn("restore_network_manager", helper)
+        self.assertIn("bind_unbound_ibridge", helper)
+        self.assertIn("idVendor", helper)
+        self.assertIn("idProduct", helper)
+        self.assertIn("05ac", helper)
+        self.assertIn("8233", helper)
+        self.assertIn("/sys/bus/usb/drivers/cdc_ncm/bind", helper)
+        self.assertIn("(( ${#candidates[@]} == 1 ))", helper)
         self.assertIn('printf \'%s\\n\' "$interface" >"$nm_marker"', helper)
         self.assertLess(helper.index("case ${1:-prepare}"), helper.index("[[ -r $config_file ]]"))
         self.assertNotIn("enp2s0f1u1", helper)
         self.assertNotIn("fe80::c908", helper)
+
+    def test_network_service_allows_only_usb_driver_binding_under_sysfs(self):
+        service = (
+            ROOT / "systemd/system/t2-bridge-network.service"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("ProtectKernelTunables=yes", service)
+        self.assertIn("ReadWritePaths=/sys/bus/usb/drivers", service)
 
 
 if __name__ == "__main__":

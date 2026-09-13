@@ -55,6 +55,9 @@ ENROLLED_FINGER = os.environ.get(
 AUTO_SYNC_ADAPTIVE_VALUE = os.environ.get(
     "T2_TOUCHID_AUTO_SYNC_ADAPTIVE", "0"
 )
+KEYBAG_STATE_FILE = Path("/run/t2-touchid/keybag.env")
+KEYBAG_READY_FILE = Path("/run/t2-touchid/keybags-unlocked")
+KEYBAG_REJECTED_FILE = Path("/run/t2-touchid/keybag-password-rejected")
 ALLOWED_PAM_USERS = (LINUX_USER,)
 UNSTARTED_CLAIM_SECONDS = 5.0
 COMPLETED_CLAIM_SECONDS = 0.5
@@ -83,6 +86,41 @@ if ENROLLED_FINGER not in {
 if AUTO_SYNC_ADAPTIVE_VALUE not in {"0", "1"}:
     raise RuntimeError("T2_TOUCHID_AUTO_SYNC_ADAPTIVE is invalid")
 AUTO_SYNC_ADAPTIVE = AUTO_SYNC_ADAPTIVE_VALUE == "1"
+
+
+def keybags_ready(
+    state_file: Path = KEYBAG_STATE_FILE,
+    ready_file: Path = KEYBAG_READY_FILE,
+    expected_owner: tuple[int, int] = (0, 0),
+) -> bool:
+    try:
+        for path in (state_file, ready_file):
+            info = path.stat(follow_symlinks=False)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or (info.st_uid, info.st_gid) != expected_owner
+            ):
+                return False
+        return state_file.read_bytes() == ready_file.read_bytes()
+    except OSError:
+        return False
+
+
+def keybag_password_rejected(
+    rejected_file: Path = KEYBAG_REJECTED_FILE,
+    expected_owner: tuple[int, int] = (0, 0),
+) -> bool:
+    try:
+        info = rejected_file.stat(follow_symlinks=False)
+        return (
+            stat.S_ISREG(info.st_mode)
+            and stat.S_IMODE(info.st_mode) == 0o600
+            and (info.st_uid, info.st_gid) == expected_owner
+            and info.st_size == 0
+        )
+    except OSError:
+        return False
 
 
 def verdict_from_result(
@@ -287,6 +325,14 @@ class T2Backend:
     async def list_fingers(self) -> tuple[str, ...]:
         async with self.operation_lock:
             return (await self.runtime_projection()).listed_fingers
+
+    @staticmethod
+    def keybags_ready() -> bool:
+        return keybags_ready()
+
+    @staticmethod
+    def keybag_password_rejected() -> bool:
+        return keybag_password_rejected()
 
     async def discover(self) -> int:
         if self.port is not None:
@@ -779,6 +825,16 @@ class FprintDevice(ServiceInterface):
             raise DBusError(
                 f"{FPRINT_ERROR}.InvalidFingername",
                 "verification requires any or a canonical finger name",
+            )
+        if not self.backend.keybags_ready():
+            detail = (
+                "The macOS password was rejected; run sudo t2-keybag-unlock to retry"
+                if self.backend.keybag_password_rejected()
+                else "T2 keybags are locked; run sudo t2-keybag-unlock"
+            )
+            raise DBusError(
+                f"{FPRINT_ERROR}.Internal",
+                detail,
             )
         if self.claim_expiry_task is not None:
             self.claim_expiry_task.cancel()

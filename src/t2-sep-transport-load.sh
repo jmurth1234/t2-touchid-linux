@@ -15,7 +15,7 @@ if [[ -d /sys/module/$module ]]; then
   if [[ ! -r $parameter ]] || [[ $(<"$parameter") != Y ]]; then
     # Unbind first: the bound PCI driver holds a module reference that makes
     # a bare modprobe --remove fail with "Module is in use" (observed 15,2).
-    for dev in /sys/bus/pci/drivers/$module/0000:*; do
+    for dev in "/sys/bus/pci/drivers/$module"/0000:*; do
       [[ -e $dev ]] && echo "${dev##*/}" > /sys/bus/pci/drivers/$module/unbind
     done
     /usr/bin/modprobe --remove "$module"

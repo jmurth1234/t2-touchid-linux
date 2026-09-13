@@ -33,6 +33,41 @@ class DoctorTests(unittest.TestCase):
         with mock.patch.object(Path, "stat", return_value=info):
             self.assertFalse(doctor.private_regular_file(Path("ignored")))
 
+    def test_keybag_readiness_reports_locked_and_unlocked_state(self):
+        with (
+            mock.patch.object(doctor.os, "geteuid", return_value=0),
+            mock.patch.object(doctor, "private_regular_file", return_value=True),
+            mock.patch.object(Path, "read_bytes", side_effect=(b"same", b"same")),
+        ):
+            self.assertEqual(doctor.keybag_readiness_check().status, "pass")
+
+        with (
+            mock.patch.object(doctor.os, "geteuid", return_value=0),
+            mock.patch.object(doctor, "private_regular_file", return_value=True),
+            mock.patch.object(Path, "read_bytes", side_effect=(b"old", b"new")),
+        ):
+            check = doctor.keybag_readiness_check()
+        self.assertEqual(check.status, "warn")
+        self.assertIn("t2-keybag-unlock", check.detail)
+
+    def test_keybag_readiness_reports_recorded_password_rejection(self):
+        states = {
+            doctor.STATE: True,
+            doctor.READY: False,
+            doctor.REJECTED: True,
+        }
+        rejected_info = types.SimpleNamespace(st_size=0)
+        with (
+            mock.patch.object(doctor.os, "geteuid", return_value=0),
+            mock.patch.object(
+                doctor, "private_regular_file", side_effect=lambda path: states[path]
+            ),
+            mock.patch.object(Path, "stat", return_value=rejected_info),
+        ):
+            check = doctor.keybag_readiness_check()
+        self.assertEqual(check.status, "warn")
+        self.assertIn("macOS password was rejected", check.detail)
+
     def test_service_check_accepts_active_success(self):
         completed = mock.Mock(
             returncode=0,

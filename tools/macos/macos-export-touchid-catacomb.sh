@@ -93,7 +93,8 @@ elif [[ -d /Library/Catacomb ]]; then
   # archive; older exports retained it only in their tar member headers.
   sudo find /Library/Catacomb -type f \
     \( -name master.cat -o -name biolockout.cat -o -name 'user_*.cat' \) \
-    -exec stat -f '%Sp %Su:%Sg %z %m %N' {} \; > "$SOURCE_STAT"
+    -exec stat -f '%Sp %Su:%Sg %z %m %N' {} \; \
+    | /usr/bin/tee "$SOURCE_STAT" >/dev/null
   sudo tar -C / -czf "$OUTPUT.tmp.$$" Library/Catacomb \
     -C "$WORK_DIR" source-stat.txt
   sudo mv -f -- "$OUTPUT.tmp.$$" "$OUTPUT"

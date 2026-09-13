@@ -56,15 +56,20 @@ for unit in t2-sep-transport.service t2-keybag-load.service \
 done
 
 refresh_state=$(enabled_state t2-biometric-port-refresh.service)
-[[ $refresh_state == enabled ]] \
-  && pass "t2-biometric-port-refresh.service is enabled for one boot-time run" \
-  || warn "t2-biometric-port-refresh.service is ${refresh_state:-unknown}"
+if [[ $refresh_state == enabled ]]; then
+  pass "t2-biometric-port-refresh.service is enabled for one boot-time run"
+else
+  warn "t2-biometric-port-refresh.service is ${refresh_state:-unknown}"
+fi
 
 if [[ -n $interface && -d /sys/class/net/$interface ]]; then
   pass "network interface $interface exists"
   driver=$(basename "$(readlink -f "/sys/class/net/$interface/device/driver" 2>/dev/null)" 2>/dev/null || true)
-  [[ $driver == cdc_ncm ]] && pass "$interface uses cdc_ncm" \
-    || warn "$interface driver is ${driver:-unknown}, expected cdc_ncm"
+  if [[ $driver == cdc_ncm ]]; then
+    pass "$interface uses cdc_ncm"
+  else
+    warn "$interface driver is ${driver:-unknown}, expected cdc_ncm"
+  fi
 
   if ip -6 addr show dev "$interface" scope link | grep -q 'inet6 .* scope link' &&
     ! ip -6 addr show dev "$interface" scope link | grep -q tentative; then
@@ -103,8 +108,11 @@ fi
 
 if [[ -f /var/lib/t2-touchid/user.kb ]]; then
   keybag_mode=$(stat -c '%a:%U:%G' /var/lib/t2-touchid/user.kb 2>/dev/null || true)
-  [[ $keybag_mode == 600:root:root ]] && pass "user keybag is root-only" \
-    || fail "user keybag permissions are $keybag_mode, expected 600:root:root"
+  if [[ $keybag_mode == 600:root:root ]]; then
+    pass "user keybag is root-only"
+  else
+    fail "user keybag permissions are $keybag_mode, expected 600:root:root"
+  fi
 else
   fail "user keybag is missing"
 fi
@@ -120,8 +128,11 @@ if [[ -d $catacomb_root && $(stat -c '%a:%U:%G' "$catacomb_root" 2>/dev/null) ==
     mode=$(stat -c '%a:%U:%G' "$catacomb_root/$component" 2>/dev/null || true)
     [[ $mode == 600:root:root ]] || catacomb_ok=no
   done
-  [[ $catacomb_ok == yes ]] && pass "local Catacomb baseline is root-only and complete" \
-    || fail "local Catacomb baseline is incomplete or has unsafe permissions"
+  if [[ $catacomb_ok == yes ]]; then
+    pass "local Catacomb baseline is root-only and complete"
+  else
+    fail "local Catacomb baseline is incomplete or has unsafe permissions"
+  fi
 else
   fail "local Catacomb baseline is missing or unsafe"
 fi

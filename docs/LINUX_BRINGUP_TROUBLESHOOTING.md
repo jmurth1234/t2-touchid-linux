@@ -19,7 +19,8 @@ Catacomb files, and exported archives private.
   endpoint-7 state.
 - Do not repeatedly restart BiometricKit port discovery. A repeated
   high-concurrency RemoteXPC scan triggered a `cdc_ncm` watchdog followed by an
-  `apple_bce` kernel failure on the tested MacBookPro15,2.
+  `apple_bce` kernel failure on the tested MacBookPro15,2. The installed refresh
+  helper fails closed after one full scan, and readiness only uses its cache.
 - Do not overlap boot-time port discovery with SEP capability negotiation. On
   the tested machine that race produced capability timeout `-110`, pinning the
   transport without `/dev/t2-aks` for the rest of the boot. The installed units
@@ -71,6 +72,17 @@ boot-time port discovery. During an older install or manual recovery, the T2
 `cdc_ncm` interface may be repeatedly managed and disconnected by
 NetworkManager because BridgeOS does not provide normal DHCP. Substitute the
 interface and Linux link-local address determined for the machine:
+
+The service also handles the observed boot race where the Apple `05ac:8233`
+iBridge enumerates but its first automatic `cdc_ncm` bind fails. After the
+normal interface wait, it makes one bind attempt only when exactly one matching
+USB control interface remains unbound. It never unbinds a device or reloads the
+driver or SEP transport.
+
+Port discovery can also leave late BridgeXPC traffic after its process exits.
+The transport unit enforces a five-second quiet period after that ordered
+discovery step before making the one capability-negotiation attempt for the
+boot. This avoids treating process exit and endpoint quiescence as identical.
 
 ```sh
 nmcli device set <T2_INTERFACE> managed no

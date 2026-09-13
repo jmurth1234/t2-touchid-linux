@@ -80,6 +80,7 @@ struct t2_sep_transport {
 	dma_addr_t ool_out_dma;
 	bool ool_in_registered;
 	bool ool_out_registered;
+	bool dma_exposed;
 	void *acm_ool_in;
 	dma_addr_t acm_ool_in_dma;
 	void *acm_ool_out;
@@ -91,6 +92,7 @@ struct t2_sep_transport {
 	struct mutex exchange_lock;
 	atomic_t acm_opened;
 	u8 next_transaction;
+	bool aks_poisoned;
 	u64 acm_generation;
 	bool acm_poisoned;
 	bool acm_context_active;
@@ -370,6 +372,8 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 	int ret;
 
 	*sep_status_out = 0;
+	if (sep->aks_poisoned)
+		return -ESHUTDOWN;
 	if (!t2_aks_operation_allowed(operation))
 		return -EACCES;
 	if (operation == 0x06 &&
@@ -417,14 +421,18 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 
 	for (;;) {
 		ret = t2_sep_receive(sep, &reply);
-		if (ret)
+		if (ret) {
+			sep->aks_poisoned = true;
 			return ret;
+		}
 		if ((reply.word[0] & 0xff) == T2_SEP_AKS_ENDPOINT &&
 		    (((reply.word[0] >> 8) & 0xff) == (operation | 0x80)) &&
 		    ((reply.word[0] >> 16) & 0xff) == transaction)
 			break;
-		if (++skipped == 32)
+		if (++skipped == 32) {
+			sep->aks_poisoned = true;
 			return -EOVERFLOW;
+		}
 	}
 
 	/* EP7 reply: endpoint, operation|response, transaction, signed status. */
@@ -439,6 +447,7 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 	reply_length = reply.word[1] >> 16;
 	if (reply_length < T2_SEP_AKS_V2_WIRE_SIZE ||
 	    reply_length > T2_SEP_OOL_SIZE) {
+		sep->aks_poisoned = true;
 		dev_err(&sep->pdev->dev,
 			"AKS operation %#x returned invalid envelope length %u (mailbox info %#x)\n",
 			operation, reply_length, reply.word[1] & 0xffff);
@@ -447,6 +456,7 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 	if (get_unaligned_le32(sep->ool_out) != T2_SEP_AKS_HEADER_V2_SIZE ||
 	    get_unaligned_le32(sep->ool_out + sizeof(__le32) + 0x10) !=
 	    T2_SEP_AKS_HEADER_V2) {
+		sep->aks_poisoned = true;
 		dev_err(&sep->pdev->dev,
 			"AKS operation %#x returned invalid envelope metadata (size %#x version %#x)\n",
 			operation, get_unaligned_le32(sep->ool_out),
@@ -465,8 +475,10 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 			ret = -EBADMSG;
 		memzero_explicit(expected, sizeof(expected));
 	}
-	if (ret)
+	if (ret) {
+		sep->aks_poisoned = true;
 		return ret;
+	}
 
 	*response_body = sep->ool_out + T2_SEP_AKS_V2_WIRE_SIZE;
 	*response_body_length = reply_length - T2_SEP_AKS_V2_WIRE_SIZE;
@@ -1041,12 +1053,22 @@ static int t2_sep_probe(struct pci_dev *pdev,
 			goto err_free_ool;
 		}
 	}
+	/*
+	 * Once the first registration is posted, a missing acknowledgement cannot
+	 * prove that SEP did not retain the DMA address.  Pin before dispatch and
+	 * retain every buffer until reboot on all later failures.
+	 */
+	sep->dma_exposed = true;
+	__module_get(THIS_MODULE);
 
 	ret = t2_sep_control(sep, T2_SEP_AKS_ENDPOINT,
 			 T2_SEP_CMSG_SET_OOL_IN, 1,
 				 sep->ool_in_dma, T2_SEP_OOL_SIZE);
-	if (ret)
-		goto err_free_ool;
+	if (ret) {
+		dev_err(&pdev->dev,
+			"OOL input registration failed or became ambiguous; retaining DMA memory until reboot\n");
+		return 0;
+	}
 	sep->ool_in_registered = true;
 	ret = t2_sep_control(sep, T2_SEP_AKS_ENDPOINT,
 			 T2_SEP_CMSG_SET_OOL_OUT, 2,
@@ -1059,7 +1081,6 @@ static int t2_sep_probe(struct pci_dev *pdev,
 		 */
 		dev_err(&pdev->dev,
 			"OOL input registered but output registration failed; reboot before retry\n");
-		__module_get(THIS_MODULE);
 		return 0;
 	}
 	sep->ool_out_registered = true;
@@ -1070,7 +1091,6 @@ static int t2_sep_probe(struct pci_dev *pdev,
 		if (ret) {
 			dev_err(&pdev->dev,
 				"endpoint-7 registered but ACM input registration failed; reboot before retry\n");
-			__module_get(THIS_MODULE);
 			return 0;
 		}
 		sep->acm_ool_in_registered = true;
@@ -1080,15 +1100,11 @@ static int t2_sep_probe(struct pci_dev *pdev,
 		if (ret) {
 			dev_err(&pdev->dev,
 				"ACM input registered but output registration failed; reboot before retry\n");
-			__module_get(THIS_MODULE);
 			return 0;
 		}
 		sep->acm_ool_out_registered = true;
 		sep->acm_generation = 1;
 	}
-	/* SEP retains both DMA addresses, so prevent unsafe module removal. */
-	__module_get(THIS_MODULE);
-
 	dev_info(&pdev->dev,
 		 "registered 16 KiB endpoint-7 OOL input/output buffers\n");
 	if (probe_capabilities) {
@@ -1160,7 +1176,7 @@ static void t2_sep_remove(struct pci_dev *pdev)
 		misc_deregister(&sep->aks_miscdev);
 	if (sep->acm_misc_registered)
 		misc_deregister(&sep->acm_miscdev);
-	if (sep->ool_in_registered || sep->ool_out_registered ||
+	if (sep->dma_exposed || sep->ool_in_registered || sep->ool_out_registered ||
 	    sep->acm_ool_in_registered || sep->acm_ool_out_registered) {
 		dev_warn(&pdev->dev,
 			 "retaining SEP-registered DMA memory until reboot\n");

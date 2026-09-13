@@ -18,6 +18,8 @@ from pathlib import Path
 
 CONFIG = Path("/etc/t2-touchid.conf")
 STATE = Path("/run/t2-touchid/keybag.env")
+READY = Path("/run/t2-touchid/keybags-unlocked")
+REJECTED = Path("/run/t2-touchid/keybag-password-rejected")
 PORT_CACHE = Path("/var/lib/t2-touchid/biometric-port")
 CREDENTIAL = Path("/etc/credstore.encrypted/t2-touchid-password")
 ACM_PREFLIGHT = Path("/usr/local/sbin/t2-acm-preflight")
@@ -65,6 +67,36 @@ def private_regular_file(path: Path) -> bool:
         stat.S_ISREG(info.st_mode)
         and info.st_uid == 0
         and not (info.st_mode & 0o077)
+    )
+
+
+def keybag_readiness_check() -> Check:
+    if os.geteuid() != 0:
+        return Check("warn", "keybag-readiness", "not readable; run as root")
+    try:
+        ready = (
+            private_regular_file(STATE)
+            and private_regular_file(READY)
+            and STATE.read_bytes() == READY.read_bytes()
+        )
+    except OSError:
+        ready = False
+    rejected = False
+    if not ready:
+        try:
+            rejected = private_regular_file(REJECTED) and REJECTED.stat().st_size == 0
+        except OSError:
+            pass
+    return Check(
+        "pass" if ready else "warn",
+        "keybag-readiness",
+        "both keybags are unlocked for this boot"
+        if ready
+        else (
+            "macOS password was rejected; run sudo t2-keybag-unlock"
+            if rejected
+            else "keybags are locked; run sudo t2-keybag-unlock"
+        ),
     )
 
 
@@ -322,6 +354,7 @@ def collect() -> list[Check]:
             config.get("T2_TOUCHID_ENABLE_ACM_RESEARCH", "0") == "1"
         )
     )
+    checks.append(keybag_readiness_check())
 
     try:
         state = read_assignments(STATE)

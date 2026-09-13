@@ -15,6 +15,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelTunables=yes
+ReadWritePaths=/sys/bus/usb/drivers
 ProtectKernelLogs=yes
 ProtectControlGroups=yes
 ProtectClock=yes

@@ -8,6 +8,7 @@ ulimit -c 0
 tool=/usr/local/sbin/t2-aks-tool
 state_file=/run/t2-touchid/keybag.env
 ready_file=/run/t2-touchid/keybags-unlocked
+rejected_file=/run/t2-touchid/keybag-password-rejected
 [[ -x $tool && -r $state_file ]] || { echo "Keybag runtime state is unavailable." >&2; exit 1; }
 
 if /usr/local/sbin/t2-pam-fingerprint-ready; then
@@ -16,7 +17,7 @@ if /usr/local/sbin/t2-pam-fingerprint-ready; then
   exit 0
 fi
 
-rm -f -- "$ready_file"
+rm -f -- "$ready_file" "$rejected_file"
 snapshot=$(mktemp "${ready_file}.XXXXXX")
 trap 'rm -f -- "$snapshot"' EXIT
 install -o root -g root -m 0600 "$state_file" "$snapshot"
@@ -28,9 +29,13 @@ special=$(sed -n 's/^T2_KEYBAG_SPECIAL=\(-\{0,1\}[0-9][0-9]*\)$/\1/p' "$snapshot
 
 ask_options=(--timeout=120)
 [[ -t 0 && -t 1 ]] || ask_options+=(--no-tty)
-systemd-ask-password "${ask_options[@]}" \
-  'macOS login password for T2 Touch ID:' |
-  "$tool" unlock-keybags-stdin "$session" "$handle" "$special"
+if ! systemd-ask-password "${ask_options[@]}" \
+    'macOS login password for T2 Touch ID:' |
+    "$tool" unlock-keybags-stdin "$session" "$handle" "$special"; then
+  status=${PIPESTATUS[1]}
+  [[ $status == 3 ]] && install -o root -g root -m 0600 /dev/null "$rejected_file"
+  exit "$status"
+fi
 cmp -s -- "$snapshot" "$state_file" || { echo "Keybag runtime state changed during unlock." >&2; exit 1; }
 mv -f -- "$snapshot" "$ready_file"
 trap - EXIT
