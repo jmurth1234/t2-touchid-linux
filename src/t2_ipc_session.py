@@ -393,6 +393,7 @@ class PinnedPeer:
                 proc_root=proc_root,
                 allow_root=allow_root,
                 allow_setuid_root=allow_setuid_root,
+                pidfd=pidfd,
             )
             peer = cls(
                 pidfd,
@@ -464,6 +465,7 @@ class PinnedPeer:
             proc_root=self.proc_root,
             allow_root=self.allow_root,
             allow_setuid_root=self.allow_setuid_root,
+            pidfd=self.pidfd,
         )
         if current != self.subject:
             raise IPCSessionError("IPC peer process identity changed")

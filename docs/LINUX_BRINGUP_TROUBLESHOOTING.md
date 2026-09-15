@@ -3,8 +3,13 @@
 This guide records a successful manual bring-up on a MacBookPro15,2 running
 Omarchy, `linux-t2` 6.19.11, bridgeOS 23P350, and fprintd 1.94.5. Both an
 enrolled-finger `verify-match` and an unenrolled-finger `verify-no-match` were
-confirmed. It supplements the main installation guide with failure recovery
-learned during that bring-up and omits steps the main guide already covers.
+confirmed. A MacBookPro16,1 on Omarchy 4.0.3 / `linux-t2-mbp161` additionally
+confirmed the mixed `0x50`/version-1 capability envelope, `v1-skip-cal` digest,
+`fprintd-verify` match/no-match, Omarchy PAM lock/sudo/**pkexec**, unattended
+boot unlock, and back-to-back pkexec after list/`any` stopped opening a live
+Bridge inventory. It supplements the main installation guide with failure
+recovery learned during that bring-up and omits steps the main guide already
+covers.
 
 Do not publish values substituted for placeholders below. In particular, keep
 account names, serials, UUIDs, MAC addresses, link-local addresses, keybags,
@@ -136,6 +141,20 @@ Success requires an integrity-checked capability reply in the kernel log and
 service takes about 12 seconds and reports capability error `-110`, the state is
 pinned for that boot. Use the macOS recovery sequence before another attempt.
 
+On **MacBookPro16,1** the `0x4d` reply is not the 15,2/16,2 v1 envelope
+(length 92, header `0x48`, version 1). This model answers with **length 100,
+header `0x50`, version 1** (v2-sized header, v1 version field). Stock probe
+returns `-71` (`-EPROTO`). Accepting that mix and hashing it as a v2 header
+then returns `-74` (`-EBADMSG`). The matching digest is **`v1-skip-cal`**:
+SHA-256 over the v1 header (`0x48`) and the payload after the v2 header
+(`0x50`); the 8-byte calendar field is not hashed. Later AKS ops reuse that
+span. PCI autoload must stay observation-only; the service is the one
+`register_ool=1` start. Do not unload after DMA. Do not apply an unrelated
+`start_transport` / 32-bit DMA change as the first `-71` fix.
+
+If capability error is `-71` with a different envelope, or `-74` after all
+three version-1 spans fail, stop for that boot. Do not retry.
+
 ## Unlock keybags
 
 The unlock procedure itself is in the main guide (installation step 6). Two
@@ -164,4 +183,6 @@ observations from the tested machine:
   only shows what is currently supported.
 
 Only after all checks and both physical controls pass should PAM be installed,
-with an existing root shell kept open and password fallback tested.
+with an existing root shell kept open and password fallback tested. Operator
+stacks, pkexec pinning, and why list/`any` must not open Bridge are in
+[PAM_AUTH.md](PAM_AUTH.md).

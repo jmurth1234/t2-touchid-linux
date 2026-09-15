@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-only
 from __future__ import annotations
 
+import os
+import socket
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -219,6 +222,90 @@ class PolkitGrantTests(unittest.TestCase):
             ),
             collector.ProcessSubject(self.pid, 0, 777),
         )
+
+    def test_socket_activated_polkit_helper_pins_stdin_peer_uid(self):
+        if os.getuid() == 0:
+            self.skipTest("helper origin rejects a root socket peer")
+        left, right = socket.socketpair(socket.AF_UNIX)
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        (self.process / "exe").symlink_to(collector.POLKIT_AGENT_HELPER)
+        (self.process / "cmdline").write_bytes(
+            b"/usr/lib/polkit-1/polkit-agent-helper-1\0--socket-activated\0"
+        )
+        (self.process / "status").write_text(
+            "Uid:\t0\t0\t0\t0\n", encoding="ascii"
+        )
+        pidfd = os.pidfd_open(os.getpid())
+        self.addCleanup(os.close, pidfd)
+
+        def steal_stdin(stolen_pidfd, targetfd):
+            self.assertEqual(stolen_pidfd, pidfd)
+            self.assertEqual(targetfd, 0)
+            return os.dup(left.fileno())
+
+        with mock.patch.object(collector, "_pidfd_getfd", steal_stdin):
+            subject = collector.read_process_subject(
+                self.pid,
+                0,
+                proc_root=self.proc,
+                allow_root=True,
+                allow_setuid_root=True,
+                pidfd=pidfd,
+            )
+        self.assertEqual(
+            subject,
+            collector.ProcessSubject(self.pid, 0, 777, os.getuid()),
+        )
+        with self.assertRaisesRegex(collector.PolkitGrantError, "pidfd"):
+            collector.read_process_subject(
+                self.pid,
+                0,
+                proc_root=self.proc,
+                allow_root=True,
+                allow_setuid_root=True,
+            )
+
+    def test_all_root_non_helper_does_not_borrow_a_session_uid(self):
+        (self.process / "status").write_text(
+            "Uid:\t0\t0\t0\t0\n", encoding="ascii"
+        )
+        (self.process / "exe").symlink_to("/usr/bin/true")
+        (self.process / "cmdline").write_bytes(b"/usr/bin/true\0")
+        pidfd = os.pidfd_open(os.getpid())
+        self.addCleanup(os.close, pidfd)
+        self.assertEqual(
+            collector.read_process_subject(
+                self.pid,
+                0,
+                proc_root=self.proc,
+                allow_root=True,
+                allow_setuid_root=True,
+                pidfd=pidfd,
+            ),
+            collector.ProcessSubject(self.pid, 0, 777),
+        )
+
+    def test_pidfd_getfd_duplicates_a_unix_socket(self):
+        if os.getuid() == 0:
+            self.skipTest("helper origin rejects a root socket peer")
+        left, right = socket.socketpair(socket.AF_UNIX)
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        pidfd = os.pidfd_open(os.getpid())
+        self.addCleanup(os.close, pidfd)
+        stolen = collector._pidfd_getfd(pidfd, left.fileno())
+        self.addCleanup(os.close, stolen)
+        peer_pid, peer_uid, peer_gid = collector._unix_peer_credentials(stolen)
+        self.assertEqual(peer_pid, os.getpid())
+        self.assertEqual(peer_uid, os.getuid())
+        self.assertGreaterEqual(peer_gid, 0)
+
+    def test_fprintd_unit_allows_pidfd_getfd(self):
+        unit = (SOURCE.parent / "systemd/system/fprintd.service").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("SystemCallFilter=@system-service pidfd_getfd", unit)
 
     def test_rejects_cross_user_unknown_action_and_unbounded_inputs(self):
         cases = (

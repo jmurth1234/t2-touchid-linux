@@ -7,7 +7,7 @@ exec 9>/run/lock/t2-touchid-pam.lock
 flock -x 9
 backup_dir=/var/lib/t2-touchid/pam-backups
 restored=0
-for name in sudo omarchy-lock-password omarchy-lock-fingerprint; do
+for name in sudo polkit-1 omarchy-lock-password omarchy-lock-fingerprint; do
   backup=$backup_dir/$name.original
   absent=$backup_dir/$name.absent
   installed=$backup_dir/$name.installed

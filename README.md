@@ -20,6 +20,7 @@ Read [Before you start](#before-you-start) before installing anything.
 - [Concepts](#concepts)
 - [Installation](#installation)
 - [Linux bring-up troubleshooting](docs/LINUX_BRINGUP_TROUBLESHOOTING.md)
+- [PAM authentication (sudo, pkexec, lock)](docs/PAM_AUTH.md)
 - [Verification](#verification)
 - [Recovery and uninstall](#recovery-and-uninstall)
 - [Diagnostics](#diagnostics)
@@ -117,13 +118,21 @@ booted, the next Linux boot found one stable SEP identity but two records in
 the Linux-local Catacomb. fprintd correctly failed closed. This cross-OS
 boundary and its host-only recovery are documented below.
 
+An Intel `MacBookPro16,1` (16-inch 2019, mixed AKS capability envelope: length
+100, header `0x50`, version 1) additionally proved the authentication path:
+digest **`v1-skip-cal`**, unattended credstore unlock, lock/sudo/**pkexec**
+PAM, and back-to-back pkexec after `ListEnrolledFingers` / `VerifyStart("any")`
+stopped opening a live Bridge inventory. Enrollment and mutation research on
+that model is not claimed here. See [PAM authentication](docs/PAM_AUTH.md).
+
 ## Prerequisites
 
 **Hardware and firmware**
 
 - An Intel Mac with an Apple T2 chip. Full research coverage is limited to
   `MacBookPro16,2` on bridgeOS `23P1072`; the authentication path is also
-  verified on `MacBookPro15,2` on bridgeOS `23P350`.
+  verified on `MacBookPro15,2` on bridgeOS `23P350` and on `MacBookPro16,1`
+  (mixed envelope, `v1-skip-cal`).
 - macOS still installed on the same machine, with at least one enrolled
   finger. macOS is both the source of the exported keybags and the recovery
   environment.
@@ -301,7 +310,14 @@ different state.
 8. **Only after those controls pass**, install the relevant files from `pam/`
    into `/etc/pam.d/` with `sudo tools/install-pam.sh`. Keep password
    authentication as a fallback and keep a root shell open while you test;
-   `sudo tools/rollback-pam.sh` restores the originals.
+   `sudo tools/rollback-pam.sh` restores the originals. The installer writes
+   the sudo stack, `/etc/pam.d/polkit-1` (pkexec / Omarchy polkit dialog), and
+   the Omarchy lock stacks when those files already exist. After creating
+   `polkit-1`, restart the shell (`omarchy restart shell`) so the agent rereads
+   PAM. Lid closed still skips the sensor and uses the password field. polkit
+   126+ runs the helper as an all-root systemd service; fprintd pins the
+   connecting agent from that helper's stdin `SO_PEERCRED` the same way it pins
+   sudo's setuid real UID.
 
    The sudo template displays a generic pre-capture sensor message through a
    fixed-text helper that writes to the controlling terminal or sudo's
@@ -442,41 +458,30 @@ fprintd-verify -f any "$USER"
 ```
 
 Require `verify-match` with an enrolled finger and `verify-no-match` with an
-unenrolled one. Once canonical labels are assigned, also test each identity
-explicitly:
+unenrolled one. That is the PAM-shaped control.
 
-```sh
-fprintd-verify -f right-index-finger "$USER"
-fprintd-verify -f right-thumb "$USER"
-```
-
-The first command accepts any reconciled enrolled identity. The named commands
-deliberately restrict SEP matching to only that identity. PAM uses fprintd's
-`any` verification path.
+Named `fprintd-verify -f right-thumb` (or any finger that is not the stored
+compatibility alias) is `NoEnrolledPrints` on this path. Use
+`t2-touchid-fprint-status` for live identity inventory, and do not run it
+during an on-screen fingerprint prompt. PAM uses fprintd's `any` verification
+path.
 
 With more than one listed finger, **do not use bare `fprintd-verify` as an
 all-finger control**. The upstream utility's "automatic" default selects the
 first name returned by `ListEnrolledFingers`; it does not request
 `VerifyStart("any")`, so it does not represent what PAM does.
 
-The fail-closed named-match boundary double-checks both SEP identity views on
-the same Bridge connection, reconciles them with the validated local Catacomb,
-sends only the selected opaque identity to the matcher, and proves all identity
-state is unchanged afterwards. It is reached automatically only for a complete
-canonical projection; with legacy labels, the
-[compatibility alias](#concepts) continues to select all enrolled identities.
+PAM `ListEnrolledFingers` returns the stored compatibility alias and does not
+open a Bridge inventory. PAM `VerifyStart("any")` and `VerifyStart` of that
+alias start an all-identities match on the probe connection (the probe waits
+on `operation.lock`). Other finger names are `NoEnrolledPrints` on this path.
+`fprintd-verify -f any` is the control that matches PAM; bare `fprintd-verify`
+still names `fingers[0]`, which is now the alias and uses the same match-all
+path. See [PAM authentication](docs/PAM_AUTH.md).
 
-The transition policy is explicit: incomplete inventories expose only the
-compatibility alias, complete inventories expose the canonical per-finger list,
-named verification is restricted to that exact identity, and `any` always
-remains an all-identities request. The named backend verdict requires both the
-pre-match reconciliation proof and the post-match unchanged-state proof; a
-selected-identity match alone is insufficient. For a complete projection, a
-successful `any` match is also reduced to exactly one canonical finger name.
-fprintd emits `VerifyFingerSelected("any")` before capture, as the upstream ABI
-specifies, then reports the resolved canonical identity through
-`VerifyFingerMatched` on success. Ambiguous events fail closed and UUIDs remain
-private.
+Native enroll/delete and `t2-touchid-fprint-status` still refresh a live
+projection. The named-match boundary (single identity, pre/post attestation)
+is not used on the PAM `any` path.
 
 ## Recovery and uninstall
 
@@ -984,6 +989,7 @@ to attach.
 - `systemd/research/`: uninstalled candidate units; see
   [Development status](#development-status).
 - `pam/`: clamshell-safe Omarchy PAM templates.
+- `docs/PAM_AUTH.md`: sudo/pkexec/lock stacks and the PAM list/`any` verify path.
 - `polkit/`: distinct non-transitive action definitions for future brokers.
 - `tools/macos/`: private export helpers; outputs must never be committed.
 - `enrollment_research/`: sanitized enrollment, multi-user, Catacomb, and

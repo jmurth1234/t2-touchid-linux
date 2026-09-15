@@ -9,7 +9,12 @@ form and verifies the kernel identity again after the authorization decision.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import os
+import signal
+import socket
+import struct
 import subprocess
 import time
 import uuid
@@ -25,6 +30,12 @@ PROC_ROOT = Path("/proc")
 MAX_PROC_RECORD = 64 * 1024
 DEFAULT_GRANT_LIFETIME_NS = 60 * 1_000_000_000
 MAX_PID = (1 << 31) - 1
+POLKIT_AGENT_HELPER = "/usr/lib/polkit-1/polkit-agent-helper-1"
+PEERCRED = struct.Struct("3i")
+# Linux x86_64 / aarch64; Python 3.14 here has pidfd_open but not pidfd_getfd.
+_NR_PIDFD_GETFD = 438
+_syscall = ctypes.CDLL(None, use_errno=True).syscall
+_syscall.restype = ctypes.c_long
 ACTION_IDS = frozenset(
     {item.action for item in t2_user_policy.OPERATION_POLICIES.values()}
     | {t2_user_policy.ACTIVATE_ACTION}
@@ -127,6 +138,142 @@ def _status_uids(data: bytes) -> tuple[int, int, int, int]:
     return parsed[0], parsed[1], parsed[2], parsed[3]
 
 
+def _pidfd_getfd(pidfd: int, targetfd: int) -> int:
+    """Duplicate ``targetfd`` from the process referenced by ``pidfd``.
+
+    ``/proc/<pid>/fd/N`` cannot be opened for sockets (ENXIO). The kernel
+    ``pidfd_getfd`` syscall can. Some Python builds omit ``os.pidfd_getfd``.
+    """
+
+    if type(pidfd) is not int or type(targetfd) is not int or pidfd < 0 or targetfd < 0:
+        raise OSError(errno.EINVAL, "pidfd_getfd arguments are invalid")
+    native = getattr(os, "pidfd_getfd", None)
+    if native is not None:
+        return native(pidfd, targetfd)
+    ctypes.set_errno(0)
+    result = _syscall(
+        ctypes.c_long(_NR_PIDFD_GETFD),
+        ctypes.c_int(pidfd),
+        ctypes.c_int(targetfd),
+        ctypes.c_uint(0),
+    )
+    if result < 0:
+        err = ctypes.get_errno() or errno.EIO
+        raise OSError(err, os.strerror(err))
+    return int(result)
+
+
+def _read_cmdline(path: Path) -> bytes:
+    descriptor = -1
+    try:
+        flags = os.O_RDONLY | os.O_CLOEXEC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(path, flags)
+        data = bytearray()
+        while len(data) <= MAX_PROC_RECORD:
+            block = os.read(
+                descriptor, min(4096, MAX_PROC_RECORD + 1 - len(data))
+            )
+            if not block:
+                break
+            data.extend(block)
+        if not data or len(data) > MAX_PROC_RECORD:
+            raise PolkitGrantError("caller cmdline is invalid")
+        return bytes(data)
+    except OSError as error:
+        raise PolkitGrantError("caller cmdline is unavailable") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _is_socket_activated_polkit_helper(process_root: Path) -> bool:
+    try:
+        exe = os.readlink(process_root / "exe")
+        cmdline = _read_cmdline(process_root / "cmdline")
+    except (OSError, PolkitGrantError):
+        return False
+    if exe != POLKIT_AGENT_HELPER:
+        return False
+    arguments = [item for item in cmdline.split(b"\0") if item]
+    return b"--socket-activated" in arguments
+
+
+def _unix_peer_credentials(descriptor: int) -> tuple[int, int, int]:
+    try:
+        sock = socket.fromfd(descriptor, socket.AF_UNIX, socket.SOCK_STREAM)
+    except OSError as error:
+        raise PolkitGrantError(
+            "polkit helper stdin is not a Unix socket"
+        ) from error
+    try:
+        try:
+            domain = sock.getsockopt(socket.SOL_SOCKET, socket.SO_DOMAIN)
+        except OSError as error:
+            raise PolkitGrantError(
+                "polkit helper stdin is not a Unix socket"
+            ) from error
+        if domain != socket.AF_UNIX:
+            raise PolkitGrantError("polkit helper stdin is not a Unix socket")
+        raw = sock.getsockopt(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, PEERCRED.size
+        )
+    except OSError as error:
+        raise PolkitGrantError(
+            "polkit helper peer credentials are unavailable"
+        ) from error
+    finally:
+        sock.close()
+    if type(raw) is not bytes or len(raw) != PEERCRED.size:
+        raise PolkitGrantError("polkit helper peer credentials are malformed")
+    peer_pid, peer_uid, peer_gid = PEERCRED.unpack(raw)
+    if (
+        not 1 <= peer_pid <= MAX_PID
+        or not 1 <= peer_uid < (1 << 32) - 1
+        or not 0 <= peer_gid < (1 << 32)
+    ):
+        raise PolkitGrantError("polkit helper peer credentials are invalid")
+    return peer_pid, peer_uid, peer_gid
+
+
+def _polkit_helper_origin_uid(pidfd: int | None) -> int:
+    """Pin the connecting polkit agent UID from the helper's stdin socket.
+
+    polkit 126+ runs ``polkit-agent-helper-1 --socket-activated`` as an
+    all-root systemd service. The helper is not setuid, so ``/proc/status``
+    UIDs stay 0. Stdin is the accepted ``/run/polkit/agent-helper.socket``
+    connection; ``SO_PEERCRED`` is the desktop agent that requested PAM.
+    The live pidfd is checked before and after ``pidfd_getfd`` of stdin
+    so a recycled PID cannot donate another process's socket. ``/proc/<pid>/fd/0``
+    cannot be opened for sockets (ENXIO).
+    """
+
+    if type(pidfd) is not int or pidfd < 0:
+        raise PolkitGrantError("polkit helper pidfd is required")
+    try:
+        signal.pidfd_send_signal(pidfd, 0)
+    except OSError as error:
+        raise PolkitGrantError("polkit helper process disappeared") from error
+    descriptor = -1
+    try:
+        descriptor = _pidfd_getfd(pidfd, 0)
+        signal.pidfd_send_signal(pidfd, 0)
+        _peer_pid, peer_uid, _peer_gid = _unix_peer_credentials(descriptor)
+        signal.pidfd_send_signal(pidfd, 0)
+    except OSError as error:
+        raise PolkitGrantError(
+            "polkit helper peer credentials are unavailable"
+        ) from error
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    return peer_uid
+
+
 def read_process_subject(
     pid: int,
     peer_uid: int,
@@ -134,6 +281,7 @@ def read_process_subject(
     proc_root: Path = PROC_ROOT,
     allow_root: bool = False,
     allow_setuid_root: bool = False,
+    pidfd: int | None = None,
 ) -> ProcessSubject:
     if (
         type(pid) is not int
@@ -144,12 +292,29 @@ def read_process_subject(
         or not (0 if allow_root else 1) <= peer_uid < (1 << 32) - 1
         or not isinstance(proc_root, Path)
         or not proc_root.is_absolute()
+        or (
+            pidfd is not None
+            and (type(pidfd) is not int or pidfd < 0)
+        )
     ):
         raise PolkitGrantError("caller process subject is invalid")
     process_root = proc_root / str(pid)
     start_time = _stat_start_time(_read_bounded(process_root / "stat"), pid)
     uids = _status_uids(_read_bounded(process_root / "status"))
     if all(value == peer_uid for value in uids):
+        if (
+            allow_setuid_root
+            and allow_root
+            and peer_uid == 0
+            and _is_socket_activated_polkit_helper(process_root)
+        ):
+            # Socket-activated helper: all-root UIDs, originating UID on stdin.
+            return ProcessSubject(
+                pid,
+                peer_uid,
+                start_time,
+                _polkit_helper_origin_uid(pidfd),
+            )
         return ProcessSubject(pid, peer_uid, start_time)
     real_uid, effective_uid, saved_uid, filesystem_uid = uids
     if (

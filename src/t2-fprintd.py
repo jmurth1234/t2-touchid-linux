@@ -36,6 +36,7 @@ import t2_fprint_worker_client
 import t2_fprint_delete_worker_client
 import t2_dbus_identity
 import t2_fprint_claim
+import t2_polkit_grant
 from t2_dbus_sender import (
     DBusSenderError,
     SenderAwareMessageBus,
@@ -58,6 +59,22 @@ AUTO_SYNC_ADAPTIVE_VALUE = os.environ.get(
 ALLOWED_PAM_USERS = (LINUX_USER,)
 UNSTARTED_CLAIM_SECONDS = 5.0
 COMPLETED_CLAIM_SECONDS = 0.5
+# pam_fprintd's Claim is a D-Bus method (~25 s timeout) and cannot wait for a
+# busy sensor. Overlapping sudo/pkexec must wait *before* Claim, in
+# t2-pam-fingerprint-ready. This file names the occupant so that helper waits
+# only for short-lived PAM clients, not the lock screen.
+CLAIM_STATE_PATH = Path("/run/t2-touchid/workers/fprint-claim")
+PAM_CLAIM_WAIT_SECONDS = 32
+SHORT_LIVED_PAM_COMMS = frozenset(
+    {
+        "sudo",
+        "sudoedit",
+        "pkexec",
+        "polkit-agent-he",
+        "polkit-agent-helper-1",
+        "fprintd-verify",
+    }
+)
 DESKTOP_FEEDBACK_UNITS = frozenset(
     {
         "t2-touchid-alert.service",
@@ -83,6 +100,12 @@ if ENROLLED_FINGER not in {
 if AUTO_SYNC_ADAPTIVE_VALUE not in {"0", "1"}:
     raise RuntimeError("T2_TOUCHID_AUTO_SYNC_ADAPTIVE is invalid")
 AUTO_SYNC_ADAPTIVE = AUTO_SYNC_ADAPTIVE_VALUE == "1"
+
+
+def is_match_all_finger(finger_name: object) -> bool:
+    """PAM and the compatibility alias share one all-identities match path."""
+
+    return finger_name == "any" or finger_name == ENROLLED_FINGER
 
 
 def verdict_from_result(
@@ -397,20 +420,13 @@ class T2Backend:
         return verdict, result
 
     async def verify_fprint(self, requested_finger: str) -> tuple[str, dict]:
-        """Resolve presentation afresh, then let the probe resolve authority."""
+        """Match every enrolled identity; the probe owns live authority."""
+        if not is_match_all_finger(requested_finger):
+            raise RuntimeError("requested fprint identity is unavailable")
         async with self.operation_lock:
-            view = await self.runtime_projection()
-            try:
-                request = t2_fprint_runtime.resolve_match(
-                    view, requested_finger
-                )
-            except t2_fprint_runtime.FprintRuntimeError as error:
-                raise RuntimeError("requested fprint identity is unavailable") from error
             return await self.verify(
-                target_finger=request.target_finger,
-                resolve_any_finger=(
-                    request.requested_finger == "any" and view.complete
-                ),
+                target_finger=None,
+                resolve_any_finger=False,
             )
 
     async def _request_adaptive_sync(self) -> None:
@@ -554,6 +570,7 @@ class FprintDevice(ServiceInterface):
         self.enrolled_fingers: tuple[str, ...] = (ENROLLED_FINGER,)
         self.finger_present = False
         self.finger_needed = False
+        self.claim_state_path: Path | None = None
 
     @staticmethod
     def _consume_signal_send(result: object) -> None:
@@ -684,9 +701,74 @@ class FprintDevice(ServiceInterface):
             self.claimed_sender = sender
             self.claimed_caller = caller
             self.claimed_evidence = evidence
+            self._publish_claim_state()
             self.claim_expiry_task = asyncio.create_task(
                 self._expire_unstarted_claim()
             )
+
+    def _claim_state_label(self) -> str:
+        caller = self.claimed_caller
+        if caller is None:
+            return ""
+        flagged = getattr(caller, "short_lived_pam", None)
+        if flagged is True:
+            return "sudo"
+        if flagged is False:
+            return "other"
+        subject = getattr(caller, "subject", None)
+        pid = getattr(subject, "pid", None)
+        if type(pid) is not int or pid <= 0:
+            return "other"
+        try:
+            raw = t2_polkit_grant._read_bounded(
+                Path("/proc") / str(pid) / "comm"
+            )
+            comm = raw.decode("ascii").strip()
+        except (
+            OSError,
+            UnicodeError,
+            t2_polkit_grant.PolkitGrantError,
+        ):
+            return "other"
+        if comm in SHORT_LIVED_PAM_COMMS:
+            return comm
+        return "other"
+
+    def _publish_claim_state(self) -> None:
+        path = self.claim_state_path
+        if not isinstance(path, Path):
+            return
+        label = self._claim_state_label()
+        if not label:
+            self._clear_claim_state()
+            return
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            fd = os.open(
+                tmp,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC,
+                0o600,
+            )
+            try:
+                os.write(fd, f"{label}\n".encode("ascii"))
+            finally:
+                os.close(fd)
+            os.replace(tmp, path)
+        except OSError as error:
+            print(f"fprint claim state not published: {error}", flush=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _clear_claim_state(self) -> None:
+        path = self.claim_state_path
+        if not isinstance(path, Path):
+            return
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _clear_claim(self) -> None:
         caller = self.claimed_caller
@@ -694,6 +776,7 @@ class FprintDevice(ServiceInterface):
         self.claimed_sender = None
         self.claimed_caller = None
         self.claimed_evidence = None
+        self._clear_claim_state()
         if caller is not None:
             caller.close()
 
@@ -747,12 +830,9 @@ class FprintDevice(ServiceInterface):
         requested = username or LINUX_USER
         if requested not in ALLOWED_PAM_USERS:
             raise DBusError(f"{FPRINT_ERROR}.PermissionDenied", "unknown user")
-        try:
-            self.enrolled_fingers = await self.backend.list_fingers()
-        except Exception as error:
-            raise DBusError(
-                f"{FPRINT_ERROR}.Internal", "fingerprint inventory unavailable"
-            ) from error
+        # Presentation only: pam_fprintd needs a non-zero count before Claim.
+        # A live Bridge inventory here collides with match teardown and is
+        # reported as "no fingerprints," which PAM turns into a password.
         if not self.enrolled_fingers:
             raise DBusError(
                 f"{FPRINT_ERROR}.NoEnrolledPrints",
@@ -792,8 +872,11 @@ class FprintDevice(ServiceInterface):
         self.verify_task = current_task
         started = False
         try:
-            async with self.backend.operation_lock:
-                view = await self.backend.runtime_projection()
+            if not self.enrolled_fingers or not is_match_all_finger(finger_name):
+                raise DBusError(
+                    f"{FPRINT_ERROR}.NoEnrolledPrints",
+                    "finger is not enrolled",
+                )
             self._require_claim_owner()
             if self.verify_task is not current_task:
                 raise RuntimeError("verification task binding changed")
@@ -808,18 +891,6 @@ class FprintDevice(ServiceInterface):
                     f"{FPRINT_ERROR}.AlreadyInUse",
                     "a biometric operation is active",
                 )
-            if not isinstance(view, t2_fprint_runtime.RuntimeProjection):
-                raise RuntimeError(
-                    "fprint projection returned an invalid result"
-                )
-            self.enrolled_fingers = view.listed_fingers
-            try:
-                t2_fprint_runtime.resolve_match(view, finger_name)
-            except t2_fprint_runtime.FprintRuntimeError as error:
-                raise DBusError(
-                    f"{FPRINT_ERROR}.NoEnrolledPrints",
-                    "finger is not enrolled",
-                ) from error
             # fprint's ABI explicitly permits "any" on this signal to tell
             # clients that any enrolled identity may be presented. Emit the
             # instruction before capture; the exact successful identity is
@@ -1371,6 +1442,7 @@ async def main_async(args: argparse.Namespace) -> None:
         enrollment_client=enrollment_client_for_arguments(args),
         deletion_client=deletion_client_for_arguments(args),
     )
+    device.claim_state_path = CLAIM_STATE_PATH
 
     # fprintd's historical ABI contains hyphenated property names, although
     # D-Bus member-name validators (including dbus-next's) reject hyphens.

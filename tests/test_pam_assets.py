@@ -27,7 +27,7 @@ class PamAssetTests(unittest.TestCase):
         rollback = (ROOT / "tools/rollback-pam.sh").read_text()
 
         self.assertIn(
-            "sudo omarchy-lock-password omarchy-lock-fingerprint",
+            "sudo polkit-1 omarchy-lock-password omarchy-lock-fingerprint",
             rollback,
         )
         self.assertIn("system-auth.original", rollback)
@@ -51,6 +51,31 @@ class PamAssetTests(unittest.TestCase):
         self.assertIn("[success=ignore default=2]", sudo_stack)
         self.assertIn("t2-pam-fingerprint-ready", sudo_stack)
         self.assertNotIn("t2-pam-unlock", sudo_stack)
+
+    def test_ready_waits_for_sudo_claim_not_lock_before_pam_fprintd(self):
+        ready = (ROOT / "src/t2-pam-fingerprint-ready.sh").read_text()
+        fprintd = (ROOT / "src/t2-fprintd.py").read_text()
+
+        self.assertIn("/run/t2-touchid/workers/fprint-claim", ready)
+        self.assertIn("PAM_CLAIM_WAIT_SECONDS = 32", fprintd)
+        self.assertIn("SECONDS + 32", ready)
+        self.assertIn("polkit-agent-helper-1", ready)
+        self.assertIn("fprintd-verify", ready)
+        self.assertIn("SHORT_LIVED_PAM_COMMS", fprintd)
+        self.assertIn("claim_state_path", fprintd)
+        self.assertIn("must not delay TTY sudo", ready)
+
+    def test_polkit_uses_the_same_fingerprint_gates_as_sudo(self):
+        polkit_stack = (ROOT / "pam/polkit-1").read_text()
+        installer = (ROOT / "tools/install-pam.sh").read_text()
+
+        self.assertIn("[success=3 default=ignore]", polkit_stack)
+        self.assertIn("[success=ignore default=2]", polkit_stack)
+        self.assertIn("t2-pam-fingerprint-ready", polkit_stack)
+        self.assertIn("pam_fprintd.so", polkit_stack)
+        self.assertIn("include      system-auth", polkit_stack)
+        self.assertNotIn("t2-pam-unlock", polkit_stack)
+        self.assertIn('install_one polkit-1 "$source_dir/pam/polkit-1"', installer)
 
     def test_pam_unlock_prompts_separately_without_shell_storage(self):
         helper = (ROOT / "src/t2-pam-unlock.sh").read_text()

@@ -85,6 +85,12 @@ ACM context or the bounded password-only diagnostic), and `0x4d`
 additionally restricted to the recovered codec, session, password, context, and
 option layouts. Capability negotiation uses the required v1 header, while
 normal operations use the negotiated v2 header and calendar-time extension.
+On MacBookPro16,1 the `0x4d` reply is v2-sized (`header 0x50`, length 100)
+with version still 1. Hashing that mix as a v2 header failed integrity
+(`-EBADMSG` / `-74` on 13 Sep 22:07). Probe then tries version-1 digest
+spans; this 16,1 matched `v1-skip-cal` (hash `0x48`, skip the 8-byte
+calendar, hash the payload after `0x50`) on 13 Sep 22:16. Later AKS ops
+reuse that winner.
 
 ### The `/dev/t2-acm` endpoint-10 device
 
@@ -182,14 +188,12 @@ incomplete projection lists exactly one compatibility alias and resolves it to
 an all-identities match; a complete projection lists all canonical names and
 resolves a named request only to the same named target. `any` remains an
 all-identities request and can never become private identity authority. The
-fprintd facade refreshes this projection for list and verify transactions. It
-keeps the compatibility alias for incomplete labels; when the projection is
-complete it advertises the canonical list, routes names through the
-single-identity gate, and resolves an `any` success to the exact canonical
-`VerifyFingerMatched` name. It emits the ABI-defined
-`VerifyFingerSelected("any")` instruction before capture so PAM does not
-present a stale anatomical prompt after authentication. Both paths require
-their pre-match gate and post-match unchanged-state attestation.
+fprintd facade does not refresh this projection on the PAM list or `any`/alias
+verify path: those calls must not open a Bridge lease. They advertise the
+stored compatibility alias, emit `VerifyFingerSelected` before capture, and
+let the match probe re-resolve private authority under `operation.lock`. Native
+enroll and delete still refresh a live projection. `t2-touchid-fprint-status`
+remains the diagnostic inventory command.
 
 ### Named-match authority
 
@@ -227,8 +231,11 @@ process has either stable all-root credentials or the exact setuid-PAM shape
 originating real UID as part of the immutable process subject; any UID
 transition invalidates the claim. It may use the unique active-local-session
 fallback only for that pinned real UID because sudo's PAM helper is not itself
-registered with logind. An all-root process still requires a direct
-pidfd-to-session binding and cannot use that fallback. `NameOwnerChanged`
+registered with logind. polkit 126+ `polkit-agent-helper-1 --socket-activated`
+is all-root rather than setuid; its originating UID is the `SO_PEERCRED` peer
+on stdin (the desktop agent) and uses the same unique-session fallback for
+that UID only. An all-root process that is not that helper still requires a
+direct pidfd-to-session binding and cannot use that fallback. `NameOwnerChanged`
 cancels active work, closes the pidfd, and releases the claim. The username
 remains presentation input, never authority by itself.
 

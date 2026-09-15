@@ -31,7 +31,7 @@ ProtectKernelModules=true
 RestrictRealtime=true
 RestrictAddressFamilies=AF_UNIX AF_LOCAL AF_NETLINK AF_INET6
 MemoryDenyWriteExecute=true
-SystemCallFilter=@system-service
+SystemCallFilter=@system-service pidfd_getfd
 
 [Install]
 WantedBy=multi-user.target

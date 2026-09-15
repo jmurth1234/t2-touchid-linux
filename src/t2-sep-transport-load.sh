@@ -9,6 +9,14 @@ if [[ -e /dev/t2-aks ]]; then
   exit 0
 fi
 
+# One capability probe per boot. A failed 0x4d pins DMA; a second start
+# cannot recover (-110 / -71 / -74). Do not unload.
+if journalctl -b -k --no-pager 2>/dev/null |
+    grep -q 'AppleKeyStore capability negotiation failed'; then
+  echo "$module already failed AppleKeyStore capability this boot; reboot required" >&2
+  exit 1
+fi
+
 if [[ -d /sys/module/$module ]]; then
   # A PCI modalias may load the module before this service.  It is safe to
   # replace only the observation-only instance: it has registered no SEP DMA.

@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 *.ko
 *.o
+*.o.d
 *.mod
 *.mod.c
 *.cmd

@@ -57,10 +57,11 @@ class FakeBackend:
 
 
 class FakePinnedCaller:
-    def __init__(self, sender):
+    def __init__(self, sender, short_lived_pam=False):
         self.sender = sender
         self.closed = False
         self.verify_count = 0
+        self.short_lived_pam = short_lived_pam
 
     def verify(self):
         if self.closed:
@@ -370,31 +371,23 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             device._set_finger_state(True, True)
 
-    async def test_listing_refreshes_backend_projection(self):
+    async def test_listing_returns_stored_names_without_backend(self):
         backend = FakeBackend()
         backend.list_fingers = AsyncMock(
-            return_value=("left-thumb", "right-index-finger")
+            side_effect=AssertionError("list must not open a live inventory")
         )
         device = make_device(backend)
         listed = await MODULE.FprintDevice.ListEnrolledFingers.__wrapped__(
             device, MODULE.LINUX_USER
         )
-        self.assertEqual(listed, ["left-thumb", "right-index-finger"])
-        self.assertEqual(
-            device.enrolled_fingers,
-            ("left-thumb", "right-index-finger"),
-        )
+        self.assertEqual(listed, [MODULE.ENROLLED_FINGER])
+        self.assertEqual(device.enrolled_fingers, (MODULE.ENROLLED_FINGER,))
+        backend.list_fingers.assert_not_awaited()
 
-    async def test_verify_start_refreshes_projection_before_named_match(self):
+    async def test_verify_start_any_does_not_refresh_projection(self):
         backend = FakeBackend("verify-no-match")
-        backend.projection = MODULE.t2_fprint_runtime.RuntimeProjection(
-            ("left-thumb", "right-index-finger"),
-            2,
-            True,
-            MODULE.ENROLLED_FINGER,
-        )
         backend.runtime_projection = AsyncMock(
-            return_value=backend.projection
+            side_effect=AssertionError("verify must not open a live inventory")
         )
         backend.verify_fprint = AsyncMock(
             return_value=("verify-no-match", {})
@@ -405,16 +398,31 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         device.VerifyStatus = lambda _result, _done: None
         await claim(device)
 
-        await verify_start(device, "left-thumb")
+        await verify_start(device, "any")
         await device.verify_task
 
-        self.assertEqual(
-            device.enrolled_fingers,
-            ("left-thumb", "right-index-finger"),
+        self.assertEqual(device.enrolled_fingers, (MODULE.ENROLLED_FINGER,))
+        self.assertEqual(selected, ["any"])
+        backend.runtime_projection.assert_not_awaited()
+        backend.verify_fprint.assert_awaited_once_with("any")
+        await MODULE.FprintDevice.VerifyStop.__wrapped__(device)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_verify_start_alias_uses_match_all_without_projection(self):
+        backend = FakeBackend()
+        backend.runtime_projection = AsyncMock(
+            side_effect=AssertionError("alias verify must not open a live inventory")
         )
-        self.assertEqual(selected, ["left-thumb"])
-        backend.runtime_projection.assert_awaited_once_with()
-        backend.verify_fprint.assert_awaited_once_with("left-thumb")
+        backend.verify_fprint = AsyncMock(return_value=("verify-match", {}))
+        device = make_device(backend)
+        device.VerifyStatus = lambda _result, _done: None
+        await claim(device)
+        await verify_start(device, MODULE.ENROLLED_FINGER)
+        await device.verify_task
+        backend.runtime_projection.assert_not_awaited()
+        backend.verify_fprint.assert_awaited_once_with(MODULE.ENROLLED_FINGER)
+        await MODULE.FprintDevice.VerifyStop.__wrapped__(device)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
 
     async def test_verification_publishes_waiting_and_terminal_properties(self):
         bus = FakeBus()
@@ -457,23 +465,40 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         backend.verify_fprint.assert_not_awaited()
         await MODULE.FprintDevice.Release.__wrapped__(device)
 
-    async def test_cancelled_verify_projection_restores_bounded_claim(self):
+    async def test_verify_start_any_does_not_wait_on_operation_lock(self):
+        backend = FakeBackend()
+        await backend.operation_lock.acquire()
+        device = make_device(backend)
+        device.VerifyStatus = lambda _result, _done: None
+        await claim(device)
+        try:
+            await asyncio.wait_for(verify_start(device, "any"), timeout=0.2)
+        finally:
+            backend.operation_lock.release()
+        await device.verify_task
+        await MODULE.FprintDevice.VerifyStop.__wrapped__(device)
+        await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_cancelled_verify_can_be_stopped(self):
         entered = asyncio.Event()
 
         class BlockingBackend(FakeBackend):
-            async def runtime_projection(self):
+            async def verify_fprint(self, _requested_finger):
                 entered.set()
                 await asyncio.Event().wait()
 
         device = make_device(BlockingBackend())
         await claim(device)
-        task = asyncio.create_task(verify_start(device, "any"))
+        start = asyncio.create_task(verify_start(device, "any"))
         await entered.wait()
-        task.cancel()
+        await start
+        running = device.verify_task
+        self.assertIsNotNone(running)
+        running.cancel()
         with self.assertRaises(asyncio.CancelledError):
-            await task
+            await running
+        await MODULE.FprintDevice.VerifyStop.__wrapped__(device)
         self.assertIsNone(device.verify_task)
-        self.assertIsNotNone(device.claim_expiry_task)
         await MODULE.FprintDevice.Release.__wrapped__(device)
 
     async def test_any_match_prompts_before_capture_and_reports_exact_match(self):
@@ -544,11 +569,13 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
         backend = FakeBackend()
         backend.list_fingers = AsyncMock(return_value=())
         device = make_device(backend)
+        device.enrolled_fingers = ()
         with self.assertRaises(MODULE.DBusError) as raised:
             await MODULE.FprintDevice.ListEnrolledFingers.__wrapped__(
                 device, MODULE.LINUX_USER
             )
         self.assertTrue(raised.exception.type.endswith(".NoEnrolledPrints"))
+        backend.list_fingers.assert_not_awaited()
 
     async def test_terminal_verdict_remains_stoppable(self):
         backend = FakeBackend()
@@ -574,6 +601,34 @@ class DeviceLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await claim(device)
         self.assertTrue(raised.exception.type.endswith(".AlreadyInUse"))
         await MODULE.FprintDevice.Release.__wrapped__(device)
+
+    async def test_claim_state_file_names_short_lived_pam_then_clears(self):
+        async def short_lived_collector(_bus, sender):
+            return FakePinnedCaller(sender, short_lived_pam=True)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fprint-claim"
+            device = MODULE.FprintDevice(
+                FakeBackend(),
+                object(),
+                short_lived_collector,
+                fake_claim_evidence_collector,
+            )
+            device.claim_state_path = path
+            await claim(device)
+            self.assertEqual(path.read_text(encoding="ascii"), "sudo\n")
+            await MODULE.FprintDevice.Release.__wrapped__(device)
+            self.assertFalse(path.exists())
+
+    async def test_claim_state_file_does_not_ask_ready_to_wait_for_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fprint-claim"
+            device = make_device()
+            device.claim_state_path = path
+            await claim(device)
+            self.assertEqual(path.read_text(encoding="ascii"), "other\n")
+            await MODULE.FprintDevice.Release.__wrapped__(device)
+            self.assertFalse(path.exists())
 
     async def test_dead_completed_claim_is_reaped_before_replacement(self):
         backend = FakeBackend()
@@ -1433,43 +1488,34 @@ class BackendRecoveryTests(unittest.IsolatedAsyncioTestCase):
             stderr=MODULE.asyncio.subprocess.PIPE,
         )
 
-    async def test_runtime_policy_routes_complete_named_and_legacy_alias(self):
+    async def test_match_all_verify_skips_live_projection(self):
         backend = MODULE.T2Backend.__new__(MODULE.T2Backend)
         backend.operation_lock = asyncio.Lock()
-        backend.runtime_projection = AsyncMock()
+        backend.runtime_projection = AsyncMock(
+            side_effect=AssertionError("match-all verify must not list live identities")
+        )
         backend.verify = AsyncMock(return_value=("verify-match", {}))
 
-        backend.runtime_projection.return_value = MODULE.t2_fprint_runtime.RuntimeProjection(
-            ("left-thumb", "right-index-finger"),
-            2,
-            True,
-            MODULE.ENROLLED_FINGER,
-        )
-        await backend.verify_fprint("left-thumb")
+        await backend.verify_fprint("any")
         backend.verify.assert_awaited_once_with(
-            target_finger="left-thumb", resolve_any_finger=False
+            target_finger=None, resolve_any_finger=False
         )
+        backend.runtime_projection.assert_not_awaited()
 
         backend.verify.reset_mock()
-        backend.runtime_projection.return_value = MODULE.t2_fprint_runtime.RuntimeProjection(
-            (), 2, False, MODULE.ENROLLED_FINGER
-        )
         await backend.verify_fprint(MODULE.ENROLLED_FINGER)
         backend.verify.assert_awaited_once_with(
             target_finger=None, resolve_any_finger=False
         )
+        backend.runtime_projection.assert_not_awaited()
 
         backend.verify.reset_mock()
-        backend.runtime_projection.return_value = MODULE.t2_fprint_runtime.RuntimeProjection(
-            ("left-thumb", "right-index-finger"),
-            2,
-            True,
-            MODULE.ENROLLED_FINGER,
-        )
-        await backend.verify_fprint("any")
-        backend.verify.assert_awaited_once_with(
-            target_finger=None, resolve_any_finger=True
-        )
+        with self.assertRaisesRegex(
+            RuntimeError, "requested fprint identity is unavailable"
+        ):
+            await backend.verify_fprint("left-thumb")
+        backend.verify.assert_not_awaited()
+        backend.runtime_projection.assert_not_awaited()
 
     async def test_failed_cached_endpoint_is_rediscovered_once(self):
         with tempfile.TemporaryDirectory() as directory:

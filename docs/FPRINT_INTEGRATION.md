@@ -13,6 +13,7 @@ interface.
 ## Contents
 
 - [Implemented verification boundary](#implemented-verification-boundary)
+- [PAM authentication](PAM_AUTH.md)
 - [Upstream mutation lifecycle to preserve](#upstream-mutation-lifecycle-to-preserve)
 - [Required caller and authorization boundary](#required-caller-and-authorization-boundary)
 - [Mutation worker boundary](#mutation-worker-boundary)
@@ -25,19 +26,28 @@ interface.
 
 The repository implements the non-mutating half:
 
-1. Every list or verify transaction refreshes the redacted, stable,
-local/live-reconciled identity projection. 2. Legacy, duplicate, or unknown
-labels expose only the configured compatibility alias. That alias and `any`
-select all identities. 3. A complete projection exposes every unique canonical
-fprint finger name. 4. Named verification repeats the private per-user and
-global SEP inventories on the same Bridge connection, reconciles the committed
-local Catacomb, selects exactly one opaque identity record, and requires the
-match event to contain that identity. 5. A complete-projection `any` match
-retains all identities but resolves a success to exactly one canonical name.
-The service emits `VerifyFingerSelected("any")` before capture and the resolved
-name through `VerifyFingerMatched` after success; ambiguous events fail closed.
-6. Both resolved modes repeat both SEP identity views and reread the local
-Catacomb after matching. A state change invalidates the verdict.
+1. `ListEnrolledFingers` is presentation only. It returns the stored
+   compatibility alias (or `NoEnrolledPrints` when that list is empty) and does
+   not open a Bridge inventory lease. pam_fprintd only needs a non-zero count
+   before `Claim`; a live list during match teardown is reported as “no
+   fingerprints” and becomes a password prompt.
+2. Legacy, duplicate, or unknown labels expose only the configured
+   compatibility alias. That alias and `any` select all identities. Named
+   fingers other than the alias are `NoEnrolledPrints` on the PAM verify path.
+3. A complete projection still exists for diagnostics
+   (`t2-touchid-fprint-status`) and for native enroll/delete.
+4. Named mutation still repeats the private per-user and global SEP inventories
+   on the same Bridge connection.
+5. PAM `VerifyStart("any")` and `VerifyStart(alias)` return without a live
+   projection, then the match probe lists identities on its own connection and
+   waits on `operation.lock`. The probe uses the all-identities path
+   (`resolve_any_finger=False`). `VerifyFingerMatched` reports the
+   compatibility alias unless a resolved-any gate is present in the probe
+   result.
+6. Enroll and delete still refresh a live projection before mutation. A state
+   change during those operations invalidates the request.
+
+See [PAM authentication](PAM_AUTH.md) for the sudo / pkexec / lock stacks.
 
 No Apple user ID, identity UUID, Catacomb bytes, or biometric payload crosses
 the public result boundary.
@@ -96,8 +106,14 @@ shape `real=user; effective=saved=filesystem=root`; its real UID is pinned
 alongside the bus UID and start time. Because sudo's PAM helper is not itself
 registered with logind, it may use the unique same-real-UID
 active-local-session fallback; it cannot select another UID or an ambiguous
-session. An all-root client still requires a direct pidfd-to-session binding
-and can never borrow an arbitrary session. The process credentials, session,
+session. polkit 126+ runs `polkit-agent-helper-1 --socket-activated` as an
+all-root systemd service instead of that setuid shape. That helper is accepted
+only when stdin is the accepted `/run/polkit/agent-helper.socket` connection
+and `SO_PEERCRED` names one non-root desktop agent; that peer UID is pinned
+the same way as a setuid real UID and may use only that UID's unique
+active-local-session fallback. An all-root client that is not that helper
+still requires a direct pidfd-to-session binding and can never borrow an
+arbitrary session. The process credentials, session,
 and account generation are all revalidated on every claim-scoped call. Claims
 are serialized so a concurrent claim cannot pass while evidence collection is
 suspended. `NameOwnerChanged` cleanup cancels active verification, closes the

@@ -23,6 +23,8 @@
 #include <linux/mutex.h>
 #include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/unaligned.h>
 #include <linux/uaccess.h>
 
@@ -62,8 +64,12 @@ static_assert(sizeof(struct t2_aks_ioc_exchange) == 32);
 #define T2_SEP_AKS_HEADER_V2_SIZE   0x50
 #define T2_SEP_AKS_V1_WIRE_SIZE     (sizeof(u32) + T2_SEP_AKS_HEADER_V1_SIZE)
 #define T2_SEP_AKS_V2_WIRE_SIZE     (sizeof(u32) + T2_SEP_AKS_HEADER_V2_SIZE)
+#define T2_SEP_AKS_CAP_PAYLOAD_SIZE  (sizeof(__le32) + sizeof(__le64) + sizeof(__le32))
 #define T2_SEP_AKS_CAP_REQ_SIZE     0x5c
 #define T2_SEP_AKS_MAX_BODY_SIZE    (T2_SEP_OOL_SIZE - T2_SEP_AKS_V2_WIRE_SIZE)
+
+static_assert(T2_SEP_AKS_CAP_REQ_SIZE ==
+	      T2_SEP_AKS_V1_WIRE_SIZE + T2_SEP_AKS_CAP_PAYLOAD_SIZE);
 #define T2_SEP_AKS_CDHASH_SIZE      20
 #define T2_SEP_AKS_CDHASH_HEX_SIZE  (T2_SEP_AKS_CDHASH_SIZE * 2)
 
@@ -147,6 +153,57 @@ struct t2_aks_header_v2 {
 } __packed;
 
 static_assert(sizeof(struct t2_aks_header_v2) == T2_SEP_AKS_HEADER_V2_SIZE);
+
+/*
+ * 16,2 / 15,2: v1 is 0x48/version 1, v2 is 0x50/version 2.
+ * MacBookPro16,1 capability 0x4d reply (13 Sep 21:50): length 100,
+ * header 0x50, version 1 — v2 wire with the v1 version field.
+ * Boot 22:07: that mix passed the envelope check, then integrity -EBADMSG
+ * (-74) when hashing calendar as part of the 0x50 header.
+ * Boot 22:14: v1-skip-cal matched (hash 0x48, skip 8-byte calendar).
+ */
+static bool t2_aks_envelope_supported(u32 header_size, u32 version)
+{
+	if (header_size == T2_SEP_AKS_HEADER_V1_SIZE &&
+	    version == T2_SEP_AKS_HEADER_V1)
+		return true;
+	if (header_size == T2_SEP_AKS_HEADER_V2_SIZE &&
+	    (version == T2_SEP_AKS_HEADER_V1 ||
+	     version == T2_SEP_AKS_HEADER_V2))
+		return true;
+	return false;
+}
+
+/*
+ * Digest spans for the 16,1 mix (size 0x50, version 1). Outgoing messages and
+ * 15,2/16,2 replies use WIRE (hash the size word, body after that header).
+ * 22:07 already rejected WIRE on this mix. Probe tries the remaining version-1
+ * layouts once and remembers the winner for later AKS ops.
+ */
+enum t2_aks_digest_span {
+	T2_AKS_DIGEST_WIRE = 0,
+	T2_AKS_DIGEST_V1_BODY = 1,
+	T2_AKS_DIGEST_V1_SKIP_CAL = 2,
+	T2_AKS_DIGEST_V1_ZERO_CAL = 3,
+};
+
+static int aks_reply_digest_span = T2_AKS_DIGEST_WIRE;
+
+static const char *t2_aks_digest_span_name(int span)
+{
+	switch (span) {
+	case T2_AKS_DIGEST_WIRE:
+		return "wire";
+	case T2_AKS_DIGEST_V1_BODY:
+		return "v1-body";
+	case T2_AKS_DIGEST_V1_SKIP_CAL:
+		return "v1-skip-cal";
+	case T2_AKS_DIGEST_V1_ZERO_CAL:
+		return "v1-zero-cal";
+	default:
+		return "unknown";
+	}
+}
 
 static int t2_aks_stamp_verify_platform_data(struct t2_aks_header_v2 *header)
 {
@@ -284,28 +341,55 @@ static int t2_sep_control(struct t2_sep_transport *sep, u8 target_endpoint,
 	return 0;
 }
 
-static int t2_aks_digest(void *message, size_t length)
+static int t2_aks_digest_span(void *message, size_t length, int span)
 {
 	struct t2_aks_header_v1 *header = message + sizeof(__le32);
 	struct crypto_shash *tfm;
 	struct shash_desc *desc;
 	u8 digest[SHA256_DIGEST_SIZE];
+	u8 calendar_zero[sizeof(__le64)] = { 0 };
 	u32 header_size;
 	u32 version;
+	u32 hash_header;
+	size_t body_off;
+	size_t body_len;
+	bool mixed;
 	int ret;
 
 	if (length < sizeof(__le32) + sizeof(header->digest) + sizeof(header->version))
 		return -EINVAL;
 	header_size = get_unaligned_le32(message);
 	version = le32_to_cpu(header->version);
-	if ((version == T2_SEP_AKS_HEADER_V1 &&
-	     header_size != T2_SEP_AKS_HEADER_V1_SIZE) ||
-	    (version == T2_SEP_AKS_HEADER_V2 &&
-	     header_size != T2_SEP_AKS_HEADER_V2_SIZE) ||
-	    (version != T2_SEP_AKS_HEADER_V1 &&
-	     version != T2_SEP_AKS_HEADER_V2) ||
+	if (!t2_aks_envelope_supported(header_size, version) ||
 	    length < sizeof(__le32) + header_size)
 		return -EPROTO;
+
+	mixed = (header_size == T2_SEP_AKS_HEADER_V2_SIZE &&
+		 version == T2_SEP_AKS_HEADER_V1);
+	switch (span) {
+	case T2_AKS_DIGEST_WIRE:
+		hash_header = header_size;
+		body_off = sizeof(__le32) + header_size;
+		break;
+	case T2_AKS_DIGEST_V1_BODY:
+		if (!mixed)
+			return -EPROTO;
+		hash_header = T2_SEP_AKS_HEADER_V1_SIZE;
+		body_off = sizeof(__le32) + T2_SEP_AKS_HEADER_V1_SIZE;
+		break;
+	case T2_AKS_DIGEST_V1_SKIP_CAL:
+	case T2_AKS_DIGEST_V1_ZERO_CAL:
+		if (!mixed)
+			return -EPROTO;
+		hash_header = T2_SEP_AKS_HEADER_V1_SIZE;
+		body_off = sizeof(__le32) + T2_SEP_AKS_HEADER_V2_SIZE;
+		break;
+	default:
+		return -EINVAL;
+	}
+	if (length < body_off)
+		return -EPROTO;
+	body_len = length - body_off;
 
 	tfm = crypto_alloc_shash("sha256", 0, 0);
 	if (IS_ERR(tfm))
@@ -320,19 +404,79 @@ static int t2_aks_digest(void *message, size_t length)
 	ret = crypto_shash_init(desc);
 	if (!ret)
 		ret = crypto_shash_update(desc, (u8 *)header + sizeof(header->digest),
-					 header_size - sizeof(header->digest));
-	if (!ret)
-		ret = crypto_shash_update(desc,
-					 message + sizeof(__le32) + header_size,
-					 length - sizeof(__le32) - header_size);
+					 hash_header - sizeof(header->digest));
+	if (!ret && span == T2_AKS_DIGEST_V1_ZERO_CAL)
+		ret = crypto_shash_update(desc, calendar_zero,
+					 sizeof(calendar_zero));
+	if (!ret && body_len)
+		ret = crypto_shash_update(desc, message + body_off, body_len);
 	if (!ret)
 		ret = crypto_shash_final(desc, digest);
 	if (!ret)
 		memcpy(header->digest, digest, sizeof(header->digest));
 
 	memzero_explicit(digest, sizeof(digest));
+	memzero_explicit(calendar_zero, sizeof(calendar_zero));
 	kfree(desc);
 	crypto_free_shash(tfm);
+	return ret;
+}
+
+static int t2_aks_digest(void *message, size_t length)
+{
+	return t2_aks_digest_span(message, length, T2_AKS_DIGEST_WIRE);
+}
+
+static int t2_aks_digest_reply(void *message, size_t length)
+{
+	u32 header_size = get_unaligned_le32(message);
+	u32 version = get_unaligned_le32(message + sizeof(__le32) + 0x10);
+
+	if (header_size == T2_SEP_AKS_HEADER_V2_SIZE &&
+	    version == T2_SEP_AKS_HEADER_V1)
+		return t2_aks_digest_span(message, length, aks_reply_digest_span);
+	return t2_aks_digest_span(message, length, T2_AKS_DIGEST_WIRE);
+}
+
+static int t2_aks_verify_ool_out(struct t2_sep_transport *sep, size_t length,
+				  int *span_used)
+{
+	u8 expected[16];
+	u32 header_size;
+	u32 version;
+	int spans[4];
+	int n = 0;
+	int i;
+	int ret = -EBADMSG;
+
+	header_size = get_unaligned_le32(sep->ool_out);
+	version = get_unaligned_le32(sep->ool_out + sizeof(__le32) + 0x10);
+	if (header_size == T2_SEP_AKS_HEADER_V2_SIZE &&
+	    version == T2_SEP_AKS_HEADER_V1) {
+		/* 22:16: v1-skip-cal matched. Try it first on later boots. */
+		spans[n++] = T2_AKS_DIGEST_V1_SKIP_CAL;
+		spans[n++] = T2_AKS_DIGEST_V1_BODY;
+		spans[n++] = T2_AKS_DIGEST_V1_ZERO_CAL;
+	} else {
+		spans[n++] = T2_AKS_DIGEST_WIRE;
+	}
+
+	memcpy(expected, sep->ool_out + sizeof(__le32), sizeof(expected));
+	memset(sep->ool_out + sizeof(__le32), 0, sizeof(expected));
+	for (i = 0; i < n; i++) {
+		ret = t2_aks_digest_span(sep->ool_out, length, spans[i]);
+		if (!ret &&
+		    !memcmp(expected, sep->ool_out + sizeof(__le32),
+			    sizeof(expected))) {
+			if (span_used)
+				*span_used = spans[i];
+			memzero_explicit(expected, sizeof(expected));
+			return 0;
+		}
+		memset(sep->ool_out + sizeof(__le32), 0, sizeof(expected));
+		ret = -EBADMSG;
+	}
+	memzero_explicit(expected, sizeof(expected));
 	return ret;
 }
 
@@ -444,9 +588,11 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 			operation, reply_length, reply.word[1] & 0xffff);
 		return -EPROTO;
 	}
-	if (get_unaligned_le32(sep->ool_out) != T2_SEP_AKS_HEADER_V2_SIZE ||
-	    get_unaligned_le32(sep->ool_out + sizeof(__le32) + 0x10) !=
-	    T2_SEP_AKS_HEADER_V2) {
+	if (!t2_aks_envelope_supported(get_unaligned_le32(sep->ool_out),
+				       get_unaligned_le32(sep->ool_out +
+							   sizeof(__le32) +
+							   0x10)) ||
+	    get_unaligned_le32(sep->ool_out) != T2_SEP_AKS_HEADER_V2_SIZE) {
 		dev_err(&sep->pdev->dev,
 			"AKS operation %#x returned invalid envelope metadata (size %#x version %#x)\n",
 			operation, get_unaligned_le32(sep->ool_out),
@@ -459,7 +605,7 @@ static int t2_aks_exchange_locked(struct t2_sep_transport *sep, u8 operation,
 
 		memcpy(expected, sep->ool_out + sizeof(__le32), sizeof(expected));
 		memset(sep->ool_out + sizeof(__le32), 0, sizeof(expected));
-		ret = t2_aks_digest(sep->ool_out, reply_length);
+		ret = t2_aks_digest_reply(sep->ool_out, reply_length);
 		if (!ret && memcmp(expected,
 				sep->ool_out + sizeof(__le32), sizeof(expected)))
 			ret = -EBADMSG;
@@ -871,6 +1017,11 @@ static int t2_aks_probe_capabilities(struct t2_sep_transport *sep)
 	struct t2_sep_message reply;
 	u8 *payload;
 	u16 reply_length;
+	u32 header_size;
+	u32 version;
+	u32 wire_size;
+	u32 min_length;
+	s8 reply_status;
 	u8 transaction = 1;
 	unsigned int skipped = 0;
 	int ret;
@@ -913,32 +1064,55 @@ static int t2_aks_probe_capabilities(struct t2_sep_transport *sep)
 			return -EOVERFLOW;
 	}
 
+	/*
+	 * 16,2 / 15,2: v1 envelope, length 92. MacBookPro16,1 (21:50):
+	 * length 100, header 0x50, version 1. Log only those fields.
+	 */
+	reply_status = (s8)(reply.word[0] >> 24);
 	reply_length = reply.word[1] >> 16;
-	if (reply_length < T2_SEP_AKS_V1_WIRE_SIZE ||
-	    reply_length > T2_SEP_OOL_SIZE)
-		return -EPROTO;
-	if (get_unaligned_le32(sep->ool_out) != T2_SEP_AKS_HEADER_V1_SIZE ||
-	    get_unaligned_le32(sep->ool_out + sizeof(__le32) + 0x10) !=
-	    T2_SEP_AKS_HEADER_V1)
-		return -EPROTO;
-
-	/* Recompute in a scratch copy so malformed replies never look valid. */
-	{
-		u8 expected[16];
-
-		memcpy(expected, sep->ool_out + sizeof(__le32), sizeof(expected));
-		memset(sep->ool_out + sizeof(__le32), 0, sizeof(expected));
-		ret = t2_aks_digest(sep->ool_out, reply_length);
-		if (!ret && memcmp(expected,
-				sep->ool_out + sizeof(__le32), sizeof(expected)))
-			ret = -EBADMSG;
-		memzero_explicit(expected, sizeof(expected));
+	header_size = get_unaligned_le32(sep->ool_out);
+	version = get_unaligned_le32(sep->ool_out + sizeof(__le32) + 0x10);
+	if (reply_status) {
+		dev_err(&sep->pdev->dev,
+			"AppleKeyStore capability mailbox SEP status %d length %u header %#x version %#x flags %#x\n",
+			reply_status, reply_length, header_size, version,
+			reply.word[1] & 0xffff);
+		return -EREMOTEIO;
 	}
-	if (ret)
-		return ret;
-	if (reply_length < T2_SEP_AKS_CAP_REQ_SIZE)
+
+	if (!t2_aks_envelope_supported(header_size, version)) {
+		dev_err(&sep->pdev->dev,
+			"AppleKeyStore capability envelope rejected: length %u header %#x version %#x flags %#x\n",
+			reply_length, header_size, version,
+			reply.word[1] & 0xffff);
 		return -EPROTO;
-	payload = sep->ool_out + T2_SEP_AKS_V1_WIRE_SIZE;
+	}
+	wire_size = sizeof(__le32) + header_size;
+	min_length = wire_size + T2_SEP_AKS_CAP_PAYLOAD_SIZE;
+	if (reply_length < min_length || reply_length > T2_SEP_OOL_SIZE) {
+		dev_err(&sep->pdev->dev,
+			"AppleKeyStore capability envelope length %u (need %u..%u, header %#x version %#x)\n",
+			reply_length, min_length, T2_SEP_OOL_SIZE,
+			header_size, version);
+		return -EPROTO;
+	}
+
+	{
+		int span_used = T2_AKS_DIGEST_WIRE;
+
+		ret = t2_aks_verify_ool_out(sep, reply_length, &span_used);
+		if (ret) {
+			dev_err(&sep->pdev->dev,
+				"AppleKeyStore capability integrity failed: %d length %u header %#x version %#x (tried v1-skip-cal, v1-body, v1-zero-cal)\n",
+				ret, reply_length, header_size, version);
+			return ret;
+		}
+		aks_reply_digest_span = span_used;
+		dev_info(&sep->pdev->dev,
+			 "AppleKeyStore digest span %s for mixed 0x50/v1 replies\n",
+			 t2_aks_digest_span_name(span_used));
+	}
+	payload = sep->ool_out + wire_size;
 	if (get_unaligned_le32(payload)) {
 		dev_warn(&sep->pdev->dev,
 			 "AppleKeyStore capability query returned status %#x\n",
@@ -947,9 +1121,10 @@ static int t2_aks_probe_capabilities(struct t2_sep_transport *sep)
 	}
 
 	dev_info(&sep->pdev->dev,
-		 "AppleKeyStore capability reply passed integrity check: value=%#llx length=%u\n",
+		 "AppleKeyStore capability reply passed integrity check: value=%#llx length=%u header %#x version %#x digest_span=%s\n",
 		 (unsigned long long)get_unaligned_le64(payload + sizeof(__le32)),
-		 reply_length);
+		 reply_length, header_size, version,
+		 t2_aks_digest_span_name(aks_reply_digest_span));
 	return 0;
 }
 
